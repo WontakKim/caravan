@@ -1,7 +1,13 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub fn handle_key(app: &mut crate::app::App, key: KeyEvent) {
     if key.kind != KeyEventKind::Press {
+        return;
+    }
+
+    // Ctrl+C quits the application even in raw mode.
+    if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        app.should_quit = true;
         return;
     }
 
@@ -61,5 +67,17 @@ mod tests {
         let mut app = App::new();
         handle_key(&mut app, release(KeyCode::Char('x')));
         assert_eq!(app.input, "");
+    }
+
+    #[test]
+    fn ctrl_c_sets_should_quit() {
+        let mut app = App::new();
+        let ctrl_c = KeyEvent::new_with_kind(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+            KeyEventKind::Press,
+        );
+        handle_key(&mut app, ctrl_c);
+        assert!(app.should_quit);
     }
 }

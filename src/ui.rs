@@ -68,4 +68,10 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     let cmd =
         Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
     frame.render_widget(cmd, cmd_area);
+
+    // Place the cursor just after the "> " prompt, clamped inside the inner width.
+    let inner_max_x = cmd_area.x + cmd_area.width.saturating_sub(2);
+    let cursor_x = (cmd_area.x + 2 + app.input.chars().count() as u16).min(inner_max_x);
+    let cursor_y = cmd_area.y + 1;
+    frame.set_cursor_position((cursor_x, cursor_y));
 }
