@@ -10,11 +10,12 @@ cargo run
 
 ## Available Commands
 
-| Command   | Description                          |
-|-----------|--------------------------------------|
-| `/help`   | Show the list of available commands  |
-| `/clear`  | Clear the log panel                  |
-| `/exit`   | Exit the application                 |
+| Command          | Description                                              |
+|------------------|----------------------------------------------------------|
+| `/help`          | Show the list of available commands                      |
+| `/clear`         | Clear the log panel                                      |
+| `/exit`          | Exit the application                                     |
+| `/ask <message>` | Mock ask that produces a Run/Turn event sequence         |
 
 Any other input is echoed to the Log panel.
 
@@ -71,6 +72,59 @@ log recording the newly selected `seq`.
 | `InspectorSelectionChanged`  | Each time the Up/Down selection changes                  |
 | `ExitRequested`              | When `/exit` is processed or Ctrl+C is pressed           |
 | `UnknownCommand`             | When an unrecognised `/command` is entered               |
+| `RunCreated`                 | When a new Run is initialised for an `/ask` invocation   |
+| `RunStarted`                 | When the Run begins executing (before the first Turn)    |
+| `TurnStarted`                | When a Turn begins within a Run                          |
+| `PromptCompiled`             | When the prompt is assembled and ready to send           |
+| `ModelToken`                 | Each token emitted during the mock model reply           |
+| `RunCompleted`               | When the Run finishes successfully                       |
+| `RunFailed`                  | When the Run terminates with an error (e.g. empty `/ask`)|
+
+## Mock /ask Run/Turn Flow
+
+`/ask <message>` is a **deterministic mock** — it does not call a real LLM. The
+reply is always `Mock response for: <message>`, split into one `ModelToken` event
+per word.
+
+### Event sequence
+
+When `/ask hello world` is entered, the following events are appended in order:
+
+1. `CommandEntered` — the raw input line is recorded.
+2. `RunCreated` — a new Run is created; `run_id` is stored in the event `detail`.
+3. `RunStarted` — the Run transitions to the running state.
+4. `TurnStarted` — the first (and only) Turn begins; `turn_id` is in `detail`.
+5. `PromptCompiled` — the prompt text is assembled from the message.
+6. `ModelToken` × N — one event per word in `Mock response for: <message>`.
+7. `RunCompleted` — the Run finishes successfully.
+
+### Main panel output
+
+After a successful `/ask`, the Main panel shows:
+
+```
+User: <message>
+Assistant: Mock response for: <message>
+```
+
+### Empty `/ask` error
+
+Invoking `/ask` with no message (i.e. entering `/ask` alone) produces:
+
+1. `CommandEntered` — the bare `/ask` command is recorded.
+2. `RunFailed` — the Run is immediately failed with a `/ask requires a message`
+   notice.
+
+The application does **not** exit or panic on this error.
+
+### Persistence
+
+All `/ask` events are persisted to `.caravan/events.jsonl` exactly like every
+other event kind. The `run_id` and `turn_id` values are carried in the event
+`detail` string. On restart, these events are reloaded from disk and the Event
+Log panel repopulates with the full Run/Turn history from previous sessions.
+
+---
 
 ### `/clear` Behaviour
 
