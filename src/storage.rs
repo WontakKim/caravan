@@ -34,7 +34,10 @@ impl EventStore {
         for line in reader.lines() {
             let line = match line {
                 Ok(l) => l,
-                Err(_) => continue,
+                Err(e) => {
+                    eprintln!("storage: error reading event log: {e}");
+                    break;
+                }
             };
             if line.is_empty() {
                 continue;
@@ -203,6 +206,19 @@ mod tests {
         let events = store.load_events();
         assert_eq!(events.len(), 1);
         assert_eq!(events[0], valid);
+    }
+
+    #[test]
+    fn load_events_on_directory_path_returns_empty() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+        store.ensure_store_dir().expect("ensure dir");
+        // Create a directory where events.jsonl would normally be.
+        // On Unix, File::open on a directory may succeed but reads yield EISDIR;
+        // on other systems open may fail outright. Either way we expect an empty Vec.
+        std::fs::create_dir_all(store.events_path()).expect("create dir at events path");
+        let events = store.load_events();
+        assert_eq!(events, Vec::new());
     }
 
     #[test]
