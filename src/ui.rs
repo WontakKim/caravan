@@ -1,5 +1,7 @@
 use ratatui::{
     layout::{Constraint, Direction, Layout},
+    style::{Modifier, Style},
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
 
@@ -46,21 +48,51 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
         .block(Block::default().borders(Borders::ALL).title("Nav"));
     frame.render_widget(nav, nav_area);
 
-    // Main
-    let main = Paragraph::new("Welcome to Caravan\nType /help to see available commands.")
-        .block(Block::default().borders(Borders::ALL).title("Main"));
+    // Main — render the tail of app.log that fits the panel height
+    let main_height = main_area.height.saturating_sub(2) as usize;
+    let main_skip = app.log.len().saturating_sub(main_height);
+    let main_text = app.log[main_skip..].join("\n");
+    let main =
+        Paragraph::new(main_text).block(Block::default().borders(Borders::ALL).title("Main"));
     frame.render_widget(main, main_area);
 
-    // Inspector
-    let inspector = Paragraph::new("No item selected")
+    // Inspector — render selected event detail, or fallback
+    let inspector_text = match app.selected_event {
+        Some(i) => match app.event_log.get(i) {
+            Some(ev) => format!(
+                "seq: {}\nkind: {}\nmessage: {}",
+                ev.seq,
+                ev.kind.name(),
+                ev.detail
+            ),
+            None => "No event selected".to_string(),
+        },
+        None => "No event selected".to_string(),
+    };
+    let inspector = Paragraph::new(inspector_text)
         .block(Block::default().borders(Borders::ALL).title("Inspector"));
     frame.render_widget(inspector, inspector_area);
 
-    // Log — render the tail of app.log that fits the panel height
+    // Log — render the EventLog with tail-clipping and highlight for selected event
     let log_height = log_area.height.saturating_sub(2) as usize;
-    let skip = app.log.len().saturating_sub(log_height);
-    let log_text = app.log[skip..].join("\n");
-    let log = Paragraph::new(log_text).block(Block::default().borders(Borders::ALL).title("Log"));
+    let events = app.event_log.events();
+    let skip = events.len().saturating_sub(log_height);
+    let lines: Vec<Line> = events[skip..]
+        .iter()
+        .enumerate()
+        .map(|(relative_i, ev)| {
+            let abs_i = skip + relative_i;
+            let text = format!("{} {}", ev.seq, ev.kind.name());
+            let span = Span::raw(text);
+            let line = Line::from(span);
+            if app.selected_event == Some(abs_i) {
+                line.style(Style::default().add_modifier(Modifier::REVERSED))
+            } else {
+                line
+            }
+        })
+        .collect();
+    let log = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Log"));
     frame.render_widget(log, log_area);
 
     // Command Bar
