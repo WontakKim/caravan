@@ -134,7 +134,7 @@ impl App {
             "Available commands:".to_string(),
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
-            "  /quit  - quit Caravan".to_string(),
+            "  /exit  - exit Caravan".to_string(),
         ]
     }
 }
@@ -239,16 +239,16 @@ mod tests {
     }
 
     #[test]
-    fn quit_appends_command_entered_then_quit_requested() {
+    fn exit_appends_command_entered_then_quit_requested() {
         let mut app = App::new();
         assert!(!app.should_quit);
-        app.input = "/quit".to_string();
+        app.input = "/exit".to_string();
         app.submit();
         assert!(app.should_quit);
         assert_eq!(app.event_log.len(), 3);
         let ce = app.event_log.get(1).unwrap();
         assert_eq!(ce.kind, EventKind::CommandEntered);
-        assert_eq!(ce.detail, "/quit");
+        assert_eq!(ce.detail, "/exit");
         let qr = app.event_log.get(2).unwrap();
         assert_eq!(qr.kind, EventKind::QuitRequested);
         assert!(app.input.is_empty());
@@ -374,7 +374,7 @@ mod tests {
             "Available commands:".to_string(),
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
-            "  /quit  - quit Caravan".to_string(),
+            "  /exit  - exit Caravan".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }

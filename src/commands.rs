@@ -16,7 +16,7 @@ pub fn parse_input(input: &str) -> Command {
         return match trimmed {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
-            "/quit" => Command::Quit,
+            "/exit" => Command::Quit,
             // Carry the raw (untrimmed) input so the recorded event detail is
             // exactly what the user typed.
             _ => Command::Unknown(input.to_string()),
@@ -50,8 +50,8 @@ mod tests {
     }
 
     #[test]
-    fn quit_command() {
-        assert!(matches!(parse_input("/quit"), Command::Quit));
+    fn exit_command() {
+        assert!(matches!(parse_input("/exit"), Command::Quit));
     }
 
     #[test]

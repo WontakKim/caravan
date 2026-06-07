@@ -14,7 +14,7 @@ cargo run
 |-----------|--------------------------------------|
 | `/help`   | Show the list of available commands  |
 | `/clear`  | Clear the log panel                  |
-| `/quit`   | Exit the application                 |
+| `/exit`   | Exit the application                 |
 
 Any other input is echoed to the Log panel.
 
@@ -69,7 +69,7 @@ log recording the newly selected `seq`.
 | `UserTextEntered`            | When plain (non-command) text is submitted               |
 | `LogCleared`                 | When `/clear` is processed                               |
 | `InspectorSelectionChanged`  | Each time the Up/Down selection changes                  |
-| `QuitRequested`              | When `/quit` is processed or Ctrl+C is pressed           |
+| `QuitRequested`              | When `/exit` is processed or Ctrl+C is pressed           |
 | `UnknownCommand`             | When an unrecognised `/command` is entered               |
 
 ### `/clear` Behaviour
@@ -91,7 +91,7 @@ The following checks must be confirmed interactively before the POC is considere
 - [ ] `/help` appends the command list to the Log only; Main panel is unchanged.
 - [ ] `/clear` empties the Log panel; the Event Log retains all previous entries.
 - [ ] An unknown command (e.g. `/foo`) appends an `Unknown command:` line to the Log.
-- [ ] `/quit` exits the app cleanly and the terminal is fully restored (no raw-mode residue,
+- [ ] `/exit` exits the app cleanly and the terminal is fully restored (no raw-mode residue,
       cursor and normal screen returned).
 - [ ] Pressing Down selects the first event; Inspector shows its seq, kind, and message.
 - [ ] Pressing Up and Down navigates between events; the selected row is highlighted in the
