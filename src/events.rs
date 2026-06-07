@@ -27,6 +27,13 @@ pub enum EventKind {
     InspectorSelectionChanged,
     ExitRequested,
     UnknownCommand,
+    RunCreated,
+    RunStarted,
+    TurnStarted,
+    PromptCompiled,
+    ModelToken,
+    RunCompleted,
+    RunFailed,
 }
 
 impl EventKind {
@@ -41,7 +48,32 @@ impl EventKind {
             EventKind::InspectorSelectionChanged => "InspectorSelectionChanged",
             EventKind::ExitRequested => "ExitRequested",
             EventKind::UnknownCommand => "UnknownCommand",
+            EventKind::RunCreated => "RunCreated",
+            EventKind::RunStarted => "RunStarted",
+            EventKind::TurnStarted => "TurnStarted",
+            EventKind::PromptCompiled => "PromptCompiled",
+            EventKind::ModelToken => "ModelToken",
+            EventKind::RunCompleted => "RunCompleted",
+            EventKind::RunFailed => "RunFailed",
         }
+    }
+}
+
+/// An identifier for a single run of the ask flow.
+pub struct RunId(pub String);
+
+impl std::fmt::Display for RunId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// An identifier for a single turn within a run.
+pub struct TurnId(pub String);
+
+impl std::fmt::Display for TurnId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -127,6 +159,11 @@ impl EventLog {
     /// Returns a slice of all events in the log.
     pub fn events(&self) -> &[AppEvent] {
         &self.events
+    }
+
+    /// Returns the sequence number that will be assigned to the next appended event.
+    pub fn next_seq_value(&self) -> u64 {
+        self.next_seq
     }
 }
 
@@ -300,5 +337,67 @@ mod tests {
                 serde_json::from_str(&json).expect("deserialization should succeed");
             assert_eq!(kind, restored);
         }
+    }
+
+    #[test]
+    fn run_turn_event_kinds_json_round_trip() {
+        let new_kinds = [
+            EventKind::RunCreated,
+            EventKind::RunStarted,
+            EventKind::TurnStarted,
+            EventKind::PromptCompiled,
+            EventKind::ModelToken,
+            EventKind::RunCompleted,
+            EventKind::RunFailed,
+        ];
+        for (i, kind) in new_kinds.iter().enumerate() {
+            let event = AppEvent {
+                seq: EventSeq((i + 1) as u64),
+                kind: *kind,
+                detail: format!("detail-{i}"),
+            };
+            let json = serde_json::to_string(&event).expect("serialization should succeed");
+            let restored: AppEvent =
+                serde_json::from_str(&json).expect("deserialization should succeed");
+            assert_eq!(event, restored);
+        }
+
+        // Assert the serialized `kind` field is the variant-name string for RunCreated and ModelToken.
+        let run_created_event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::RunCreated,
+            detail: String::new(),
+        };
+        let json = serde_json::to_string(&run_created_event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "RunCreated");
+
+        let model_token_event = AppEvent {
+            seq: EventSeq(2),
+            kind: EventKind::ModelToken,
+            detail: String::new(),
+        };
+        let json = serde_json::to_string(&model_token_event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ModelToken");
+    }
+
+    #[test]
+    fn next_seq_value_returns_next_assigned_seq() {
+        let mut log = EventLog::new();
+        assert_eq!(log.next_seq_value(), 1);
+        log.append(EventKind::AppStarted, "started");
+        assert_eq!(log.next_seq_value(), 2);
+    }
+
+    #[test]
+    fn run_id_turn_id_display() {
+        let run_id = RunId("run-12".to_string());
+        assert_eq!(run_id.to_string(), "run-12");
+
+        let turn_id = TurnId("turn-7".to_string());
+        assert_eq!(turn_id.to_string(), "turn-7");
     }
 }
