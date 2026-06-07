@@ -12,6 +12,8 @@ pub fn handle_key(app: &mut crate::app::App, key: KeyEvent) {
     }
 
     match key.code {
+        KeyCode::Up => app.select_prev(),
+        KeyCode::Down => app.select_next(),
         KeyCode::Char(c) => app.push_char(c),
         KeyCode::Backspace => app.backspace(),
         KeyCode::Enter => app.submit(),
@@ -79,5 +81,61 @@ mod tests {
         );
         handle_key(&mut app, ctrl_c);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn down_from_fresh_app_selects_index_zero_and_appends_event() {
+        let mut app = App::new();
+        handle_key(&mut app, press(KeyCode::Down));
+        assert_eq!(app.selected_event, Some(0));
+        assert_eq!(app.event_log.len(), 2);
+        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
+        assert_eq!(
+            last.kind,
+            crate::events::EventKind::InspectorSelectionChanged
+        );
+        assert_eq!(last.detail, "Selected seq 1");
+    }
+
+    #[test]
+    fn up_from_fresh_app_selects_index_zero_and_appends_event() {
+        let mut app = App::new();
+        handle_key(&mut app, press(KeyCode::Up));
+        assert_eq!(app.selected_event, Some(0));
+        assert_eq!(app.event_log.len(), 2);
+        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
+        assert_eq!(
+            last.kind,
+            crate::events::EventKind::InspectorSelectionChanged
+        );
+        assert_eq!(last.detail, "Selected seq 1");
+    }
+
+    #[test]
+    fn down_twice_advances_selection_and_appends_two_events() {
+        let mut app = App::new();
+        handle_key(&mut app, press(KeyCode::Down));
+        handle_key(&mut app, press(KeyCode::Down));
+        assert_eq!(app.selected_event, Some(1));
+        assert_eq!(app.event_log.len(), 3);
+        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
+        assert_eq!(
+            last.kind,
+            crate::events::EventKind::InspectorSelectionChanged
+        );
+        assert_eq!(last.detail, "Selected seq 2");
+    }
+
+    #[test]
+    fn up_from_some_zero_is_noop() {
+        let mut app = App::new();
+        // Navigate to Some(0) first
+        handle_key(&mut app, press(KeyCode::Down));
+        assert_eq!(app.selected_event, Some(0));
+        let len_before = app.event_log.len();
+        // Up from Some(0) is a no-op (lower-boundary clamp)
+        handle_key(&mut app, press(KeyCode::Up));
+        assert_eq!(app.selected_event, Some(0));
+        assert_eq!(app.event_log.len(), len_before);
     }
 }
