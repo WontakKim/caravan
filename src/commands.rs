@@ -60,6 +60,13 @@ mod tests {
     }
 
     #[test]
+    fn quit_parses_as_unknown() {
+        // `/quit` was removed in favour of `/exit`; it must fall through to
+        // Command::Unknown so that typing `/quit` does NOT exit the application.
+        assert!(matches!(parse_input("/quit"), Command::Unknown(_)));
+    }
+
+    #[test]
     fn plain_text() {
         assert!(matches!(parse_input("hello"), Command::Text(_)));
     }

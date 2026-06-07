@@ -21,8 +21,8 @@ Any other input is echoed to the Log panel.
 ## In-Memory Event System
 
 Caravan includes an append-only in-memory event log that records every significant
-action as it occurs. The log is never written to disk; all data is lost when the
-process exits.
+action as it occurs. Events are also persisted to disk (see [Event Persistence](#event-persistence))
+so that the log survives process restarts.
 
 ### Event Log Panel
 
@@ -75,10 +75,38 @@ log recording the newly selected `seq`.
 ### `/clear` Behaviour
 
 `/clear` empties the **screen log** (the Main panel history) but does **not**
-clear the Event Log. The Event Log is append-only for the lifetime of the
-process; there is no mechanism to remove events once they have been recorded.
-There is no file persistence at this stage — the Event Log exists only in
-memory and is discarded when the process exits.
+clear the Event Log. The Event Log is append-only; there is no mechanism to
+remove events once they have been recorded. `/clear` also does **not** delete
+or truncate the on-disk `.caravan/events.jsonl` file — persisted events remain
+intact across restarts.
+
+## Event Persistence
+
+Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
+line). The file is created automatically on first run if it does not exist.
+
+- **On startup** — existing events are loaded from the file so the Event Log
+  panel repopulates with events from previous runs.
+- **Sequence numbering** — new events continue from the last stored `seq + 1`,
+  ensuring sequence numbers are globally unique across restarts.
+- **Append-only** — the file is never truncated or rewritten. `/clear` does
+  not delete or modify `.caravan/events.jsonl`.
+
+### Restart Verification
+
+Manual steps to confirm persistence is working:
+
+1. Run `cargo run` from the project root.
+2. Enter one or more commands (e.g. type `hello` and press Enter).
+3. Type `/exit` to close the application.
+4. Run `cargo run` again.
+5. Confirm that events from the previous run reappear in the **Event Log**
+   panel, and that the `seq` of new events continues from where the last
+   run left off.
+
+> **Note:** `.caravan/` is created relative to the working directory at
+> launch. Run `cargo run` from the project root to ensure the directory is
+> placed consistently.
 
 ## Manual Verification
 
