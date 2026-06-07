@@ -5,6 +5,17 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+/// Compute how many leading events the Log panel should skip: tail the newest
+/// events by default, but scroll up to keep the selected event visible when it
+/// is older than the tail window.
+fn log_skip(total: usize, log_height: usize, selected: Option<usize>) -> usize {
+    let tail_skip = total.saturating_sub(log_height);
+    match selected {
+        Some(sel) if sel < tail_skip => sel,
+        _ => tail_skip,
+    }
+}
+
 pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     let area = frame.area();
 
@@ -73,10 +84,11 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
         .block(Block::default().borders(Borders::ALL).title("Inspector"));
     frame.render_widget(inspector, inspector_area);
 
-    // Log — render the EventLog with tail-clipping and highlight for selected event
+    // Log — render the EventLog, tailing newest events but scrolling up to keep
+    // the selected event visible and highlighted.
     let log_height = log_area.height.saturating_sub(2) as usize;
     let events = app.event_log.events();
-    let skip = events.len().saturating_sub(log_height);
+    let skip = log_skip(events.len(), log_height, app.selected_event);
     let lines: Vec<Line> = events[skip..]
         .iter()
         .enumerate()
@@ -102,8 +114,43 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     frame.render_widget(cmd, cmd_area);
 
     // Place the cursor just after the "> " prompt, clamped inside the inner width.
-    let inner_max_x = cmd_area.x + cmd_area.width.saturating_sub(2);
-    let cursor_x = (cmd_area.x + 2 + app.input.chars().count() as u16).min(inner_max_x);
-    let cursor_y = cmd_area.y + 1;
+    // Saturating arithmetic guards against extreme input lengths / tiny terminals.
+    let inner_max_x = cmd_area.x.saturating_add(cmd_area.width.saturating_sub(2));
+    let typed = u16::try_from(app.input.chars().count()).unwrap_or(u16::MAX);
+    let cursor_x = cmd_area
+        .x
+        .saturating_add(2)
+        .saturating_add(typed)
+        .min(inner_max_x);
+    let cursor_y = cmd_area.y.saturating_add(1);
     frame.set_cursor_position((cursor_x, cursor_y));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::log_skip;
+
+    #[test]
+    fn tails_when_no_selection() {
+        // 10 events, window of 4 -> show the last 4 (skip 6).
+        assert_eq!(log_skip(10, 4, None), 6);
+    }
+
+    #[test]
+    fn tails_when_selection_already_in_window() {
+        // index 8 is within the tail window [6, 10) -> still tail.
+        assert_eq!(log_skip(10, 4, Some(8)), 6);
+    }
+
+    #[test]
+    fn scrolls_up_to_keep_older_selection_visible() {
+        // index 2 is older than the tail window -> scroll so it's at the top.
+        assert_eq!(log_skip(10, 4, Some(2)), 2);
+    }
+
+    #[test]
+    fn no_scroll_when_all_events_fit() {
+        assert_eq!(log_skip(3, 10, Some(0)), 0);
+        assert_eq!(log_skip(3, 10, None), 0);
+    }
 }
