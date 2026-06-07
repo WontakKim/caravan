@@ -29,11 +29,11 @@ impl App {
         self.input.pop();
     }
 
-    /// Records a Ctrl+C quit as a `QuitRequested` event and sets `should_quit`.
+    /// Records a Ctrl+C exit as an `ExitRequested` event and sets `should_quit`.
     /// Ctrl+C is not a command-bar entry, so no `CommandEntered` event is emitted.
     pub fn quit_from_ctrl_c(&mut self) {
         self.event_log
-            .append(EventKind::QuitRequested, "Quit requested (Ctrl+C)");
+            .append(EventKind::ExitRequested, "Exit requested (Ctrl+C)");
         self.should_quit = true;
     }
 
@@ -58,7 +58,7 @@ impl App {
             Command::Quit => {
                 self.event_log.append(EventKind::CommandEntered, &raw);
                 self.event_log
-                    .append(EventKind::QuitRequested, "Quit requested");
+                    .append(EventKind::ExitRequested, "Exit requested");
                 self.should_quit = true;
             }
             Command::Text(t) => {
@@ -239,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn exit_appends_command_entered_then_quit_requested() {
+    fn exit_appends_command_entered_then_exit_requested() {
         let mut app = App::new();
         assert!(!app.should_quit);
         app.input = "/exit".to_string();
@@ -250,19 +250,19 @@ mod tests {
         assert_eq!(ce.kind, EventKind::CommandEntered);
         assert_eq!(ce.detail, "/exit");
         let qr = app.event_log.get(2).unwrap();
-        assert_eq!(qr.kind, EventKind::QuitRequested);
+        assert_eq!(qr.kind, EventKind::ExitRequested);
         assert!(app.input.is_empty());
     }
 
     #[test]
-    fn quit_from_ctrl_c_emits_quit_requested_and_sets_should_quit() {
+    fn quit_from_ctrl_c_emits_exit_requested_and_sets_should_quit() {
         let mut app = App::new();
         let len_before = app.event_log.len();
         app.quit_from_ctrl_c();
         assert!(app.should_quit);
         assert_eq!(app.event_log.len(), len_before + 1);
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, EventKind::QuitRequested);
+        assert_eq!(last.kind, EventKind::ExitRequested);
         // No CommandEntered is emitted for a Ctrl+C quit (not a command-bar entry).
         assert!(
             !app.event_log

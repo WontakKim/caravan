@@ -69,7 +69,7 @@ log recording the newly selected `seq`.
 | `UserTextEntered`            | When plain (non-command) text is submitted               |
 | `LogCleared`                 | When `/clear` is processed                               |
 | `InspectorSelectionChanged`  | Each time the Up/Down selection changes                  |
-| `QuitRequested`              | When `/exit` is processed or Ctrl+C is pressed           |
+| `ExitRequested`              | When `/exit` is processed or Ctrl+C is pressed           |
 | `UnknownCommand`             | When an unrecognised `/command` is entered               |
 
 ### `/clear` Behaviour

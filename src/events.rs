@@ -20,7 +20,7 @@ pub enum EventKind {
     UserTextEntered,
     LogCleared,
     InspectorSelectionChanged,
-    QuitRequested,
+    ExitRequested,
     UnknownCommand,
 }
 
@@ -34,7 +34,7 @@ impl EventKind {
             EventKind::UserTextEntered => "UserTextEntered",
             EventKind::LogCleared => "LogCleared",
             EventKind::InspectorSelectionChanged => "InspectorSelectionChanged",
-            EventKind::QuitRequested => "QuitRequested",
+            EventKind::ExitRequested => "ExitRequested",
             EventKind::UnknownCommand => "UnknownCommand",
         }
     }
@@ -128,7 +128,7 @@ mod tests {
         log.append(EventKind::UserTextEntered, "hello");
         assert!(!log.is_empty());
         assert_eq!(log.len(), 1);
-        log.append(EventKind::QuitRequested, "");
+        log.append(EventKind::ExitRequested, "");
         assert_eq!(log.len(), 2);
     }
 
