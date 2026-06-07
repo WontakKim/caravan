@@ -2,6 +2,7 @@ mod app;
 mod commands;
 mod events;
 mod input;
+mod storage;
 mod ui;
 
 use std::time::Duration;
