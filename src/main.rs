@@ -59,7 +59,7 @@ fn main() -> std::io::Result<()> {
         prev_hook(info);
     }));
 
-    let mut app = app::App::new();
+    let mut app = app::App::with_store(storage::EventStore::new(".caravan"));
 
     // Terminal setup: clean up on any early failure after raw mode is enabled.
     let mut stdout = std::io::stdout();

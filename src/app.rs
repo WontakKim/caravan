@@ -1,4 +1,5 @@
 use crate::events::{EventKind, EventLog};
+use crate::storage::EventStore;
 
 pub struct App {
     pub log: Vec<String>,
@@ -13,6 +14,21 @@ impl App {
         let mut event_log = EventLog::new();
         event_log.append(EventKind::AppStarted, "Caravan started.");
         Self {
+            log: vec!["Caravan started.".to_string()],
+            input: String::new(),
+            should_exit: false,
+            event_log,
+            selected_event: None,
+        }
+    }
+
+    /// Constructs a store-backed app: loads existing events from `store`, appends
+    /// `AppStarted` (which is persisted at `seq = max_loaded + 1`), and returns
+    /// a fresh app whose screen log starts with only "Caravan started.".
+    pub fn with_store(store: EventStore) -> App {
+        let mut event_log = EventLog::load_from(store);
+        event_log.append(EventKind::AppStarted, "Caravan started.");
+        App {
             log: vec!["Caravan started.".to_string()],
             input: String::new(),
             should_exit: false,
@@ -141,8 +157,38 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use crate::events::{EventKind, EventLog, EventSeq};
+    use crate::storage::EventStore;
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TempDir {
+        fn new() -> Self {
+            let count = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let name = format!("caravan_apptest_{}_{}", std::process::id(), count);
+            let path = std::env::temp_dir().join(name);
+            std::fs::create_dir_all(&path).expect("failed to create temp dir");
+            TempDir { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
 
     #[test]
     fn new_yields_app_started_event() {
@@ -377,5 +423,72 @@ mod tests {
             "  /exit  - exit Caravan".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
+    }
+
+    #[test]
+    fn with_store_restart_persists_app_started() {
+        let dir = TempDir::new();
+
+        // First run: one AppStarted event persisted.
+        let store1 = EventStore::new(dir.path());
+        let app1 = App::with_store(store1);
+        let first_event_count = app1.event_log.len(); // 1
+        let first_max_seq = app1.event_log.get(first_event_count - 1).unwrap().seq.0;
+        drop(app1);
+
+        // Second run: reloads first run's events, then appends a new AppStarted.
+        let store2 = EventStore::new(dir.path());
+        let app2 = App::with_store(store2);
+
+        assert_eq!(app2.event_log.len(), first_event_count + 1);
+        let last = app2.event_log.get(app2.event_log.len() - 1).unwrap();
+        assert_eq!(last.kind, EventKind::AppStarted);
+        assert_eq!(last.seq.0, first_max_seq + 1);
+    }
+
+    #[test]
+    fn clear_does_not_truncate_event_file() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+        let events_path = store.events_path();
+
+        let mut app = App::with_store(store);
+
+        // Write some events before /clear.
+        app.input = "hello".to_string();
+        app.submit();
+
+        let events_before_clear = app.event_log.len();
+
+        // /clear appends CommandEntered + LogCleared (2 events).
+        app.input = "/clear".to_string();
+        app.submit();
+
+        let content = std::fs::read_to_string(&events_path).expect("events file should exist");
+        let non_empty_lines = content.lines().filter(|l| !l.is_empty()).count();
+
+        assert_eq!(non_empty_lines, events_before_clear + 2);
+    }
+
+    #[test]
+    fn submit_persists_events_to_file() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+        let events_path = store.events_path();
+
+        let mut app = App::with_store(store);
+        app.input = "hello world".to_string();
+        app.submit();
+
+        let content = std::fs::read_to_string(&events_path).expect("events file should exist");
+
+        let has_command_entered = content.lines().any(|l| l.contains("CommandEntered"));
+        let has_user_text = content.lines().any(|l| l.contains("UserTextEntered"));
+
+        assert!(
+            has_command_entered,
+            "events file should contain CommandEntered"
+        );
+        assert!(has_user_text, "events file should contain UserTextEntered");
     }
 }
