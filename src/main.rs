@@ -1,4 +1,5 @@
 mod app;
+mod events;
 mod input;
 mod ui;
 
