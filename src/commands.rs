@@ -17,10 +17,12 @@ pub fn parse_input(input: &str) -> Command {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
             "/quit" => Command::Quit,
-            _ => Command::Unknown(trimmed.to_string()),
+            // Carry the raw (untrimmed) input so the recorded event detail is
+            // exactly what the user typed.
+            _ => Command::Unknown(input.to_string()),
         };
     }
-    Command::Text(trimmed.to_string())
+    Command::Text(input.to_string())
 }
 
 #[cfg(test)]
@@ -60,5 +62,21 @@ mod tests {
     #[test]
     fn plain_text() {
         assert!(matches!(parse_input("hello"), Command::Text(_)));
+    }
+
+    #[test]
+    fn text_preserves_raw_untrimmed_input() {
+        match parse_input("  hello  ") {
+            Command::Text(s) => assert_eq!(s, "  hello  "),
+            other => panic!("expected Text, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn unknown_preserves_raw_untrimmed_input() {
+        match parse_input("  /foo  ") {
+            Command::Unknown(s) => assert_eq!(s, "  /foo  "),
+            other => panic!("expected Unknown, got {:?}", std::mem::discriminant(&other)),
+        }
     }
 }

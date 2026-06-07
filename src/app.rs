@@ -29,6 +29,14 @@ impl App {
         self.input.pop();
     }
 
+    /// Records a Ctrl+C quit as a `QuitRequested` event and sets `should_quit`.
+    /// Ctrl+C is not a command-bar entry, so no `CommandEntered` event is emitted.
+    pub fn quit_from_ctrl_c(&mut self) {
+        self.event_log
+            .append(EventKind::QuitRequested, "Quit requested (Ctrl+C)");
+        self.should_quit = true;
+    }
+
     pub fn submit(&mut self) {
         use crate::commands::{Command, parse_input};
 
@@ -244,6 +252,41 @@ mod tests {
         let qr = app.event_log.get(2).unwrap();
         assert_eq!(qr.kind, EventKind::QuitRequested);
         assert!(app.input.is_empty());
+    }
+
+    #[test]
+    fn quit_from_ctrl_c_emits_quit_requested_and_sets_should_quit() {
+        let mut app = App::new();
+        let len_before = app.event_log.len();
+        app.quit_from_ctrl_c();
+        assert!(app.should_quit);
+        assert_eq!(app.event_log.len(), len_before + 1);
+        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
+        assert_eq!(last.kind, EventKind::QuitRequested);
+        // No CommandEntered is emitted for a Ctrl+C quit (not a command-bar entry).
+        assert!(
+            !app.event_log
+                .events()
+                .iter()
+                .any(|e| e.kind == EventKind::CommandEntered)
+        );
+    }
+
+    #[test]
+    fn unknown_and_text_event_detail_preserve_raw_input() {
+        let mut app = App::new();
+        app.input = "  hello  ".to_string();
+        app.submit();
+        let ute = app.event_log.get(app.event_log.len() - 1).unwrap();
+        assert_eq!(ute.kind, EventKind::UserTextEntered);
+        assert_eq!(ute.detail, "  hello  ");
+
+        let mut app2 = App::new();
+        app2.input = "  /foo  ".to_string();
+        app2.submit();
+        let uc = app2.event_log.get(app2.event_log.len() - 1).unwrap();
+        assert_eq!(uc.kind, EventKind::UnknownCommand);
+        assert_eq!(uc.detail, "  /foo  ");
     }
 
     #[test]
