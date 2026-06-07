@@ -2,6 +2,7 @@ pub enum Command {
     Help,
     Clear,
     Exit,
+    Ask(String),
     Text(String),
     Unknown(String),
     Empty,
@@ -13,6 +14,12 @@ pub fn parse_input(input: &str) -> Command {
         return Command::Empty;
     }
     if trimmed.starts_with('/') {
+        if let Some(rest) = trimmed.strip_prefix("/ask ") {
+            return Command::Ask(rest.trim().to_string());
+        }
+        if trimmed == "/ask" {
+            return Command::Ask(String::new());
+        }
         return match trimmed {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
@@ -85,5 +92,42 @@ mod tests {
             Command::Unknown(s) => assert_eq!(s, "  /foo  "),
             other => panic!("expected Unknown, got {:?}", std::mem::discriminant(&other)),
         }
+    }
+
+    #[test]
+    fn ask_with_message() {
+        match parse_input("/ask hello") {
+            Command::Ask(msg) => assert_eq!(msg, "hello"),
+            other => panic!("expected Ask, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn ask_trims_message() {
+        match parse_input("/ask   hello  ") {
+            Command::Ask(msg) => assert_eq!(msg, "hello"),
+            other => panic!("expected Ask, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn ask_bare_is_empty() {
+        match parse_input("/ask") {
+            Command::Ask(msg) => assert_eq!(msg, ""),
+            other => panic!("expected Ask, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn ask_only_spaces_is_empty() {
+        match parse_input("/ask   ") {
+            Command::Ask(msg) => assert_eq!(msg, ""),
+            other => panic!("expected Ask, got {:?}", std::mem::discriminant(&other)),
+        }
+    }
+
+    #[test]
+    fn askx_stays_unknown() {
+        assert!(matches!(parse_input("/askx"), Command::Unknown(_)));
     }
 }

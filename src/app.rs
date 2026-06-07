@@ -1,4 +1,4 @@
-use crate::events::{EventKind, EventLog};
+use crate::events::{EventKind, EventLog, RunId, TurnId};
 use crate::storage::EventStore;
 
 pub struct App {
@@ -77,6 +77,50 @@ impl App {
                     .append(EventKind::ExitRequested, "Exit requested");
                 self.should_exit = true;
             }
+            Command::Ask(message) => {
+                self.event_log.append(EventKind::CommandEntered, &raw);
+                if message.is_empty() {
+                    self.event_log
+                        .append(EventKind::RunFailed, r#"reason="empty message""#);
+                    self.log.push("/ask requires a message".to_string());
+                } else {
+                    let run_id_n = self.event_log.next_seq_value();
+                    let run_id = RunId(format!("run-{}", run_id_n));
+                    self.event_log.append(
+                        EventKind::RunCreated,
+                        format!("run_id={} input=\"{}\"", run_id, message),
+                    );
+                    self.event_log
+                        .append(EventKind::RunStarted, format!("run_id={}", run_id));
+                    let turn_id_n = self.event_log.next_seq_value();
+                    let turn_id = TurnId(format!("turn-{}", turn_id_n));
+                    self.event_log.append(
+                        EventKind::TurnStarted,
+                        format!("run_id={} turn_id={}", run_id, turn_id),
+                    );
+                    self.event_log.append(
+                        EventKind::PromptCompiled,
+                        format!(
+                            "run_id={} turn_id={} prompt=\"User asked: {}\"",
+                            run_id, turn_id, message
+                        ),
+                    );
+                    let mock_response = format!("Mock response for: {}", message);
+                    for word in mock_response.split_whitespace() {
+                        self.event_log.append(
+                            EventKind::ModelToken,
+                            format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
+                        );
+                    }
+                    self.event_log.append(
+                        EventKind::RunCompleted,
+                        format!("run_id={} outcome=ok", run_id),
+                    );
+                    self.log.push(format!("User: {}", message));
+                    self.log
+                        .push(format!("Assistant: Mock response for: {}", message));
+                }
+            }
             Command::Text(t) => {
                 self.event_log.append(EventKind::CommandEntered, &raw);
                 self.event_log.append(EventKind::UserTextEntered, t.clone());
@@ -151,6 +195,7 @@ impl App {
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
+            "  /ask <msg> - run a mock /ask".to_string(),
         ]
     }
 }
@@ -421,6 +466,7 @@ mod tests {
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
+            "  /ask <msg> - run a mock /ask".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
@@ -490,5 +536,137 @@ mod tests {
             "events file should contain CommandEntered"
         );
         assert!(has_user_text, "events file should contain UserTextEntered");
+    }
+
+    #[test]
+    fn ask_appends_full_event_sequence() {
+        let mut app = App::new();
+        app.input = "/ask hello".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert_eq!(events[0].kind, EventKind::AppStarted);
+
+        let after_app_started = &events[1..];
+        let n = "Mock response for: hello".split_whitespace().count();
+        let mut expected_kinds = vec![
+            EventKind::CommandEntered,
+            EventKind::RunCreated,
+            EventKind::RunStarted,
+            EventKind::TurnStarted,
+            EventKind::PromptCompiled,
+        ];
+        for _ in 0..n {
+            expected_kinds.push(EventKind::ModelToken);
+        }
+        expected_kinds.push(EventKind::RunCompleted);
+
+        assert_eq!(after_app_started.len(), expected_kinds.len());
+        for (ev, expected) in after_app_started.iter().zip(expected_kinds.iter()) {
+            assert_eq!(ev.kind, *expected);
+        }
+
+        assert!(app.log.contains(&"User: hello".to_string()));
+        assert!(
+            app.log
+                .contains(&"Assistant: Mock response for: hello".to_string())
+        );
+    }
+
+    #[test]
+    fn ask_run_and_turn_ids_match_event_seqs() {
+        let mut app = App::new();
+        app.input = "/ask hi".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+
+        let run_created = events
+            .iter()
+            .find(|e| e.kind == EventKind::RunCreated)
+            .expect("RunCreated event should exist");
+        assert!(
+            run_created
+                .detail
+                .contains(&format!("run_id=run-{}", run_created.seq)),
+            "RunCreated detail should contain run_id=run-{{seq}}: {}",
+            run_created.detail
+        );
+
+        let turn_started = events
+            .iter()
+            .find(|e| e.kind == EventKind::TurnStarted)
+            .expect("TurnStarted event should exist");
+        assert!(
+            turn_started
+                .detail
+                .contains(&format!("turn_id=turn-{}", turn_started.seq)),
+            "TurnStarted detail should contain turn_id=turn-{{seq}}: {}",
+            turn_started.detail
+        );
+    }
+
+    #[test]
+    fn ask_empty_message_emits_run_failed() {
+        let mut app = App::new();
+        app.input = "/ask".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert_eq!(events[0].kind, EventKind::AppStarted);
+        let after = &events[1..];
+        assert_eq!(after.len(), 2);
+        assert_eq!(after[0].kind, EventKind::CommandEntered);
+        assert_eq!(after[1].kind, EventKind::RunFailed);
+
+        assert!(app.log.contains(&"/ask requires a message".to_string()));
+    }
+
+    #[test]
+    fn ask_events_persist_and_reload() {
+        let dir = TempDir::new();
+
+        let store1 = EventStore::new(dir.path());
+        let mut app1 = App::with_store(store1);
+        app1.input = "/ask hi".to_string();
+        app1.submit();
+        let max_seq = app1
+            .event_log
+            .events()
+            .iter()
+            .map(|e| e.seq.0)
+            .max()
+            .unwrap();
+        drop(app1);
+
+        let store2 = EventStore::new(dir.path());
+        let app2 = App::with_store(store2);
+
+        let events = app2.event_log.events();
+        assert!(
+            events.iter().any(|e| e.kind == EventKind::RunCreated),
+            "reloaded log should contain RunCreated"
+        );
+        assert!(
+            events.iter().any(|e| e.kind == EventKind::ModelToken),
+            "reloaded log should contain ModelToken"
+        );
+        assert!(
+            events.iter().any(|e| e.kind == EventKind::RunCompleted),
+            "reloaded log should contain RunCompleted"
+        );
+
+        // The new AppStarted from the second run should have a seq past the prior max.
+        let new_app_started = events
+            .iter()
+            .filter(|e| e.kind == EventKind::AppStarted)
+            .last()
+            .expect("there should be an AppStarted from the second run");
+        assert!(
+            new_app_started.seq.0 > max_seq,
+            "new AppStarted seq {} should be > prior max seq {}",
+            new_app_started.seq.0,
+            max_seq
+        );
     }
 }
