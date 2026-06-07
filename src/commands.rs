@@ -1,7 +1,7 @@
 pub enum Command {
     Help,
     Clear,
-    Quit,
+    Exit,
     Text(String),
     Unknown(String),
     Empty,
@@ -16,7 +16,7 @@ pub fn parse_input(input: &str) -> Command {
         return match trimmed {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
-            "/exit" => Command::Quit,
+            "/exit" => Command::Exit,
             // Carry the raw (untrimmed) input so the recorded event detail is
             // exactly what the user typed.
             _ => Command::Unknown(input.to_string()),
@@ -51,7 +51,7 @@ mod tests {
 
     #[test]
     fn exit_command() {
-        assert!(matches!(parse_input("/exit"), Command::Quit));
+        assert!(matches!(parse_input("/exit"), Command::Exit));
     }
 
     #[test]

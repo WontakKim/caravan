@@ -38,7 +38,7 @@ fn run_app(
             }
         }
 
-        if app.should_quit {
+        if app.should_exit {
             break;
         }
     }

@@ -3,7 +3,7 @@ use crate::events::{EventKind, EventLog};
 pub struct App {
     pub log: Vec<String>,
     pub input: String,
-    pub should_quit: bool,
+    pub should_exit: bool,
     pub event_log: EventLog,
     pub selected_event: Option<usize>,
 }
@@ -15,7 +15,7 @@ impl App {
         Self {
             log: vec!["Caravan started.".to_string()],
             input: String::new(),
-            should_quit: false,
+            should_exit: false,
             event_log,
             selected_event: None,
         }
@@ -29,12 +29,12 @@ impl App {
         self.input.pop();
     }
 
-    /// Records a Ctrl+C exit as an `ExitRequested` event and sets `should_quit`.
+    /// Records a Ctrl+C exit as an `ExitRequested` event and sets `should_exit`.
     /// Ctrl+C is not a command-bar entry, so no `CommandEntered` event is emitted.
-    pub fn quit_from_ctrl_c(&mut self) {
+    pub fn exit_from_ctrl_c(&mut self) {
         self.event_log
             .append(EventKind::ExitRequested, "Exit requested (Ctrl+C)");
-        self.should_quit = true;
+        self.should_exit = true;
     }
 
     pub fn submit(&mut self) {
@@ -55,11 +55,11 @@ impl App {
                     .append(EventKind::LogCleared, "Screen log cleared");
                 self.log.clear();
             }
-            Command::Quit => {
+            Command::Exit => {
                 self.event_log.append(EventKind::CommandEntered, &raw);
                 self.event_log
                     .append(EventKind::ExitRequested, "Exit requested");
-                self.should_quit = true;
+                self.should_exit = true;
             }
             Command::Text(t) => {
                 self.event_log.append(EventKind::CommandEntered, &raw);
@@ -241,10 +241,10 @@ mod tests {
     #[test]
     fn exit_appends_command_entered_then_exit_requested() {
         let mut app = App::new();
-        assert!(!app.should_quit);
+        assert!(!app.should_exit);
         app.input = "/exit".to_string();
         app.submit();
-        assert!(app.should_quit);
+        assert!(app.should_exit);
         assert_eq!(app.event_log.len(), 3);
         let ce = app.event_log.get(1).unwrap();
         assert_eq!(ce.kind, EventKind::CommandEntered);
@@ -255,15 +255,15 @@ mod tests {
     }
 
     #[test]
-    fn quit_from_ctrl_c_emits_exit_requested_and_sets_should_quit() {
+    fn exit_from_ctrl_c_emits_exit_requested_and_sets_should_exit() {
         let mut app = App::new();
         let len_before = app.event_log.len();
-        app.quit_from_ctrl_c();
-        assert!(app.should_quit);
+        app.exit_from_ctrl_c();
+        assert!(app.should_exit);
         assert_eq!(app.event_log.len(), len_before + 1);
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
         assert_eq!(last.kind, EventKind::ExitRequested);
-        // No CommandEntered is emitted for a Ctrl+C quit (not a command-bar entry).
+        // No CommandEntered is emitted for a Ctrl+C exit (not a command-bar entry).
         assert!(
             !app.event_log
                 .events()

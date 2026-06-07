@@ -7,7 +7,7 @@ pub fn handle_key(app: &mut crate::app::App, key: KeyEvent) {
 
     // Ctrl+C exits the application even in raw mode, recording an ExitRequested event.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-        app.quit_from_ctrl_c();
+        app.exit_from_ctrl_c();
         return;
     }
 
@@ -72,7 +72,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_sets_should_quit() {
+    fn ctrl_c_sets_should_exit() {
         let mut app = App::new();
         let ctrl_c = KeyEvent::new_with_kind(
             KeyCode::Char('c'),
@@ -80,7 +80,7 @@ mod tests {
             KeyEventKind::Press,
         );
         handle_key(&mut app, ctrl_c);
-        assert!(app.should_quit);
+        assert!(app.should_exit);
         // Ctrl+C records an ExitRequested event (matches the README).
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
         assert_eq!(last.kind, crate::events::EventKind::ExitRequested);
