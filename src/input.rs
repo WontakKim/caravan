@@ -5,7 +5,7 @@ pub fn handle_key(app: &mut crate::app::App, key: KeyEvent) {
         return;
     }
 
-    // Ctrl+C exits the application even in raw mode, recording an ExitRequested event.
+    // Ctrl+C exits the application even in raw mode, recording an ExitRequest event.
     if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
         app.exit_from_ctrl_c();
         return;
@@ -81,9 +81,9 @@ mod tests {
         );
         handle_key(&mut app, ctrl_c);
         assert!(app.should_exit);
-        // Ctrl+C records an ExitRequested event (matches the README).
+        // Ctrl+C records an ExitRequest event (matches the README).
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, crate::events::EventKind::ExitRequested);
+        assert_eq!(last.kind, crate::events::EventKind::ExitRequest);
     }
 
     #[test]
@@ -93,10 +93,7 @@ mod tests {
         assert_eq!(app.selected_event, Some(0));
         assert_eq!(app.event_log.len(), 2);
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(
-            last.kind,
-            crate::events::EventKind::InspectorSelectionChanged
-        );
+        assert_eq!(last.kind, crate::events::EventKind::InspectorSelection);
         assert_eq!(last.detail, "Selected seq 1");
     }
 
@@ -107,10 +104,7 @@ mod tests {
         assert_eq!(app.selected_event, Some(0));
         assert_eq!(app.event_log.len(), 2);
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(
-            last.kind,
-            crate::events::EventKind::InspectorSelectionChanged
-        );
+        assert_eq!(last.kind, crate::events::EventKind::InspectorSelection);
         assert_eq!(last.detail, "Selected seq 1");
     }
 
@@ -122,10 +116,7 @@ mod tests {
         assert_eq!(app.selected_event, Some(1));
         assert_eq!(app.event_log.len(), 3);
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(
-            last.kind,
-            crate::events::EventKind::InspectorSelectionChanged
-        );
+        assert_eq!(last.kind, crate::events::EventKind::InspectorSelection);
         assert_eq!(last.detail, "Selected seq 2");
     }
 

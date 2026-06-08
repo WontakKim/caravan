@@ -19,42 +19,42 @@ impl fmt::Display for EventSeq {
 /// The kind of application event that occurred.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum EventKind {
-    AppStarted,
-    CommandEntered,
-    HelpRequested,
-    UserTextEntered,
-    LogCleared,
-    InspectorSelectionChanged,
-    ExitRequested,
-    UnknownCommand,
-    RunCreated,
-    RunStarted,
-    TurnStarted,
-    PromptCompiled,
+    AppStart,
+    SlashCommand,
+    HelpRequest,
+    UserMessage,
+    LogClear,
+    InspectorSelection,
+    ExitRequest,
+    UnknownSlashCommand,
+    RunCreate,
+    RunStart,
+    TurnStart,
+    PromptCompile,
     ModelToken,
-    RunCompleted,
-    RunFailed,
+    RunComplete,
+    RunFail,
 }
 
 impl EventKind {
     /// Returns the name of this variant as a static string.
     pub fn name(&self) -> &'static str {
         match self {
-            EventKind::AppStarted => "AppStarted",
-            EventKind::CommandEntered => "CommandEntered",
-            EventKind::HelpRequested => "HelpRequested",
-            EventKind::UserTextEntered => "UserTextEntered",
-            EventKind::LogCleared => "LogCleared",
-            EventKind::InspectorSelectionChanged => "InspectorSelectionChanged",
-            EventKind::ExitRequested => "ExitRequested",
-            EventKind::UnknownCommand => "UnknownCommand",
-            EventKind::RunCreated => "RunCreated",
-            EventKind::RunStarted => "RunStarted",
-            EventKind::TurnStarted => "TurnStarted",
-            EventKind::PromptCompiled => "PromptCompiled",
+            EventKind::AppStart => "AppStart",
+            EventKind::SlashCommand => "SlashCommand",
+            EventKind::HelpRequest => "HelpRequest",
+            EventKind::UserMessage => "UserMessage",
+            EventKind::LogClear => "LogClear",
+            EventKind::InspectorSelection => "InspectorSelection",
+            EventKind::ExitRequest => "ExitRequest",
+            EventKind::UnknownSlashCommand => "UnknownSlashCommand",
+            EventKind::RunCreate => "RunCreate",
+            EventKind::RunStart => "RunStart",
+            EventKind::TurnStart => "TurnStart",
+            EventKind::PromptCompile => "PromptCompile",
             EventKind::ModelToken => "ModelToken",
-            EventKind::RunCompleted => "RunCompleted",
-            EventKind::RunFailed => "RunFailed",
+            EventKind::RunComplete => "RunComplete",
+            EventKind::RunFail => "RunFail",
         }
     }
 }
@@ -208,9 +208,9 @@ mod tests {
         // First "run": build a store-backed log, append a few events.
         let store1 = EventStore::new(dir.path());
         let mut log1 = EventLog::load_from(store1);
-        log1.append(EventKind::AppStarted, "first start");
-        log1.append(EventKind::UserTextEntered, "hello");
-        log1.append(EventKind::UserTextEntered, "world");
+        log1.append(EventKind::AppStart, "first start");
+        log1.append(EventKind::UserMessage, "hello");
+        log1.append(EventKind::UserMessage, "world");
         let max_seq = log1.get(log1.len() - 1).unwrap().seq.0;
         drop(log1);
 
@@ -220,27 +220,27 @@ mod tests {
 
         // All prior events are present.
         assert_eq!(log2.len(), 3);
-        assert_eq!(log2.get(0).unwrap().kind, EventKind::AppStarted);
-        assert_eq!(log2.get(1).unwrap().kind, EventKind::UserTextEntered);
-        assert_eq!(log2.get(2).unwrap().kind, EventKind::UserTextEntered);
+        assert_eq!(log2.get(0).unwrap().kind, EventKind::AppStart);
+        assert_eq!(log2.get(1).unwrap().kind, EventKind::UserMessage);
+        assert_eq!(log2.get(2).unwrap().kind, EventKind::UserMessage);
 
         // Next appended event continues the sequence.
-        let new_seq = log2.append(EventKind::CommandEntered, "cmd");
+        let new_seq = log2.append(EventKind::SlashCommand, "cmd");
         assert_eq!(new_seq.0, max_seq + 1);
     }
 
     #[test]
     fn first_append_returns_seq_one() {
         let mut log = EventLog::new();
-        let seq = log.append(EventKind::AppStarted, "started");
+        let seq = log.append(EventKind::AppStart, "started");
         assert_eq!(seq, EventSeq(1));
     }
 
     #[test]
     fn second_append_returns_seq_two() {
         let mut log = EventLog::new();
-        log.append(EventKind::AppStarted, "started");
-        let seq = log.append(EventKind::CommandEntered, "cmd");
+        log.append(EventKind::AppStart, "started");
+        let seq = log.append(EventKind::SlashCommand, "cmd");
         assert_eq!(seq, EventSeq(2));
     }
 
@@ -254,19 +254,19 @@ mod tests {
     #[test]
     fn len_and_is_empty_reflect_appended_events() {
         let mut log = EventLog::new();
-        log.append(EventKind::UserTextEntered, "hello");
+        log.append(EventKind::UserMessage, "hello");
         assert!(!log.is_empty());
         assert_eq!(log.len(), 1);
-        log.append(EventKind::ExitRequested, "");
+        log.append(EventKind::ExitRequest, "");
         assert_eq!(log.len(), 2);
     }
 
     #[test]
     fn get_returns_correct_event() {
         let mut log = EventLog::new();
-        log.append(EventKind::HelpRequested, "help detail");
+        log.append(EventKind::HelpRequest, "help detail");
         let event = log.get(0).expect("event at index 0 should exist");
-        assert_eq!(event.kind, EventKind::HelpRequested);
+        assert_eq!(event.kind, EventKind::HelpRequest);
         assert_eq!(event.detail, "help detail");
     }
 
@@ -279,34 +279,34 @@ mod tests {
     #[test]
     fn stored_event_preserves_kind_and_detail() {
         let mut log = EventLog::new();
-        log.append(EventKind::LogCleared, "cleared by user");
+        log.append(EventKind::LogClear, "cleared by user");
         let event = log.get(0).unwrap();
-        assert_eq!(event.kind, EventKind::LogCleared);
+        assert_eq!(event.kind, EventKind::LogClear);
         assert_eq!(event.detail, "cleared by user");
     }
 
     #[test]
     fn events_slice_matches_appended_events() {
         let mut log = EventLog::new();
-        log.append(EventKind::AppStarted, "a");
-        log.append(EventKind::UnknownCommand, "b");
+        log.append(EventKind::AppStart, "a");
+        log.append(EventKind::UnknownSlashCommand, "b");
         let events = log.events();
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].kind, EventKind::AppStarted);
-        assert_eq!(events[1].kind, EventKind::UnknownCommand);
+        assert_eq!(events[0].kind, EventKind::AppStart);
+        assert_eq!(events[1].kind, EventKind::UnknownSlashCommand);
     }
 
     #[test]
     fn app_event_serializes_to_expected_jsonl() {
         let event = AppEvent {
             seq: EventSeq(1),
-            kind: EventKind::AppStarted,
+            kind: EventKind::AppStart,
             detail: "Caravan started.".into(),
         };
         let json = serde_json::to_string(&event).expect("serialization should succeed");
         assert_eq!(
             json,
-            r#"{"seq":1,"kind":"AppStarted","detail":"Caravan started."}"#
+            r#"{"seq":1,"kind":"AppStart","detail":"Caravan started."}"#
         );
     }
 
@@ -314,7 +314,7 @@ mod tests {
     fn app_event_json_round_trip() {
         let original = AppEvent {
             seq: EventSeq(1),
-            kind: EventKind::AppStarted,
+            kind: EventKind::AppStart,
             detail: "Caravan started.".into(),
         };
         let json = serde_json::to_string(&original).expect("serialization should succeed");
@@ -325,13 +325,13 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("parsing to Value should succeed");
         assert_eq!(v["seq"], 1);
-        assert_eq!(v["kind"], "AppStarted");
+        assert_eq!(v["kind"], "AppStart");
         assert_eq!(v["detail"], "Caravan started.");
     }
 
     #[test]
     fn event_kind_json_round_trip() {
-        for kind in [EventKind::ExitRequested, EventKind::UnknownCommand] {
+        for kind in [EventKind::ExitRequest, EventKind::UnknownSlashCommand] {
             let json = serde_json::to_string(&kind).expect("serialization should succeed");
             let restored: EventKind =
                 serde_json::from_str(&json).expect("deserialization should succeed");
@@ -342,13 +342,13 @@ mod tests {
     #[test]
     fn run_turn_event_kinds_json_round_trip() {
         let new_kinds = [
-            EventKind::RunCreated,
-            EventKind::RunStarted,
-            EventKind::TurnStarted,
-            EventKind::PromptCompiled,
+            EventKind::RunCreate,
+            EventKind::RunStart,
+            EventKind::TurnStart,
+            EventKind::PromptCompile,
             EventKind::ModelToken,
-            EventKind::RunCompleted,
-            EventKind::RunFailed,
+            EventKind::RunComplete,
+            EventKind::RunFail,
         ];
         for (i, kind) in new_kinds.iter().enumerate() {
             let event = AppEvent {
@@ -362,16 +362,16 @@ mod tests {
             assert_eq!(event, restored);
         }
 
-        // Assert the serialized `kind` field is the variant-name string for RunCreated and ModelToken.
-        let run_created_event = AppEvent {
+        // Assert the serialized `kind` field is the variant-name string for RunCreate and ModelToken.
+        let run_create_event = AppEvent {
             seq: EventSeq(1),
-            kind: EventKind::RunCreated,
+            kind: EventKind::RunCreate,
             detail: String::new(),
         };
-        let json = serde_json::to_string(&run_created_event).expect("serialization should succeed");
+        let json = serde_json::to_string(&run_create_event).expect("serialization should succeed");
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("parsing to Value should succeed");
-        assert_eq!(v["kind"], "RunCreated");
+        assert_eq!(v["kind"], "RunCreate");
 
         let model_token_event = AppEvent {
             seq: EventSeq(2),
@@ -388,7 +388,7 @@ mod tests {
     fn next_seq_value_returns_next_assigned_seq() {
         let mut log = EventLog::new();
         assert_eq!(log.next_seq_value(), 1);
-        log.append(EventKind::AppStarted, "started");
+        log.append(EventKind::AppStart, "started");
         assert_eq!(log.next_seq_value(), 2);
     }
 

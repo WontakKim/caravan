@@ -142,8 +142,8 @@ mod tests {
     fn append_then_load_round_trips_content_and_order() {
         let dir = TempDir::new();
         let store = EventStore::new(dir.path());
-        let e1 = make_event(1, EventKind::AppStarted, "started");
-        let e2 = make_event(2, EventKind::ExitRequested, "exiting");
+        let e1 = make_event(1, EventKind::AppStart, "started");
+        let e2 = make_event(2, EventKind::ExitRequest, "exiting");
         store
             .append_event(&e1)
             .expect("first append should succeed");
@@ -161,7 +161,7 @@ mod tests {
         let dir = TempDir::new();
         let store = EventStore::new(dir.path());
         for i in 1..=5 {
-            let e = make_event(i, EventKind::UserTextEntered, &format!("text {i}"));
+            let e = make_event(i, EventKind::UserMessage, &format!("text {i}"));
             store.append_event(&e).expect("append should succeed");
         }
         let events = store.load_events();
@@ -176,13 +176,13 @@ mod tests {
         let dir = TempDir::new();
         let store = EventStore::new(dir.path());
         store
-            .append_event(&make_event(1, EventKind::AppStarted, ""))
+            .append_event(&make_event(1, EventKind::AppStart, ""))
             .expect("append 1");
         store
-            .append_event(&make_event(2, EventKind::CommandEntered, ""))
+            .append_event(&make_event(2, EventKind::SlashCommand, ""))
             .expect("append 2");
         store
-            .append_event(&make_event(3, EventKind::ExitRequested, ""))
+            .append_event(&make_event(3, EventKind::ExitRequest, ""))
             .expect("append 3");
         assert_eq!(store.load_next_seq(), 4);
     }
@@ -199,7 +199,7 @@ mod tests {
         let dir = TempDir::new();
         let store = EventStore::new(dir.path());
         store.ensure_store_dir().expect("ensure dir");
-        let valid = make_event(1, EventKind::AppStarted, "ok");
+        let valid = make_event(1, EventKind::AppStart, "ok");
         let valid_json = serde_json::to_string(&valid).expect("serialize");
         let content = format!("{valid_json}\nnot valid json\n");
         std::fs::write(store.events_path(), content).expect("write file");
@@ -236,11 +236,11 @@ mod tests {
 
         // Hand-write a file whose final line is a truncated JSON object with
         // NO trailing newline — simulating a torn write from a prior crash.
-        let truncated = r#"{"seq":1,"kind":"AppStarted","detail":"torn"#;
+        let truncated = r#"{"seq":1,"kind":"AppStart","detail":"torn"#;
         std::fs::write(store.events_path(), truncated).expect("write partial file");
 
         // Append a valid event after the partial line.
-        let valid = make_event(2, EventKind::CommandEntered, "after torn");
+        let valid = make_event(2, EventKind::SlashCommand, "after torn");
         store
             .append_event(&valid)
             .expect("append after partial line should succeed");

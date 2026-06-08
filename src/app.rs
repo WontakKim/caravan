@@ -12,7 +12,7 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let mut event_log = EventLog::new();
-        event_log.append(EventKind::AppStarted, "Caravan started.");
+        event_log.append(EventKind::AppStart, "Caravan started.");
         Self {
             log: vec!["Caravan started.".to_string()],
             input: String::new(),
@@ -23,11 +23,11 @@ impl App {
     }
 
     /// Constructs a store-backed app: loads existing events from `store`, appends
-    /// `AppStarted` (which is persisted at `seq = max_loaded + 1`), and returns
+    /// `AppStart` (which is persisted at `seq = max_loaded + 1`), and returns
     /// a fresh app whose screen log starts with only "Caravan started.".
     pub fn with_store(store: EventStore) -> App {
         let mut event_log = EventLog::load_from(store);
-        event_log.append(EventKind::AppStarted, "Caravan started.");
+        event_log.append(EventKind::AppStart, "Caravan started.");
         App {
             log: vec!["Caravan started.".to_string()],
             input: String::new(),
@@ -45,11 +45,11 @@ impl App {
         self.input.pop();
     }
 
-    /// Records a Ctrl+C exit as an `ExitRequested` event and sets `should_exit`.
-    /// Ctrl+C is not a command-bar entry, so no `CommandEntered` event is emitted.
+    /// Records a Ctrl+C exit as an `ExitRequest` event and sets `should_exit`.
+    /// Ctrl+C is not a command-bar entry, so no `SlashCommand` event is emitted.
     pub fn exit_from_ctrl_c(&mut self) {
         self.event_log
-            .append(EventKind::ExitRequested, "Exit requested (Ctrl+C)");
+            .append(EventKind::ExitRequest, "Exit requested (Ctrl+C)");
         self.should_exit = true;
     }
 
@@ -60,47 +60,48 @@ impl App {
         match parse_input(&raw) {
             ParsedInput::Empty => return,
             ParsedInput::SlashCommand(cmd) => {
-                self.event_log.append(EventKind::CommandEntered, &raw);
+                self.event_log.append(EventKind::SlashCommand, &raw);
                 match cmd {
                     Command::Help => {
                         let help_text = Self::help_lines().join(" ");
-                        self.event_log.append(EventKind::HelpRequested, help_text);
+                        self.event_log.append(EventKind::HelpRequest, help_text);
                         self.log.extend(Self::help_lines());
                     }
                     Command::Clear => {
                         self.event_log
-                            .append(EventKind::LogCleared, "Screen log cleared");
+                            .append(EventKind::LogClear, "Screen log cleared");
                         self.log.clear();
                     }
                     Command::Exit => {
                         self.event_log
-                            .append(EventKind::ExitRequested, "Exit requested");
+                            .append(EventKind::ExitRequest, "Exit requested");
                         self.should_exit = true;
                     }
                     Command::Unknown(c) => {
-                        self.event_log.append(EventKind::UnknownCommand, c.clone());
+                        self.event_log
+                            .append(EventKind::UnknownSlashCommand, c.clone());
                         self.log.push(format!("Unknown command: {c}"));
                     }
                 }
             }
             ParsedInput::UserMessage(message) => {
-                self.event_log.append(EventKind::UserTextEntered, &message);
+                self.event_log.append(EventKind::UserMessage, &message);
                 let run_id_n = self.event_log.next_seq_value();
                 let run_id = RunId(format!("run-{}", run_id_n));
                 self.event_log.append(
-                    EventKind::RunCreated,
+                    EventKind::RunCreate,
                     format!("run_id={} input=\"{}\"", run_id, message),
                 );
                 self.event_log
-                    .append(EventKind::RunStarted, format!("run_id={}", run_id));
+                    .append(EventKind::RunStart, format!("run_id={}", run_id));
                 let turn_id_n = self.event_log.next_seq_value();
                 let turn_id = TurnId(format!("turn-{}", turn_id_n));
                 self.event_log.append(
-                    EventKind::TurnStarted,
+                    EventKind::TurnStart,
                     format!("run_id={} turn_id={}", run_id, turn_id),
                 );
                 self.event_log.append(
-                    EventKind::PromptCompiled,
+                    EventKind::PromptCompile,
                     crate::prompt::compile_prompt(&message),
                 );
                 let mock_response = format!("Mock response for: {}", message);
@@ -111,7 +112,7 @@ impl App {
                     );
                 }
                 self.event_log.append(
-                    EventKind::RunCompleted,
+                    EventKind::RunComplete,
                     format!("run_id={} outcome=ok", run_id),
                 );
                 self.log.push(format!("User: {}", message));
@@ -145,7 +146,7 @@ impl App {
             .expect("index is within len_before")
             .seq;
         self.event_log.append(
-            EventKind::InspectorSelectionChanged,
+            EventKind::InspectorSelection,
             format!("Selected seq {}", seq),
         );
     }
@@ -171,7 +172,7 @@ impl App {
             .expect("index is within len_before")
             .seq;
         self.event_log.append(
-            EventKind::InspectorSelectionChanged,
+            EventKind::InspectorSelection,
             format!("Selected seq {}", seq),
         );
     }
@@ -227,7 +228,7 @@ mod tests {
         let app = App::new();
         assert_eq!(app.event_log.len(), 1);
         let ev = app.event_log.get(0).unwrap();
-        assert_eq!(ev.kind, EventKind::AppStarted);
+        assert_eq!(ev.kind, EventKind::AppStart);
         assert_eq!(ev.detail, "Caravan started.");
         assert_eq!(ev.seq, EventSeq(1));
         assert_eq!(app.selected_event, None);
@@ -255,10 +256,10 @@ mod tests {
         app.submit();
         assert_eq!(app.event_log.len(), 3);
         let ce = app.event_log.get(1).unwrap();
-        assert_eq!(ce.kind, EventKind::CommandEntered);
+        assert_eq!(ce.kind, EventKind::SlashCommand);
         assert_eq!(ce.detail, "/help");
         let hr = app.event_log.get(2).unwrap();
-        assert_eq!(hr.kind, EventKind::HelpRequested);
+        assert_eq!(hr.kind, EventKind::HelpRequest);
         for line in App::help_lines() {
             assert!(app.log.contains(&line), "log missing line: {}", line);
         }
@@ -271,13 +272,13 @@ mod tests {
         app.submit();
 
         let events = app.event_log.events();
-        // First post-AppStarted event is UserTextEntered with detail "hello"
-        let first_after = events.get(1).expect("should have event after AppStarted");
-        assert_eq!(first_after.kind, EventKind::UserTextEntered);
+        // First post-AppStart event is UserMessage with detail "hello"
+        let first_after = events.get(1).expect("should have event after AppStart");
+        assert_eq!(first_after.kind, EventKind::UserMessage);
         assert_eq!(first_after.detail, "hello");
 
-        // NO CommandEntered event for plain text
-        assert!(!events.iter().any(|e| e.kind == EventKind::CommandEntered));
+        // NO SlashCommand event for plain text
+        assert!(!events.iter().any(|e| e.kind == EventKind::SlashCommand));
 
         assert!(app.log.contains(&"User: hello".to_string()));
         assert!(
@@ -295,10 +296,10 @@ mod tests {
         app.submit();
         assert_eq!(app.event_log.len(), 3);
         let ce = app.event_log.get(1).unwrap();
-        assert_eq!(ce.kind, EventKind::CommandEntered);
+        assert_eq!(ce.kind, EventKind::SlashCommand);
         assert_eq!(ce.detail, "/foo");
         let uc = app.event_log.get(2).unwrap();
-        assert_eq!(uc.kind, EventKind::UnknownCommand);
+        assert_eq!(uc.kind, EventKind::UnknownSlashCommand);
         assert_eq!(uc.detail, "/foo");
         assert!(app.log.iter().any(|l| l.contains("Unknown command:")));
         assert!(app.input.is_empty());
@@ -317,10 +318,10 @@ mod tests {
         assert!(app.event_log.len() > event_len_before);
         let n = app.event_log.len();
         let ce = app.event_log.get(n - 2).unwrap();
-        assert_eq!(ce.kind, EventKind::CommandEntered);
+        assert_eq!(ce.kind, EventKind::SlashCommand);
         assert_eq!(ce.detail, "/clear");
         let lc = app.event_log.get(n - 1).unwrap();
-        assert_eq!(lc.kind, EventKind::LogCleared);
+        assert_eq!(lc.kind, EventKind::LogClear);
         assert!(app.input.is_empty());
     }
 
@@ -333,10 +334,10 @@ mod tests {
         assert!(app.should_exit);
         assert_eq!(app.event_log.len(), 3);
         let ce = app.event_log.get(1).unwrap();
-        assert_eq!(ce.kind, EventKind::CommandEntered);
+        assert_eq!(ce.kind, EventKind::SlashCommand);
         assert_eq!(ce.detail, "/exit");
         let qr = app.event_log.get(2).unwrap();
-        assert_eq!(qr.kind, EventKind::ExitRequested);
+        assert_eq!(qr.kind, EventKind::ExitRequest);
         assert!(app.input.is_empty());
     }
 
@@ -348,13 +349,13 @@ mod tests {
         assert!(app.should_exit);
         assert_eq!(app.event_log.len(), len_before + 1);
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, EventKind::ExitRequested);
-        // No CommandEntered is emitted for a Ctrl+C exit (not a command-bar entry).
+        assert_eq!(last.kind, EventKind::ExitRequest);
+        // No SlashCommand is emitted for a Ctrl+C exit (not a command-bar entry).
         assert!(
             !app.event_log
                 .events()
                 .iter()
-                .any(|e| e.kind == EventKind::CommandEntered)
+                .any(|e| e.kind == EventKind::SlashCommand)
         );
     }
 
@@ -366,8 +367,8 @@ mod tests {
         let events = app.event_log.events();
         let ute = events
             .iter()
-            .find(|e| e.kind == EventKind::UserTextEntered)
-            .expect("UserTextEntered should exist");
+            .find(|e| e.kind == EventKind::UserMessage)
+            .expect("UserMessage should exist");
         assert_eq!(ute.detail, "hello");
 
         let mut app2 = App::new();
@@ -376,8 +377,8 @@ mod tests {
         let events2 = app2.event_log.events();
         let uc = events2
             .iter()
-            .find(|e| e.kind == EventKind::UnknownCommand)
-            .expect("UnknownCommand should exist");
+            .find(|e| e.kind == EventKind::UnknownSlashCommand)
+            .expect("UnknownSlashCommand should exist");
         assert_eq!(uc.detail, "  /foo  ");
     }
 
@@ -414,7 +415,7 @@ mod tests {
         assert_eq!(app.selected_event, Some(0));
         assert_eq!(app.event_log.len(), len_before + 1);
         let new_ev = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(new_ev.kind, EventKind::InspectorSelectionChanged);
+        assert_eq!(new_ev.kind, EventKind::InspectorSelection);
         assert_eq!(new_ev.detail, "Selected seq 1");
     }
 
@@ -476,20 +477,20 @@ mod tests {
     fn with_store_restart_persists_app_started() {
         let dir = TempDir::new();
 
-        // First run: one AppStarted event persisted.
+        // First run: one AppStart event persisted.
         let store1 = EventStore::new(dir.path());
         let app1 = App::with_store(store1);
         let first_event_count = app1.event_log.len(); // 1
         let first_max_seq = app1.event_log.get(first_event_count - 1).unwrap().seq.0;
         drop(app1);
 
-        // Second run: reloads first run's events, then appends a new AppStarted.
+        // Second run: reloads first run's events, then appends a new AppStart.
         let store2 = EventStore::new(dir.path());
         let app2 = App::with_store(store2);
 
         assert_eq!(app2.event_log.len(), first_event_count + 1);
         let last = app2.event_log.get(app2.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, EventKind::AppStarted);
+        assert_eq!(last.kind, EventKind::AppStart);
         assert_eq!(last.seq.0, first_max_seq + 1);
     }
 
@@ -507,7 +508,7 @@ mod tests {
 
         let events_before_clear = app.event_log.len();
 
-        // /clear appends CommandEntered + LogCleared (2 events).
+        // /clear appends SlashCommand + LogClear (2 events).
         app.input = "/clear".to_string();
         app.submit();
 
@@ -530,16 +531,16 @@ mod tests {
         let content = std::fs::read_to_string(&events_path).expect("events file should exist");
 
         assert!(
-            content.lines().any(|l| l.contains("UserTextEntered")),
-            "events file should contain UserTextEntered"
+            content.lines().any(|l| l.contains("UserMessage")),
+            "events file should contain UserMessage"
         );
         assert!(
-            content.lines().any(|l| l.contains("RunCreated")),
-            "events file should contain RunCreated"
+            content.lines().any(|l| l.contains("RunCreate")),
+            "events file should contain RunCreate"
         );
         assert!(
-            content.lines().any(|l| l.contains("RunCompleted")),
-            "events file should contain RunCompleted"
+            content.lines().any(|l| l.contains("RunComplete")),
+            "events file should contain RunComplete"
         );
     }
 
@@ -550,21 +551,21 @@ mod tests {
         app.submit();
 
         let events = app.event_log.events();
-        assert_eq!(events[0].kind, EventKind::AppStarted);
+        assert_eq!(events[0].kind, EventKind::AppStart);
 
         let after_app_started = &events[1..];
         let n = "Mock response for: hello".split_whitespace().count();
         let mut expected_kinds = vec![
-            EventKind::UserTextEntered,
-            EventKind::RunCreated,
-            EventKind::RunStarted,
-            EventKind::TurnStarted,
-            EventKind::PromptCompiled,
+            EventKind::UserMessage,
+            EventKind::RunCreate,
+            EventKind::RunStart,
+            EventKind::TurnStart,
+            EventKind::PromptCompile,
         ];
         for _ in 0..n {
             expected_kinds.push(EventKind::ModelToken);
         }
-        expected_kinds.push(EventKind::RunCompleted);
+        expected_kinds.push(EventKind::RunComplete);
 
         assert_eq!(after_app_started.len(), expected_kinds.len());
         for (ev, expected) in after_app_started.iter().zip(expected_kinds.iter()) {
@@ -588,25 +589,25 @@ mod tests {
 
         let run_created = events
             .iter()
-            .find(|e| e.kind == EventKind::RunCreated)
-            .expect("RunCreated event should exist");
+            .find(|e| e.kind == EventKind::RunCreate)
+            .expect("RunCreate event should exist");
         assert!(
             run_created
                 .detail
                 .contains(&format!("run_id=run-{}", run_created.seq)),
-            "RunCreated detail should contain run_id=run-{{seq}}: {}",
+            "RunCreate detail should contain run_id=run-{{seq}}: {}",
             run_created.detail
         );
 
         let turn_started = events
             .iter()
-            .find(|e| e.kind == EventKind::TurnStarted)
-            .expect("TurnStarted event should exist");
+            .find(|e| e.kind == EventKind::TurnStart)
+            .expect("TurnStart event should exist");
         assert!(
             turn_started
                 .detail
                 .contains(&format!("turn_id=turn-{}", turn_started.seq)),
-            "TurnStarted detail should contain turn_id=turn-{{seq}}: {}",
+            "TurnStart detail should contain turn_id=turn-{{seq}}: {}",
             turn_started.detail
         );
     }
@@ -633,27 +634,27 @@ mod tests {
 
         let events = app2.event_log.events();
         assert!(
-            events.iter().any(|e| e.kind == EventKind::RunCreated),
-            "reloaded log should contain RunCreated"
+            events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "reloaded log should contain RunCreate"
         );
         assert!(
             events.iter().any(|e| e.kind == EventKind::ModelToken),
             "reloaded log should contain ModelToken"
         );
         assert!(
-            events.iter().any(|e| e.kind == EventKind::RunCompleted),
-            "reloaded log should contain RunCompleted"
+            events.iter().any(|e| e.kind == EventKind::RunComplete),
+            "reloaded log should contain RunComplete"
         );
 
-        // The new AppStarted from the second run should have a seq past the prior max.
+        // The new AppStart from the second run should have a seq past the prior max.
         let new_app_started = events
             .iter()
-            .filter(|e| e.kind == EventKind::AppStarted)
+            .filter(|e| e.kind == EventKind::AppStart)
             .last()
-            .expect("there should be an AppStarted from the second run");
+            .expect("there should be an AppStart from the second run");
         assert!(
             new_app_started.seq.0 > max_seq,
-            "new AppStarted seq {} should be > prior max seq {}",
+            "new AppStart seq {} should be > prior max seq {}",
             new_app_started.seq.0,
             max_seq
         );
@@ -667,16 +668,18 @@ mod tests {
 
         let events = app.event_log.events();
         assert!(
-            events.iter().any(|e| e.kind == EventKind::UnknownCommand),
-            "should have UnknownCommand event"
+            events
+                .iter()
+                .any(|e| e.kind == EventKind::UnknownSlashCommand),
+            "should have UnknownSlashCommand event"
         );
         assert!(
-            !events.iter().any(|e| e.kind == EventKind::RunCreated),
-            "should NOT have RunCreated event for /ask"
+            !events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "should NOT have RunCreate event for /ask"
         );
         assert!(
-            !events.iter().any(|e| e.kind == EventKind::PromptCompiled),
-            "should NOT have PromptCompiled event for /ask"
+            !events.iter().any(|e| e.kind == EventKind::PromptCompile),
+            "should NOT have PromptCompile event for /ask"
         );
     }
 
@@ -689,8 +692,8 @@ mod tests {
         let events = app.event_log.events();
         let pc = events
             .iter()
-            .find(|e| e.kind == EventKind::PromptCompiled)
-            .expect("PromptCompiled event should exist");
+            .find(|e| e.kind == EventKind::PromptCompile)
+            .expect("PromptCompile event should exist");
 
         assert!(pc.detail.contains("System:"));
         assert!(pc.detail.contains("User:"));

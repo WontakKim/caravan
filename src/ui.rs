@@ -9,7 +9,7 @@ use crate::events::{AppEvent, EventKind};
 
 /// Returns the Inspector panel text for the given selected event.
 ///
-/// For `None`, returns a placeholder. For `PromptCompiled` events, renders the
+/// For `None`, returns a placeholder. For `PromptCompile` events, renders the
 /// compiled prompt on its own lines under a `Prompt preview:` label so section
 /// headers (`System:`, `User:`, etc.) are clearly visible. Every other event
 /// kind uses the standard `seq:`/`kind:`/`message:` format.
@@ -17,7 +17,7 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
     match selected {
         None => "No event selected".to_string(),
         Some(ev) => match ev.kind {
-            EventKind::PromptCompiled => format!(
+            EventKind::PromptCompile => format!(
                 "seq: {}\nkind: {}\nPrompt preview:\n{}",
                 ev.seq,
                 ev.kind.name(),
@@ -183,7 +183,7 @@ mod tests {
     fn inspector_text_prompt_compiled_contains_prompt_preview_label() {
         let ev = AppEvent {
             seq: EventSeq(5),
-            kind: EventKind::PromptCompiled,
+            kind: EventKind::PromptCompile,
             detail: "System: You are helpful.\nUser: Hello".to_string(),
         };
         let result = inspector_text(Some(&ev));
@@ -202,13 +202,13 @@ mod tests {
     fn inspector_text_non_prompt_compiled_uses_message_format() {
         let ev = AppEvent {
             seq: EventSeq(3),
-            kind: EventKind::AppStarted,
+            kind: EventKind::AppStart,
             detail: "Caravan started.".to_string(),
         };
         let result = inspector_text(Some(&ev));
         assert!(
             result.contains("message:"),
-            "non-PromptCompiled events should use message: label"
+            "non-PromptCompile events should use message: label"
         );
         assert!(result.contains("seq:"), "should include seq:");
         assert!(result.contains("kind:"), "should include kind:");
