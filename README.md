@@ -126,6 +126,24 @@ remove events once they have been recorded. `/clear` also does **not** delete
 or truncate the on-disk `.caravan/events.jsonl` file — persisted events remain
 intact across restarts.
 
+## Mock Runner Boundary
+
+`App::submit()` is responsible only for routing input: it distinguishes slash
+commands from plain-text user messages. For plain text it appends the
+`UserMessage` event to the log and updates the screen log, then delegates all
+Run/Turn event assembly to `src/runner.rs`.
+
+`runner::run_mock_turn(event_log, message)` owns the full Run/Turn lifecycle.
+It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
+ModelToken* → RunComplete` to the event log (but **not** `UserMessage`, which
+`App::submit()` has already recorded). It returns a `MockRunOutput` value that
+the App uses to render the `User:` / `Assistant:` lines in the Main panel.
+
+This is a **structural boundary only** — user-visible behaviour is unchanged.
+The split ensures that the TUI/App layer and the execution runner remain
+independently testable: `runner::run_mock_turn` can be exercised without a
+running terminal.
+
 ## Prompt Compiler POC
 
 Plain-text user input is compiled into a structured prompt before being passed
