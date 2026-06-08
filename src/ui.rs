@@ -5,6 +5,34 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use crate::events::{AppEvent, EventKind};
+
+/// Returns the Inspector panel text for the given selected event.
+///
+/// For `None`, returns a placeholder. For `PromptCompiled` events, renders the
+/// compiled prompt on its own lines under a `Prompt preview:` label so section
+/// headers (`System:`, `User:`, etc.) are clearly visible. Every other event
+/// kind uses the standard `seq:`/`kind:`/`message:` format.
+fn inspector_text(selected: Option<&AppEvent>) -> String {
+    match selected {
+        None => "No event selected".to_string(),
+        Some(ev) => match ev.kind {
+            EventKind::PromptCompiled => format!(
+                "seq: {}\nkind: {}\nPrompt preview:\n{}",
+                ev.seq,
+                ev.kind.name(),
+                ev.detail
+            ),
+            _ => format!(
+                "seq: {}\nkind: {}\nmessage: {}",
+                ev.seq,
+                ev.kind.name(),
+                ev.detail
+            ),
+        },
+    }
+}
+
 /// Compute how many leading events the Log panel should skip: tail the newest
 /// events by default, but scroll up to keep the selected event visible when it
 /// is older than the tail window.
@@ -68,20 +96,9 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     frame.render_widget(main, main_area);
 
     // Inspector — render selected event detail, or fallback
-    let inspector_text = match app.selected_event {
-        Some(i) => match app.event_log.get(i) {
-            Some(ev) => format!(
-                "seq: {}\nkind: {}\nmessage: {}",
-                ev.seq,
-                ev.kind.name(),
-                ev.detail
-            ),
-            None => "No event selected".to_string(),
-        },
-        None => "No event selected".to_string(),
-    };
-    let inspector = Paragraph::new(inspector_text)
-        .block(Block::default().borders(Borders::ALL).title("Inspector"));
+    let text = inspector_text(app.selected_event.and_then(|i| app.event_log.get(i)));
+    let inspector =
+        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Inspector"));
     frame.render_widget(inspector, inspector_area);
 
     // Log — render the EventLog, tailing newest events but scrolling up to keep
@@ -128,7 +145,9 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
 
 #[cfg(test)]
 mod tests {
-    use super::log_skip;
+    use crate::events::{AppEvent, EventKind, EventSeq};
+
+    use super::{inspector_text, log_skip};
 
     #[test]
     fn tails_when_no_selection() {
@@ -152,5 +171,45 @@ mod tests {
     fn no_scroll_when_all_events_fit() {
         assert_eq!(log_skip(3, 10, Some(0)), 0);
         assert_eq!(log_skip(3, 10, None), 0);
+    }
+
+    #[test]
+    fn inspector_text_none_returns_placeholder() {
+        assert_eq!(inspector_text(None), "No event selected");
+    }
+
+    #[test]
+    fn inspector_text_prompt_compiled_contains_prompt_preview_label() {
+        let ev = AppEvent {
+            seq: EventSeq(5),
+            kind: EventKind::PromptCompiled,
+            detail: "System: You are helpful.\nUser: Hello".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Prompt preview"),
+            "should contain 'Prompt preview'"
+        );
+        // Section header must begin its own line (not glued to the label).
+        assert!(
+            result.contains("\nSystem:"),
+            "System: should start its own line"
+        );
+    }
+
+    #[test]
+    fn inspector_text_non_prompt_compiled_uses_message_format() {
+        let ev = AppEvent {
+            seq: EventSeq(3),
+            kind: EventKind::AppStarted,
+            detail: "Caravan started.".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("message:"),
+            "non-PromptCompiled events should use message: label"
+        );
+        assert!(result.contains("seq:"), "should include seq:");
+        assert!(result.contains("kind:"), "should include kind:");
     }
 }
