@@ -169,6 +169,41 @@ prompt preview. When you select a `PromptCompile` event in the **Inspector**
 panel, the panel displays this full System / User / Context / Output preview,
 letting you inspect exactly what was compiled for that turn.
 
+## ModelAdapter Boundary
+
+`runner::run_mock_turn` owns the Run/Turn lifecycle and event append — it
+appends `RunCreate → RunStart → TurnStart → PromptCompile → ModelToken* →
+RunComplete` — but it no longer contains inline response or token generation
+logic. Those responsibilities are delegated to a `ModelAdapter`.
+
+The `ModelAdapter` trait (defined in `src/model.rs`) exposes a single method:
+
+```rust
+fn complete(&self, prompt: &str, user_message: &str) -> ModelOutput;
+```
+
+`ModelOutput` carries two fields:
+
+```rust
+pub struct ModelOutput {
+    pub response: String,
+    pub tokens: Vec<String>,
+}
+```
+
+`runner::run_mock_turn` calls `adapter.complete(prompt, message)`, iterates
+`ModelOutput.tokens` to append one `ModelToken` event per token, and stores
+`ModelOutput.response` for the `Assistant:` line in the Main panel.
+
+`MockModelAdapter` is the concrete implementation used in the POC. It produces
+a deterministic `"Mock response for: <message>"` response and splits it via
+`split_whitespace()` to derive the token list. The `prompt` argument is
+reserved for a future real adapter and is unused by the mock (`_prompt`).
+
+This is a **structural boundary only** — user-visible behavior and the event
+sequence are unchanged. The boundary ensures that swapping in a real model
+adapter later requires no changes to `runner.rs` or the App layer.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
