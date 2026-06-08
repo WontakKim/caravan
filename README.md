@@ -76,6 +76,7 @@ log recording the newly selected `seq`.
 | `RunStart`                   | When the Run begins executing (before the first Turn)    |
 | `TurnStart`                  | When a Turn begins within a Run                          |
 | `PromptCompile`              | When `compile_prompt` assembles the structured prompt; `detail` holds the compiled prompt preview |
+| `ModelRoute`                 | After `PromptCompile`, before the first `ModelToken`; carries mock provider/model/adapter route metadata selected by `ModelGateway` |
 | `ModelToken`                 | Each token emitted during the mock model reply           |
 | `RunComplete`                | When the Run finishes successfully                       |
 | `RunFail`                    | Retained for backward-compatible loading of persisted events; no longer emitted by the application |
@@ -97,8 +98,10 @@ When `hello world` is entered, the following events are appended in order:
 5. `PromptCompile` — `compile_prompt(message)` compiles the input into the
    System/User/Context/Output template; the event `detail` holds the compiled
    prompt preview.
-6. `ModelToken` × N — one event per word in `Mock response for: <text>`.
-7. `RunComplete` — the Run finishes successfully.
+6. `ModelRoute` — `ModelGateway` selects the provider/model/adapter route; the
+   event `detail` carries the route metadata (mock provider, model, and adapter).
+7. `ModelToken` × N — one event per word in `Mock response for: <text>`.
+8. `RunComplete` — the Run finishes successfully.
 
 ### Main panel output
 
@@ -135,8 +138,8 @@ Run/Turn event assembly to `src/runner.rs`.
 
 `runner::run_mock_turn(event_log, message)` owns the full Run/Turn lifecycle.
 It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
-ModelToken* → RunComplete` to the event log (but **not** `UserMessage`, which
-`App::submit()` has already recorded). It returns a `MockRunOutput` value that
+ModelRoute → ModelToken* → RunComplete` to the event log (but **not**
+`UserMessage`, which `App::submit()` has already recorded). It returns a `MockRunOutput` value that
 the App uses to render the `User:` / `Assistant:` lines in the Main panel.
 
 This is a **structural boundary only** — user-visible behaviour is unchanged.
@@ -172,8 +175,8 @@ letting you inspect exactly what was compiled for that turn.
 ## ModelAdapter Boundary
 
 `runner::run_mock_turn` owns the Run/Turn lifecycle and event append — it
-appends `RunCreate → RunStart → TurnStart → PromptCompile → ModelToken* →
-RunComplete` — but it no longer contains inline response or token generation
+appends `RunCreate → RunStart → TurnStart → PromptCompile → ModelRoute →
+ModelToken* → RunComplete` — but it no longer contains inline response or token generation
 logic. Those responsibilities are delegated to a `ModelAdapter`.
 
 The `ModelAdapter` trait (defined in `src/model.rs`) exposes a single method:
@@ -191,7 +194,9 @@ pub struct ModelOutput {
 }
 ```
 
-`runner::run_mock_turn` calls `MockModelAdapter.complete(&prompt, message)`, iterates
+`runner::run_mock_turn` no longer calls `MockModelAdapter` directly. Instead it
+delegates to `ModelGateway`, which calls `MockModelAdapter.complete` internally
+(see [ModelGateway Boundary](#modelgateway-boundary)). The runner iterates
 `ModelOutput.tokens` to append one `ModelToken` event per token, and stores
 `ModelOutput.response` for the `Assistant:` line in the Main panel.
 
@@ -202,10 +207,33 @@ reserved for a future real adapter and is unused by the mock (`_prompt`).
 
 This is a **structural boundary only** — user-visible behavior and the event
 sequence are unchanged. The boundary gives Caravan a clear seam for a real model
-adapter while keeping the App layer insulated; because `runner::run_mock_turn`
-still names the concrete `MockModelAdapter` today, introducing a real adapter is
-a localized `runner.rs`/`src/model.rs` wiring change rather than an App-layer
-change.
+adapter while keeping the App layer insulated; because `ModelGateway` today
+wraps the concrete `MockModelAdapter`, introducing a real adapter is a localized
+`runner.rs`/`src/model.rs`/gateway wiring change rather than an App-layer change.
+
+## ModelGateway Boundary
+
+`runner::run_mock_turn` obtains model output through
+`ModelGateway::complete(ModelRequest) -> ModelResponse` rather than calling a
+`ModelAdapter` directly. `ModelGateway` is the central routing layer that sits
+between the runner and every concrete adapter:
+
+1. The runner constructs a `ModelRequest` (carrying the compiled prompt and user
+   message) and passes it to `ModelGateway::complete`.
+2. The gateway selects a route (provider, model, adapter) and records a
+   `ModelRoute` event carrying that route metadata.
+3. The gateway delegates to the selected adapter — currently always
+   `MockModelAdapter` — and returns the `ModelResponse` to the runner.
+
+The gateway is where future multi-model routing, model selection, fallback
+logic, cost tracking, and provider configuration will live. New adapter
+integrations require changes only inside `ModelGateway` and `src/model.rs`,
+leaving the runner and App layer untouched.
+
+> **This is NOT a real LLM integration.** There is no API key, no provider
+> configuration, no network call, and no external service dependency. The
+> gateway still wraps `MockModelAdapter` and produces the same deterministic
+> `"Mock response for: <message>"` output as before.
 
 ## Event Persistence
 
@@ -254,7 +282,7 @@ The following checks must be confirmed interactively before the POC is considere
 - [ ] Submitting plain text (no leading `/`) shows `User: <text>` and
       `Assistant: Mock response for: <text>` lines in the Main panel, and appends
       the full Run/Turn event sequence (`UserMessage`, `RunCreate`, `RunStart`,
-      `TurnStart`, `PromptCompile`, `ModelToken` × N, `RunComplete`) to the Event Log.
+      `TurnStart`, `PromptCompile`, `ModelRoute`, `ModelToken` × N, `RunComplete`) to the Event Log.
 - [ ] `/help` appends the command list to the Log only; Main panel is unchanged.
 - [ ] `/clear` empties the Log panel; the Event Log retains all previous entries.
 - [ ] An unknown command (e.g. `/foo`) appends an `Unknown command:` line to the Log.
