@@ -191,7 +191,7 @@ pub struct ModelOutput {
 }
 ```
 
-`runner::run_mock_turn` calls `adapter.complete(prompt, message)`, iterates
+`runner::run_mock_turn` calls `MockModelAdapter.complete(&prompt, message)`, iterates
 `ModelOutput.tokens` to append one `ModelToken` event per token, and stores
 `ModelOutput.response` for the `Assistant:` line in the Main panel.
 
@@ -201,8 +201,11 @@ a deterministic `"Mock response for: <message>"` response and splits it via
 reserved for a future real adapter and is unused by the mock (`_prompt`).
 
 This is a **structural boundary only** — user-visible behavior and the event
-sequence are unchanged. The boundary ensures that swapping in a real model
-adapter later requires no changes to `runner.rs` or the App layer.
+sequence are unchanged. The boundary gives Caravan a clear seam for a real model
+adapter while keeping the App layer insulated; because `runner::run_mock_turn`
+still names the concrete `MockModelAdapter` today, introducing a real adapter is
+a localized `runner.rs`/`src/model.rs` wiring change rather than an App-layer
+change.
 
 ## Event Persistence
 
