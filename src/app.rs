@@ -54,82 +54,72 @@ impl App {
     }
 
     pub fn submit(&mut self) {
-        use crate::commands::{Command, parse_input};
+        use crate::commands::{Command, ParsedInput, parse_input};
 
         let raw = self.input.clone();
         match parse_input(&raw) {
-            Command::Empty => return,
-            Command::Help => {
+            ParsedInput::Empty => return,
+            ParsedInput::SlashCommand(cmd) => {
                 self.event_log.append(EventKind::CommandEntered, &raw);
-                let help_text = Self::help_lines().join(" ");
-                self.event_log.append(EventKind::HelpRequested, help_text);
-                self.log.extend(Self::help_lines());
-            }
-            Command::Clear => {
-                self.event_log.append(EventKind::CommandEntered, &raw);
-                self.event_log
-                    .append(EventKind::LogCleared, "Screen log cleared");
-                self.log.clear();
-            }
-            Command::Exit => {
-                self.event_log.append(EventKind::CommandEntered, &raw);
-                self.event_log
-                    .append(EventKind::ExitRequested, "Exit requested");
-                self.should_exit = true;
-            }
-            Command::Ask(message) => {
-                self.event_log.append(EventKind::CommandEntered, &raw);
-                if message.is_empty() {
-                    self.event_log
-                        .append(EventKind::RunFailed, r#"reason="empty message""#);
-                    self.log.push("/ask requires a message".to_string());
-                } else {
-                    let run_id_n = self.event_log.next_seq_value();
-                    let run_id = RunId(format!("run-{}", run_id_n));
-                    self.event_log.append(
-                        EventKind::RunCreated,
-                        format!("run_id={} input=\"{}\"", run_id, message),
-                    );
-                    self.event_log
-                        .append(EventKind::RunStarted, format!("run_id={}", run_id));
-                    let turn_id_n = self.event_log.next_seq_value();
-                    let turn_id = TurnId(format!("turn-{}", turn_id_n));
-                    self.event_log.append(
-                        EventKind::TurnStarted,
-                        format!("run_id={} turn_id={}", run_id, turn_id),
-                    );
-                    self.event_log.append(
-                        EventKind::PromptCompiled,
-                        format!(
-                            "run_id={} turn_id={} prompt=\"User asked: {}\"",
-                            run_id, turn_id, message
-                        ),
-                    );
-                    let mock_response = format!("Mock response for: {}", message);
-                    for word in mock_response.split_whitespace() {
-                        self.event_log.append(
-                            EventKind::ModelToken,
-                            format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
-                        );
+                match cmd {
+                    Command::Help => {
+                        let help_text = Self::help_lines().join(" ");
+                        self.event_log.append(EventKind::HelpRequested, help_text);
+                        self.log.extend(Self::help_lines());
                     }
-                    self.event_log.append(
-                        EventKind::RunCompleted,
-                        format!("run_id={} outcome=ok", run_id),
-                    );
-                    self.log.push(format!("User: {}", message));
-                    self.log
-                        .push(format!("Assistant: Mock response for: {}", message));
+                    Command::Clear => {
+                        self.event_log
+                            .append(EventKind::LogCleared, "Screen log cleared");
+                        self.log.clear();
+                    }
+                    Command::Exit => {
+                        self.event_log
+                            .append(EventKind::ExitRequested, "Exit requested");
+                        self.should_exit = true;
+                    }
+                    Command::Unknown(c) => {
+                        self.event_log.append(EventKind::UnknownCommand, c.clone());
+                        self.log.push(format!("Unknown command: {c}"));
+                    }
                 }
             }
-            Command::Text(t) => {
-                self.event_log.append(EventKind::CommandEntered, &raw);
-                self.event_log.append(EventKind::UserTextEntered, t.clone());
-                self.log.push(t);
-            }
-            Command::Unknown(c) => {
-                self.event_log.append(EventKind::CommandEntered, &raw);
-                self.event_log.append(EventKind::UnknownCommand, c.clone());
-                self.log.push(format!("Unknown command: {c}"));
+            ParsedInput::UserMessage(message) => {
+                self.event_log.append(EventKind::UserTextEntered, &message);
+                let run_id_n = self.event_log.next_seq_value();
+                let run_id = RunId(format!("run-{}", run_id_n));
+                self.event_log.append(
+                    EventKind::RunCreated,
+                    format!("run_id={} input=\"{}\"", run_id, message),
+                );
+                self.event_log
+                    .append(EventKind::RunStarted, format!("run_id={}", run_id));
+                let turn_id_n = self.event_log.next_seq_value();
+                let turn_id = TurnId(format!("turn-{}", turn_id_n));
+                self.event_log.append(
+                    EventKind::TurnStarted,
+                    format!("run_id={} turn_id={}", run_id, turn_id),
+                );
+                self.event_log.append(
+                    EventKind::PromptCompiled,
+                    format!(
+                        "run_id={} turn_id={} prompt=\"User: {}\"",
+                        run_id, turn_id, message
+                    ),
+                );
+                let mock_response = format!("Mock response for: {}", message);
+                for word in mock_response.split_whitespace() {
+                    self.event_log.append(
+                        EventKind::ModelToken,
+                        format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
+                    );
+                }
+                self.event_log.append(
+                    EventKind::RunCompleted,
+                    format!("run_id={} outcome=ok", run_id),
+                );
+                self.log.push(format!("User: {}", message));
+                self.log
+                    .push(format!("Assistant: Mock response for: {}", message));
             }
         }
 
@@ -192,10 +182,10 @@ impl App {
     pub fn help_lines() -> Vec<String> {
         vec![
             "Available commands:".to_string(),
+            "  Type a message (no leading /) to send it as a user message".to_string(),
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
-            "  /ask <msg> - run a mock /ask".to_string(),
         ]
     }
 }
@@ -278,18 +268,26 @@ mod tests {
     }
 
     #[test]
-    fn plain_text_appends_command_entered_then_user_text_entered() {
+    fn plain_text_appends_user_text_then_run_turn() {
         let mut app = App::new();
         app.input = "hello".to_string();
         app.submit();
-        assert_eq!(app.event_log.len(), 3);
-        let ce = app.event_log.get(1).unwrap();
-        assert_eq!(ce.kind, EventKind::CommandEntered);
-        assert_eq!(ce.detail, "hello");
-        let ute = app.event_log.get(2).unwrap();
-        assert_eq!(ute.kind, EventKind::UserTextEntered);
-        assert_eq!(ute.detail, "hello");
-        assert!(app.log.contains(&"hello".to_string()));
+
+        let events = app.event_log.events();
+        // First post-AppStarted event is UserTextEntered with detail "hello"
+        let first_after = events.get(1).expect("should have event after AppStarted");
+        assert_eq!(first_after.kind, EventKind::UserTextEntered);
+        assert_eq!(first_after.detail, "hello");
+
+        // NO CommandEntered event for plain text
+        assert!(!events.iter().any(|e| e.kind == EventKind::CommandEntered));
+
+        assert!(app.log.contains(&"User: hello".to_string()));
+        assert!(
+            app.log
+                .contains(&"Assistant: Mock response for: hello".to_string())
+        );
+
         assert!(app.input.is_empty());
     }
 
@@ -364,19 +362,25 @@ mod tests {
     }
 
     #[test]
-    fn unknown_and_text_event_detail_preserve_raw_input() {
+    fn user_message_detail_trimmed_unknown_detail_raw() {
         let mut app = App::new();
         app.input = "  hello  ".to_string();
         app.submit();
-        let ute = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(ute.kind, EventKind::UserTextEntered);
-        assert_eq!(ute.detail, "  hello  ");
+        let events = app.event_log.events();
+        let ute = events
+            .iter()
+            .find(|e| e.kind == EventKind::UserTextEntered)
+            .expect("UserTextEntered should exist");
+        assert_eq!(ute.detail, "hello");
 
         let mut app2 = App::new();
         app2.input = "  /foo  ".to_string();
         app2.submit();
-        let uc = app2.event_log.get(app2.event_log.len() - 1).unwrap();
-        assert_eq!(uc.kind, EventKind::UnknownCommand);
+        let events2 = app2.event_log.events();
+        let uc = events2
+            .iter()
+            .find(|e| e.kind == EventKind::UnknownCommand)
+            .expect("UnknownCommand should exist");
         assert_eq!(uc.detail, "  /foo  ");
     }
 
@@ -463,10 +467,10 @@ mod tests {
     fn help_lines_exact_content() {
         let expected = vec![
             "Available commands:".to_string(),
+            "  Type a message (no leading /) to send it as a user message".to_string(),
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
-            "  /ask <msg> - run a mock /ask".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
@@ -528,20 +532,24 @@ mod tests {
 
         let content = std::fs::read_to_string(&events_path).expect("events file should exist");
 
-        let has_command_entered = content.lines().any(|l| l.contains("CommandEntered"));
-        let has_user_text = content.lines().any(|l| l.contains("UserTextEntered"));
-
         assert!(
-            has_command_entered,
-            "events file should contain CommandEntered"
+            content.lines().any(|l| l.contains("UserTextEntered")),
+            "events file should contain UserTextEntered"
         );
-        assert!(has_user_text, "events file should contain UserTextEntered");
+        assert!(
+            content.lines().any(|l| l.contains("RunCreated")),
+            "events file should contain RunCreated"
+        );
+        assert!(
+            content.lines().any(|l| l.contains("RunCompleted")),
+            "events file should contain RunCompleted"
+        );
     }
 
     #[test]
-    fn ask_appends_full_event_sequence() {
+    fn plain_text_appends_full_run_turn_sequence() {
         let mut app = App::new();
-        app.input = "/ask hello".to_string();
+        app.input = "hello".to_string();
         app.submit();
 
         let events = app.event_log.events();
@@ -550,7 +558,7 @@ mod tests {
         let after_app_started = &events[1..];
         let n = "Mock response for: hello".split_whitespace().count();
         let mut expected_kinds = vec![
-            EventKind::CommandEntered,
+            EventKind::UserTextEntered,
             EventKind::RunCreated,
             EventKind::RunStarted,
             EventKind::TurnStarted,
@@ -574,9 +582,9 @@ mod tests {
     }
 
     #[test]
-    fn ask_run_and_turn_ids_match_event_seqs() {
+    fn user_message_run_and_turn_ids_match_event_seqs() {
         let mut app = App::new();
-        app.input = "/ask hi".to_string();
+        app.input = "hi".to_string();
         app.submit();
 
         let events = app.event_log.events();
@@ -607,28 +615,12 @@ mod tests {
     }
 
     #[test]
-    fn ask_empty_message_emits_run_failed() {
-        let mut app = App::new();
-        app.input = "/ask".to_string();
-        app.submit();
-
-        let events = app.event_log.events();
-        assert_eq!(events[0].kind, EventKind::AppStarted);
-        let after = &events[1..];
-        assert_eq!(after.len(), 2);
-        assert_eq!(after[0].kind, EventKind::CommandEntered);
-        assert_eq!(after[1].kind, EventKind::RunFailed);
-
-        assert!(app.log.contains(&"/ask requires a message".to_string()));
-    }
-
-    #[test]
-    fn ask_events_persist_and_reload() {
+    fn user_message_events_persist_and_reload() {
         let dir = TempDir::new();
 
         let store1 = EventStore::new(dir.path());
         let mut app1 = App::with_store(store1);
-        app1.input = "/ask hi".to_string();
+        app1.input = "hi".to_string();
         app1.submit();
         let max_seq = app1
             .event_log
@@ -667,6 +659,23 @@ mod tests {
             "new AppStarted seq {} should be > prior max seq {}",
             new_app_started.seq.0,
             max_seq
+        );
+    }
+
+    #[test]
+    fn slash_ask_is_unknown_and_creates_no_run() {
+        let mut app = App::new();
+        app.input = "/ask hello".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            events.iter().any(|e| e.kind == EventKind::UnknownCommand),
+            "should have UnknownCommand event"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunCreated),
+            "should NOT have RunCreated event for /ask"
         );
     }
 }
