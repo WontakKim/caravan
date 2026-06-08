@@ -4,8 +4,17 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
 };
+use unicode_width::UnicodeWidthStr;
 
 use crate::events::{AppEvent, EventKind};
+
+/// Terminal display width (in columns) of the prompt input. Wide characters
+/// such as Hangul/CJK occupy two columns, so the cursor must advance by the
+/// rendered width rather than the scalar count; otherwise it lands inside the
+/// typed text. Saturates to `u16::MAX` for pathologically long input.
+fn input_display_width(input: &str) -> u16 {
+    u16::try_from(UnicodeWidthStr::width(input)).unwrap_or(u16::MAX)
+}
 
 /// Returns the Inspector panel text for the given selected event.
 ///
@@ -134,7 +143,7 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     // cmd_area.x: 1 for the block's left border, plus 2 for the "> " prefix.
     // Saturating arithmetic guards against extreme input lengths / tiny terminals.
     let inner_max_x = cmd_area.x.saturating_add(cmd_area.width.saturating_sub(2));
-    let typed = u16::try_from(app.input.chars().count()).unwrap_or(u16::MAX);
+    let typed = input_display_width(&app.input);
     let cursor_x = cmd_area
         .x
         .saturating_add(3)
@@ -148,7 +157,27 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
 mod tests {
     use crate::events::{AppEvent, EventKind, EventSeq};
 
-    use super::{inspector_text, log_skip};
+    use super::{input_display_width, inspector_text, log_skip};
+
+    #[test]
+    fn ascii_width_equals_char_count() {
+        assert_eq!(input_display_width("hello"), 5);
+        assert_eq!(input_display_width(""), 0);
+    }
+
+    #[test]
+    fn hangul_chars_are_two_columns_each() {
+        // Each Hangul syllable renders as two terminal columns, so "한글"
+        // (2 scalars) occupies 4 columns. The cursor must advance by 4, not 2.
+        assert_eq!("한글".chars().count(), 2);
+        assert_eq!(input_display_width("한글"), 4);
+    }
+
+    #[test]
+    fn mixed_ascii_and_hangul_width() {
+        // "hi한" -> h(1) + i(1) + 한(2) = 4 columns.
+        assert_eq!(input_display_width("hi한"), 4);
+    }
 
     #[test]
     fn tails_when_no_selection() {
