@@ -533,6 +533,7 @@ mod tests {
             EventKind::RunStart,
             EventKind::TurnStart,
             EventKind::PromptCompile,
+            EventKind::ModelRoute,
         ];
         for _ in 0..n {
             expected_kinds.push(EventKind::ModelToken);

@@ -1,5 +1,5 @@
 use crate::events::{EventKind, EventLog, RunId, TurnId};
-use crate::model::{MockModelAdapter, ModelAdapter};
+use crate::model_gateway::{ModelGateway, ModelRequest};
 
 pub struct MockRunOutput {
     pub user_message: String,
@@ -22,8 +22,13 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
     );
     let prompt = crate::prompt::compile_prompt(message);
     event_log.append(EventKind::PromptCompile, prompt.clone());
-    let output = MockModelAdapter.complete(&prompt, message);
-    for word in &output.tokens {
+    let request = ModelRequest {
+        prompt,
+        user_message: message.to_string(),
+    };
+    let response = ModelGateway::new().complete(request);
+    event_log.append(EventKind::ModelRoute, response.route.detail());
+    for word in &response.tokens {
         event_log.append(
             EventKind::ModelToken,
             format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
@@ -35,7 +40,7 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
     );
     MockRunOutput {
         user_message: message.to_string(),
-        assistant_response: output.response,
+        assistant_response: response.assistant_response,
         run_id: run_id.to_string(),
         turn_id: turn_id.to_string(),
     }
@@ -45,7 +50,7 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
 mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
-    use crate::model::{MockModelAdapter, ModelAdapter};
+    use crate::model_gateway::{ModelGateway, ModelRequest};
 
     #[test]
     fn run_mock_turn_appends_correct_event_sequence() {
@@ -60,6 +65,7 @@ mod tests {
             EventKind::RunStart,
             EventKind::TurnStart,
             EventKind::PromptCompile,
+            EventKind::ModelRoute,
         ];
         for _ in 0..n_tokens {
             expected_kinds.push(EventKind::ModelToken);
@@ -73,6 +79,9 @@ mod tests {
 
         // No UserMessage event in the runner output.
         assert!(!events.iter().any(|e| e.kind == EventKind::UserMessage));
+
+        // Suppress unused variable warning — output is used to verify the sequence compiles.
+        let _ = output;
     }
 
     #[test]
@@ -155,8 +164,11 @@ mod tests {
             .iter()
             .filter(|e| e.kind == EventKind::ModelToken)
             .count();
-        let expected = MockModelAdapter
-            .complete(&crate::prompt::compile_prompt("hello"), "hello")
+        let expected = ModelGateway::new()
+            .complete(ModelRequest {
+                prompt: crate::prompt::compile_prompt("hello"),
+                user_message: "hello".to_string(),
+            })
             .tokens
             .len();
         assert_eq!(token_events, expected);
@@ -169,9 +181,64 @@ mod tests {
 
         assert_eq!(
             output.assistant_response,
-            MockModelAdapter
-                .complete(&crate::prompt::compile_prompt("hello"), "hello")
-                .response
+            ModelGateway::new()
+                .complete(ModelRequest {
+                    prompt: crate::prompt::compile_prompt("hello"),
+                    user_message: "hello".to_string(),
+                })
+                .assistant_response
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_model_route_event_has_correct_detail() {
+        let mut event_log = EventLog::new();
+        run_mock_turn(&mut event_log, "hello");
+
+        let events = event_log.events();
+
+        // Find the PromptCompile and first ModelToken indices.
+        let prompt_compile_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::PromptCompile)
+            .expect("PromptCompile event should exist");
+        let first_model_token_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelToken)
+            .expect("ModelToken event should exist");
+
+        // Exactly one ModelRoute event.
+        let model_route_events: Vec<_> = events
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelRoute)
+            .collect();
+        assert_eq!(
+            model_route_events.len(),
+            1,
+            "expected exactly one ModelRoute event"
+        );
+
+        let route_event = model_route_events[0];
+
+        // ModelRoute must be immediately after PromptCompile and before first ModelToken.
+        let route_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelRoute)
+            .expect("ModelRoute event should exist");
+        assert_eq!(
+            route_idx,
+            prompt_compile_idx + 1,
+            "ModelRoute should be immediately after PromptCompile"
+        );
+        assert!(
+            route_idx < first_model_token_idx,
+            "ModelRoute should be before the first ModelToken"
+        );
+
+        // Detail must match the hardcoded route string.
+        assert_eq!(
+            route_event.detail,
+            "provider=mock model=mock-model adapter=MockModelAdapter"
         );
     }
 }
