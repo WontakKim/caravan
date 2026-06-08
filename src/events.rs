@@ -31,6 +31,7 @@ pub enum EventKind {
     RunStart,
     TurnStart,
     PromptCompile,
+    ModelRoute,
     ModelToken,
     RunComplete,
     RunFail,
@@ -52,6 +53,7 @@ impl EventKind {
             EventKind::RunStart => "RunStart",
             EventKind::TurnStart => "TurnStart",
             EventKind::PromptCompile => "PromptCompile",
+            EventKind::ModelRoute => "ModelRoute",
             EventKind::ModelToken => "ModelToken",
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
@@ -346,6 +348,7 @@ mod tests {
             EventKind::RunStart,
             EventKind::TurnStart,
             EventKind::PromptCompile,
+            EventKind::ModelRoute,
             EventKind::ModelToken,
             EventKind::RunComplete,
             EventKind::RunFail,
@@ -382,6 +385,26 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("parsing to Value should succeed");
         assert_eq!(v["kind"], "ModelToken");
+    }
+
+    #[test]
+    fn model_route_event_kind_serializes_and_round_trips() {
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ModelRoute,
+            detail: "provider=mock model=mock-model adapter=MockModelAdapter".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ModelRoute");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+        assert_eq!(
+            restored.detail,
+            "provider=mock model=mock-model adapter=MockModelAdapter"
+        );
     }
 
     #[test]
