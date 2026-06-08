@@ -54,7 +54,7 @@ When no event is selected the panel displays `No event selected`.
 ### Navigation
 
 Use the **Up** and **Down** arrow keys to move the selection through the Event
-Log. Each navigation step appends an `InspectorSelectionChanged` event to the
+Log. Each navigation step appends an `InspectorSelection` event to the
 log recording the newly selected `seq`.
 
 - **Down** — move to the next (newer) event; no-op at the bottom boundary.
@@ -64,21 +64,21 @@ log recording the newly selected `seq`.
 
 | EventKind                    | When it is recorded                                      |
 |------------------------------|----------------------------------------------------------|
-| `AppStarted`                 | Once, when the application initialises                   |
-| `CommandEntered`             | Recorded for slash commands only (not plain text)        |
-| `HelpRequested`              | When `/help` is processed                                |
-| `UserTextEntered`            | When plain (non-command) text is submitted               |
-| `LogCleared`                 | When `/clear` is processed                               |
-| `InspectorSelectionChanged`  | Each time the Up/Down selection changes                  |
-| `ExitRequested`              | When `/exit` is processed or Ctrl+C is pressed           |
-| `UnknownCommand`             | When an unrecognised `/command` is entered               |
-| `RunCreated`                 | When a new Run is initialised for a submitted user message|
-| `RunStarted`                 | When the Run begins executing (before the first Turn)    |
-| `TurnStarted`                | When a Turn begins within a Run                          |
-| `PromptCompiled`             | When `compile_prompt` assembles the structured prompt; `detail` holds the compiled prompt preview |
+| `AppStart`                   | Once, when the application initialises                   |
+| `SlashCommand`               | Recorded for slash commands only (not plain text)        |
+| `HelpRequest`                | When `/help` is processed                                |
+| `UserMessage`                | When plain (non-command) text is submitted               |
+| `LogClear`                   | When `/clear` is processed                               |
+| `InspectorSelection`         | Each time the Up/Down selection changes                  |
+| `ExitRequest`                | When `/exit` is processed or Ctrl+C is pressed           |
+| `UnknownSlashCommand`        | When an unrecognised `/command` is entered               |
+| `RunCreate`                  | When a new Run is initialised for a submitted user message|
+| `RunStart`                   | When the Run begins executing (before the first Turn)    |
+| `TurnStart`                  | When a Turn begins within a Run                          |
+| `PromptCompile`              | When `compile_prompt` assembles the structured prompt; `detail` holds the compiled prompt preview |
 | `ModelToken`                 | Each token emitted during the mock model reply           |
-| `RunCompleted`               | When the Run finishes successfully                       |
-| `RunFailed`                  | Retained for backward-compatible loading of persisted events; no longer emitted by the application |
+| `RunComplete`                | When the Run finishes successfully                       |
+| `RunFail`                    | Retained for backward-compatible loading of persisted events; no longer emitted by the application |
 
 ## Mock Run/Turn Flow
 
@@ -90,15 +90,15 @@ mock** — it does not call a real LLM. The reply is always
 
 When `hello world` is entered, the following events are appended in order:
 
-1. `UserTextEntered` — the submitted text is recorded (no `CommandEntered`).
-2. `RunCreated` — a new Run is created; `run_id` is stored in the event `detail`.
-3. `RunStarted` — the Run transitions to the running state.
-4. `TurnStarted` — the first (and only) Turn begins; `turn_id` is in `detail`.
-5. `PromptCompiled` — `compile_prompt(message)` compiles the input into the
+1. `UserMessage` — the submitted text is recorded (no `SlashCommand`).
+2. `RunCreate` — a new Run is created; `run_id` is stored in the event `detail`.
+3. `RunStart` — the Run transitions to the running state.
+4. `TurnStart` — the first (and only) Turn begins; `turn_id` is in `detail`.
+5. `PromptCompile` — `compile_prompt(message)` compiles the input into the
    System/User/Context/Output template; the event `detail` holds the compiled
    prompt preview.
 6. `ModelToken` × N — one event per word in `Mock response for: <text>`.
-7. `RunCompleted` — the Run finishes successfully.
+7. `RunComplete` — the Run finishes successfully.
 
 ### Main panel output
 
@@ -146,8 +146,8 @@ Output:
 Respond with a deterministic mock response.
 ```
 
-The result is stored in the `PromptCompiled` event `detail` field as the compiled
-prompt preview. When you select a `PromptCompiled` event in the **Inspector**
+The result is stored in the `PromptCompile` event `detail` field as the compiled
+prompt preview. When you select a `PromptCompile` event in the **Inspector**
 panel, the panel displays this full System / User / Context / Output preview,
 letting you inspect exactly what was compiled for that turn.
 
@@ -179,6 +179,16 @@ Manual steps to confirm persistence is working:
 > launch. Run `cargo run` from the project root to ensure the directory is
 > placed consistently.
 
+> **Stale event data:** If the Event Log shows unexpected or missing entries
+> after updating the application (e.g. following an `EventKind` rename), the
+> on-disk `.caravan/events.jsonl` may contain events written with old variant
+> names that are silently skipped on load. Delete the directory before running
+> to start fresh:
+>
+> ```sh
+> rm -rf .caravan
+> ```
+
 ## Manual Verification
 
 The following checks must be confirmed interactively before the POC is considered done:
@@ -187,8 +197,8 @@ The following checks must be confirmed interactively before the POC is considere
       the Nav/Main/Inspector columns, the Log panel, and the Command Bar — without panicking.
 - [ ] Submitting plain text (no leading `/`) shows `User: <text>` and
       `Assistant: Mock response for: <text>` lines in the Main panel, and appends
-      the full Run/Turn event sequence (`UserTextEntered`, `RunCreated`, `RunStarted`,
-      `TurnStarted`, `PromptCompiled`, `ModelToken` × N, `RunCompleted`) to the Event Log.
+      the full Run/Turn event sequence (`UserMessage`, `RunCreate`, `RunStart`,
+      `TurnStart`, `PromptCompile`, `ModelToken` × N, `RunComplete`) to the Event Log.
 - [ ] `/help` appends the command list to the Log only; Main panel is unchanged.
 - [ ] `/clear` empties the Log panel; the Event Log retains all previous entries.
 - [ ] An unknown command (e.g. `/foo`) appends an `Unknown command:` line to the Log.
