@@ -101,10 +101,7 @@ impl App {
                 );
                 self.event_log.append(
                     EventKind::PromptCompiled,
-                    format!(
-                        "run_id={} turn_id={} prompt=\"User: {}\"",
-                        run_id, turn_id, message
-                    ),
+                    crate::prompt::compile_prompt(&message),
                 );
                 let mock_response = format!("Mock response for: {}", message);
                 for word in mock_response.split_whitespace() {
@@ -677,5 +674,28 @@ mod tests {
             !events.iter().any(|e| e.kind == EventKind::RunCreated),
             "should NOT have RunCreated event for /ask"
         );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::PromptCompiled),
+            "should NOT have PromptCompiled event for /ask"
+        );
+    }
+
+    #[test]
+    fn prompt_compiled_detail_contains_template() {
+        let mut app = App::new();
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        let pc = events
+            .iter()
+            .find(|e| e.kind == EventKind::PromptCompiled)
+            .expect("PromptCompiled event should exist");
+
+        assert!(pc.detail.contains("System:"));
+        assert!(pc.detail.contains("User:"));
+        assert!(pc.detail.contains("Context:"));
+        assert!(pc.detail.contains("Output:"));
+        assert!(pc.detail.contains("hello caravan"));
     }
 }
