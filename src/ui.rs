@@ -124,19 +124,20 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     let log = Paragraph::new(lines).block(Block::default().borders(Borders::ALL).title("Log"));
     frame.render_widget(log, log_area);
 
-    // Command Bar
+    // Prompt Bar
     let cmd_text = format!("> {}", app.input);
     let cmd =
-        Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Command"));
+        Paragraph::new(cmd_text).block(Block::default().borders(Borders::ALL).title("Prompt"));
     frame.render_widget(cmd, cmd_area);
 
-    // Place the cursor just after the "> " prompt, clamped inside the inner width.
+    // Place the cursor just after the "> " prompt. The offset is 3 columns from
+    // cmd_area.x: 1 for the block's left border, plus 2 for the "> " prefix.
     // Saturating arithmetic guards against extreme input lengths / tiny terminals.
     let inner_max_x = cmd_area.x.saturating_add(cmd_area.width.saturating_sub(2));
     let typed = u16::try_from(app.input.chars().count()).unwrap_or(u16::MAX);
     let cursor_x = cmd_area
         .x
-        .saturating_add(2)
+        .saturating_add(3)
         .saturating_add(typed)
         .min(inner_max_x);
     let cursor_y = cmd_area.y.saturating_add(1);
