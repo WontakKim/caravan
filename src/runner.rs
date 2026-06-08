@@ -1,4 +1,5 @@
 use crate::events::{EventKind, EventLog, RunId, TurnId};
+use crate::model::{MockModelAdapter, ModelAdapter};
 
 pub struct MockRunOutput {
     pub user_message: String,
@@ -19,12 +20,10 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
         EventKind::TurnStart,
         format!("run_id={} turn_id={}", run_id, turn_id),
     );
-    event_log.append(
-        EventKind::PromptCompile,
-        crate::prompt::compile_prompt(message),
-    );
-    let mock_response = format!("Mock response for: {}", message);
-    for word in mock_response.split_whitespace() {
+    let prompt = crate::prompt::compile_prompt(message);
+    event_log.append(EventKind::PromptCompile, prompt.clone());
+    let output = MockModelAdapter.complete(&prompt, message);
+    for word in &output.tokens {
         event_log.append(
             EventKind::ModelToken,
             format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
@@ -36,7 +35,7 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
     );
     MockRunOutput {
         user_message: message.to_string(),
-        assistant_response: mock_response,
+        assistant_response: output.response,
         run_id: run_id.to_string(),
         turn_id: turn_id.to_string(),
     }
@@ -46,6 +45,7 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
 mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
+    use crate::model::{MockModelAdapter, ModelAdapter};
 
     #[test]
     fn run_mock_turn_appends_correct_event_sequence() {
@@ -142,6 +142,36 @@ mod tests {
             output.turn_id,
             format!("turn-{}", turn_started.seq),
             "turn_id should equal turn-{{seq of TurnStart event}}"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_token_count_matches_model_output() {
+        let mut event_log = EventLog::new();
+        run_mock_turn(&mut event_log, "hello");
+
+        let token_events = event_log
+            .events()
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelToken)
+            .count();
+        let expected = MockModelAdapter
+            .complete(&crate::prompt::compile_prompt("hello"), "hello")
+            .tokens
+            .len();
+        assert_eq!(token_events, expected);
+    }
+
+    #[test]
+    fn run_mock_turn_response_matches_model_output() {
+        let mut event_log = EventLog::new();
+        let output = run_mock_turn(&mut event_log, "hello");
+
+        assert_eq!(
+            output.assistant_response,
+            MockModelAdapter
+                .complete(&crate::prompt::compile_prompt("hello"), "hello")
+                .response
         );
     }
 }
