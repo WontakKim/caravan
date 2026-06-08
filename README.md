@@ -75,7 +75,7 @@ log recording the newly selected `seq`.
 | `RunCreated`                 | When a new Run is initialised for a submitted user message|
 | `RunStarted`                 | When the Run begins executing (before the first Turn)    |
 | `TurnStarted`                | When a Turn begins within a Run                          |
-| `PromptCompiled`             | When the prompt is assembled and ready to send           |
+| `PromptCompiled`             | When `compile_prompt` assembles the structured prompt; `detail` holds the compiled prompt preview |
 | `ModelToken`                 | Each token emitted during the mock model reply           |
 | `RunCompleted`               | When the Run finishes successfully                       |
 | `RunFailed`                  | Retained for backward-compatible loading of persisted events; no longer emitted by the application |
@@ -94,7 +94,9 @@ When `hello world` is entered, the following events are appended in order:
 2. `RunCreated` — a new Run is created; `run_id` is stored in the event `detail`.
 3. `RunStarted` — the Run transitions to the running state.
 4. `TurnStarted` — the first (and only) Turn begins; `turn_id` is in `detail`.
-5. `PromptCompiled` — the prompt text is assembled from the message.
+5. `PromptCompiled` — `compile_prompt(message)` compiles the input into the
+   System/User/Context/Output template; the event `detail` holds the compiled
+   prompt preview.
 6. `ModelToken` × N — one event per word in `Mock response for: <text>`.
 7. `RunCompleted` — the Run finishes successfully.
 
@@ -123,6 +125,31 @@ clear the Event Log. The Event Log is append-only; there is no mechanism to
 remove events once they have been recorded. `/clear` also does **not** delete
 or truncate the on-disk `.caravan/events.jsonl` file — persisted events remain
 intact across restarts.
+
+## Prompt Compiler POC
+
+Plain-text user input is compiled into a structured prompt before being passed
+to the mock model. The `compile_prompt(message)` function produces a fixed
+four-section template:
+
+```
+System:
+You are Caravan's local mock assistant.
+
+User:
+<message>
+
+Context:
+No external context is available in this POC.
+
+Output:
+Respond with a deterministic mock response.
+```
+
+The result is stored in the `PromptCompiled` event `detail` field as the compiled
+prompt preview. When you select a `PromptCompiled` event in the **Inspector**
+panel, the panel displays this full System / User / Context / Output preview,
+letting you inspect exactly what was compiled for that turn.
 
 ## Event Persistence
 
