@@ -1,4 +1,4 @@
-use crate::events::{EventKind, EventLog, RunId, TurnId};
+use crate::events::{EventKind, EventLog};
 use crate::storage::EventStore;
 
 pub struct App {
@@ -86,38 +86,10 @@ impl App {
             }
             ParsedInput::UserMessage(message) => {
                 self.event_log.append(EventKind::UserMessage, &message);
-                let run_id_n = self.event_log.next_seq_value();
-                let run_id = RunId(format!("run-{}", run_id_n));
-                self.event_log.append(
-                    EventKind::RunCreate,
-                    format!("run_id={} input=\"{}\"", run_id, message),
-                );
-                self.event_log
-                    .append(EventKind::RunStart, format!("run_id={}", run_id));
-                let turn_id_n = self.event_log.next_seq_value();
-                let turn_id = TurnId(format!("turn-{}", turn_id_n));
-                self.event_log.append(
-                    EventKind::TurnStart,
-                    format!("run_id={} turn_id={}", run_id, turn_id),
-                );
-                self.event_log.append(
-                    EventKind::PromptCompile,
-                    crate::prompt::compile_prompt(&message),
-                );
-                let mock_response = format!("Mock response for: {}", message);
-                for word in mock_response.split_whitespace() {
-                    self.event_log.append(
-                        EventKind::ModelToken,
-                        format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
-                    );
-                }
-                self.event_log.append(
-                    EventKind::RunComplete,
-                    format!("run_id={} outcome=ok", run_id),
-                );
-                self.log.push(format!("User: {}", message));
+                let output = crate::runner::run_mock_turn(&mut self.event_log, &message);
+                self.log.push(format!("User: {}", output.user_message));
                 self.log
-                    .push(format!("Assistant: Mock response for: {}", message));
+                    .push(format!("Assistant: {}", output.assistant_response));
             }
         }
 

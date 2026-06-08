@@ -3,6 +3,7 @@ mod commands;
 mod events;
 mod input;
 mod prompt;
+mod runner;
 mod storage;
 mod ui;
 
