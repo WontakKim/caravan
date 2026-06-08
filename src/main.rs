@@ -3,6 +3,7 @@ mod commands;
 mod events;
 mod input;
 mod model;
+mod model_gateway;
 mod prompt;
 mod runner;
 mod storage;
