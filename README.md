@@ -79,7 +79,8 @@ log recording the newly selected `seq`.
 | `ModelRoute`                 | After `PromptCompile`, before the first `ModelToken`; carries mock provider/model/adapter route metadata selected by `ModelGateway` |
 | `ModelToken`                 | Each token emitted during the mock model reply           |
 | `RunComplete`                | When the Run finishes successfully                       |
-| `RunFail`                    | Retained for backward-compatible loading of persisted events; no longer emitted by the application |
+| `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelToken` or `RunComplete` is appended |
+| `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
 
 ## Mock Run/Turn Flow
 
@@ -313,6 +314,30 @@ identical to the plain-string era.
 > **This is type-tidying only.** There is no real provider selection, model
 > switching, or API integration. The enum variants (`Mock`, `MockModelAdapter`)
 > still drive the same deterministic mock path as before.
+
+## Model Error Boundary
+
+`ModelAdapter::complete`, `ModelAdapterRegistry::complete`, and
+`ModelGateway::complete` now return `Result<_, ModelError>` rather than a bare
+`ModelOutput`/`ModelResponse`. This gives the runner a typed error boundary to
+handle model-layer failures.
+
+When `ModelGateway::complete` returns an `Err(ModelError)`, the runner:
+
+1. Appends a `ModelError` event carrying the `kind=... message="..."` detail.
+2. Appends a `RunFail` event to signal that the Run did not complete successfully.
+3. Does **not** append any `ModelToken` or `RunComplete` events.
+
+The failure path is exercised only via the `#[cfg(test)]` helper
+`ModelGateway::failing_for_test`, which constructs a gateway wired to always
+return an error. There is no user-facing command or runtime configuration that
+triggers this path during normal application use.
+
+> **This is still a mock/test-only error boundary.** It does NOT implement real
+> LLM API or network failure handling. `MockModelAdapter` still always succeeds
+> with the same deterministic `"Mock response for: <message>"` response and
+> token list. The `Result` return type and `failing_for_test` helper exist solely
+> to establish a typed seam for future real-adapter error propagation.
 
 ## Event Persistence
 
