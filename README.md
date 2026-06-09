@@ -187,7 +187,7 @@ logic. Those responsibilities are delegated to a `ModelAdapter`.
 The `ModelAdapter` trait (defined in `src/model.rs`) exposes a single method:
 
 ```rust
-fn complete(&self, request: &ModelRequest) -> ModelOutput;
+fn complete(&self, request: &ModelRequest) -> ModelResult<ModelOutput>;
 ```
 
 `ModelOutput` carries two fields:
@@ -221,7 +221,7 @@ wraps the concrete `MockModelAdapter`, introducing a real adapter is a localized
 `ModelRequest is now defined in` `src/model.rs` as the shared core adapter request type used by `ModelAdapter`, `ModelAdapterRegistry`, `ModelGateway`, and the runner — no longer a gateway-local type.
 
 `runner::run_mock_turn` obtains model output through
-`ModelGateway::complete(ModelRequest) -> ModelResponse` rather than calling a
+`ModelGateway::complete(ModelRequest) -> Result<ModelResponse, ModelError>` rather than calling a
 `ModelAdapter` directly. `ModelGateway` is the central routing layer that sits
 between the runner and every concrete adapter:
 
@@ -279,7 +279,7 @@ active profile — the gateway reads `active_profile.provider`, `.model`, and
 
 `ModelGateway` no longer constructs `MockModelAdapter` directly. Instead, it
 owns a `ModelAdapterRegistry` and delegates every completion call to
-`ModelAdapterRegistry::complete(profile, request) -> ModelOutput`. The registry
+`ModelAdapterRegistry::complete(profile, request) -> Result<ModelOutput, ModelError>`. The registry
 selects the adapter by matching on the typed `ModelAdapterKind` from the
 `ModelProfile`; the single supported arm is `ModelAdapterKind::MockModelAdapter`,
 which delegates to the owned `MockModelAdapter` instance and preserves the same
