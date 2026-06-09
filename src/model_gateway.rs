@@ -1,4 +1,5 @@
 use crate::model::{MockModelAdapter, ModelAdapter};
+use crate::model_config::ModelConfig;
 
 pub struct ModelRequest {
     pub prompt: String,
@@ -26,25 +27,36 @@ pub struct ModelResponse {
     pub tokens: Vec<String>,
 }
 
-pub struct ModelGateway;
+pub struct ModelGateway {
+    config: ModelConfig,
+}
 
 impl ModelGateway {
-    pub fn new() -> Self {
-        ModelGateway
+    pub fn new(config: ModelConfig) -> Self {
+        ModelGateway { config }
     }
 
     pub fn complete(&self, request: ModelRequest) -> ModelResponse {
+        // Mock-only invariant: active_profile.adapter is expected to equal
+        // "MockModelAdapter" — the concrete adapter constructed here.
+        // Adapter dispatch / switching / fallback are out of scope.
         let adapter = MockModelAdapter;
         let output = adapter.complete(&request.prompt, &request.user_message);
         ModelResponse {
             route: ModelRoute {
-                provider: "mock".into(),
-                model: "mock-model".into(),
-                adapter: "MockModelAdapter".into(),
+                provider: self.config.active_profile.provider.clone(),
+                model: self.config.active_profile.model.clone(),
+                adapter: self.config.active_profile.adapter.clone(),
             },
             assistant_response: output.response,
             tokens: output.tokens,
         }
+    }
+}
+
+impl Default for ModelGateway {
+    fn default() -> Self {
+        Self::new(ModelConfig::default())
     }
 }
 
@@ -54,7 +66,7 @@ mod tests {
 
     #[test]
     fn complete_returns_expected_response_and_tokens() {
-        let response = ModelGateway::new().complete(ModelRequest {
+        let response = ModelGateway::default().complete(ModelRequest {
             prompt: "any".into(),
             user_message: "hello caravan".into(),
         });
@@ -70,7 +82,7 @@ mod tests {
 
     #[test]
     fn complete_returns_expected_route() {
-        let response = ModelGateway::new().complete(ModelRequest {
+        let response = ModelGateway::default().complete(ModelRequest {
             prompt: "any".into(),
             user_message: "hello caravan".into(),
         });
@@ -81,7 +93,7 @@ mod tests {
 
     #[test]
     fn route_detail_formats_mock_route() {
-        let response = ModelGateway::new().complete(ModelRequest {
+        let response = ModelGateway::default().complete(ModelRequest {
             prompt: "any".into(),
             user_message: "hello caravan".into(),
         });
@@ -99,5 +111,18 @@ mod tests {
             adapter: "a".into(),
         };
         assert_eq!(route.detail(), "provider=p model=m adapter=a");
+    }
+
+    #[test]
+    fn default_config_route_detail_and_response_match_mock_adapter() {
+        let response = ModelGateway::default().complete(ModelRequest {
+            prompt: String::new(),
+            user_message: String::new(),
+        });
+        assert_eq!(
+            response.route.detail(),
+            "provider=mock model=mock-model adapter=MockModelAdapter"
+        );
+        assert_eq!(response.assistant_response, "Mock response for: ");
     }
 }

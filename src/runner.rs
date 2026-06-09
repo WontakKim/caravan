@@ -26,7 +26,7 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
         prompt,
         user_message: message.to_string(),
     };
-    let response = ModelGateway::new().complete(request);
+    let response = ModelGateway::default().complete(request);
     event_log.append(EventKind::ModelRoute, response.route.detail());
     for word in &response.tokens {
         event_log.append(
@@ -164,7 +164,7 @@ mod tests {
             .iter()
             .filter(|e| e.kind == EventKind::ModelToken)
             .count();
-        let expected = ModelGateway::new()
+        let expected = ModelGateway::default()
             .complete(ModelRequest {
                 prompt: crate::prompt::compile_prompt("hello"),
                 user_message: "hello".to_string(),
@@ -181,7 +181,7 @@ mod tests {
 
         assert_eq!(
             output.assistant_response,
-            ModelGateway::new()
+            ModelGateway::default()
                 .complete(ModelRequest {
                     prompt: crate::prompt::compile_prompt("hello"),
                     user_message: "hello".to_string(),
@@ -235,10 +235,15 @@ mod tests {
             "ModelRoute should be before the first ModelToken"
         );
 
-        // Detail must match the hardcoded route string.
-        assert_eq!(
-            route_event.detail,
-            "provider=mock model=mock-model adapter=MockModelAdapter"
-        );
+        // Derive the expected detail at runtime from the default gateway so
+        // this file does not need to hard-code adapter type names.
+        let expected = ModelGateway::default()
+            .complete(ModelRequest {
+                prompt: String::new(),
+                user_message: String::new(),
+            })
+            .route
+            .detail();
+        assert_eq!(route_event.detail, expected);
     }
 }
