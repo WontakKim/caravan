@@ -35,6 +35,7 @@ pub enum EventKind {
     ModelToken,
     RunComplete,
     RunFail,
+    ModelError,
 }
 
 impl EventKind {
@@ -57,6 +58,7 @@ impl EventKind {
             EventKind::ModelToken => "ModelToken",
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
+            EventKind::ModelError => "ModelError",
         }
     }
 }
@@ -405,6 +407,23 @@ mod tests {
             restored.detail,
             "provider=mock model=mock-model adapter=MockModelAdapter"
         );
+    }
+
+    #[test]
+    fn model_error_event_kind_serializes_and_round_trips() {
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ModelError,
+            detail: "model layer failure".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ModelError");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+        assert_eq!(restored.kind, EventKind::ModelError);
     }
 
     #[test]
