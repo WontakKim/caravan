@@ -1,5 +1,5 @@
-use crate::model::{MockModelAdapter, ModelAdapter};
 use crate::model_config::ModelConfig;
+use crate::model_registry::ModelAdapterRegistry;
 
 pub struct ModelRequest {
     pub prompt: String,
@@ -29,24 +29,25 @@ pub struct ModelResponse {
 
 pub struct ModelGateway {
     config: ModelConfig,
+    registry: ModelAdapterRegistry,
 }
 
 impl ModelGateway {
     pub fn new(config: ModelConfig) -> Self {
-        ModelGateway { config }
+        ModelGateway {
+            config,
+            registry: ModelAdapterRegistry::default(),
+        }
     }
 
     pub fn complete(&self, request: ModelRequest) -> ModelResponse {
-        // Mock-only invariant: active_profile.adapter is expected to equal
-        // "MockModelAdapter" — the concrete adapter constructed here.
-        // Adapter dispatch / switching / fallback are out of scope.
-        let adapter = MockModelAdapter;
-        let output = adapter.complete(&request.prompt, &request.user_message);
+        let profile = &self.config.active_profile;
+        let output = self.registry.complete(profile, &request);
         ModelResponse {
             route: ModelRoute {
-                provider: self.config.active_profile.provider.clone(),
-                model: self.config.active_profile.model.clone(),
-                adapter: self.config.active_profile.adapter.clone(),
+                provider: profile.provider.clone(),
+                model: profile.model.clone(),
+                adapter: profile.adapter.clone(),
             },
             assistant_response: output.response,
             tokens: output.tokens,

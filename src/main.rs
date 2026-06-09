@@ -5,6 +5,7 @@ mod input;
 mod model;
 mod model_config;
 mod model_gateway;
+mod model_registry;
 mod prompt;
 mod runner;
 mod storage;
