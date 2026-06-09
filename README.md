@@ -136,11 +136,16 @@ commands from plain-text user messages. For plain text it appends the
 `UserMessage` event to the log and updates the screen log, then delegates all
 Run/Turn event assembly to `src/runner.rs`.
 
-`runner::run_mock_turn(event_log, message)` owns the full Run/Turn lifecycle.
+`runner::run_mock_turn(event_log, message, gateway)` owns the full Run/Turn lifecycle.
 It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
 ModelRoute → ModelToken* → RunComplete` to the event log (but **not**
 `UserMessage`, which `App::submit()` has already recorded). It returns a `MockRunOutput` value that
 the App uses to render the `User:` / `Assistant:` lines in the Main panel.
+
+`App` owns the `ModelGateway` and injects it into the runner on every call.
+The runner receives the gateway as a parameter rather than constructing it
+internally, keeping the App layer in control of gateway lifecycle and making
+the runner independently testable with any gateway implementation.
 
 This is a **structural boundary only** — user-visible behaviour is unchanged.
 The split ensures that the TUI/App layer and the execution runner remain
@@ -230,10 +235,43 @@ logic, cost tracking, and provider configuration will live. New adapter
 integrations require changes only inside `ModelGateway` and `src/model.rs`,
 leaving the runner and App layer untouched.
 
+### Model Config Stub
+
+`ModelGateway` owns a `ModelConfig` that carries the active routing
+configuration. `ModelConfig` holds an `active_profile` field whose type is
+`ModelProfile`. Each `ModelProfile` contains three fields:
+
+| Field      | Description                                      |
+|------------|--------------------------------------------------|
+| `provider` | The model provider identifier (e.g. `"mock"`)    |
+| `model`    | The model identifier (e.g. `"mock-model"`)       |
+| `adapter`  | The adapter class to use (e.g. `MockModelAdapter`) |
+
+The default profile is:
+
+```
+provider  = mock
+model     = mock-model
+adapter   = MockModelAdapter
+```
+
+The `ModelRoute` detail recorded in the event log is built directly from this
+active profile — the gateway reads `active_profile.provider`, `.model`, and
+`.adapter` and uses them to construct the route metadata emitted in the
+`ModelRoute` event.
+
+`App` owns the `ModelGateway` (constructed at startup with the default
+`ModelConfig`/`ModelProfile`) and injects it into
+`runner::run_mock_turn(event_log, message, gateway)` on every call.
+
 > **This is NOT a real LLM integration.** There is no API key, no provider
 > configuration, no network call, and no external service dependency. The
 > gateway still wraps `MockModelAdapter` and produces the same deterministic
 > `"Mock response for: <message>"` output as before.
+>
+> This is a mock stub, not a real LLM API integration. The `ModelConfig` and
+> `ModelProfile` structures exist solely to establish the routing seam; no
+> connection to any external model provider is made.
 
 ## Event Persistence
 
