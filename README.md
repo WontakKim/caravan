@@ -241,11 +241,11 @@ leaving the runner and App layer untouched.
 configuration. `ModelConfig` holds an `active_profile` field whose type is
 `ModelProfile`. Each `ModelProfile` contains three fields:
 
-| Field      | Description                                      |
-|------------|--------------------------------------------------|
-| `provider` | The model provider identifier (e.g. `"mock"`)    |
-| `model`    | The model identifier (e.g. `"mock-model"`)       |
-| `adapter`  | The adapter class to use (e.g. `MockModelAdapter`) |
+| Field      | Description                                                                     |
+|------------|---------------------------------------------------------------------------------|
+| `provider` | The model provider; typed as `ModelProvider` (e.g. `ModelProvider::Mock`)       |
+| `model`    | The model identifier string (e.g. `"mock-model"`)                               |
+| `adapter`  | The adapter kind; typed as `ModelAdapterKind` (e.g. `ModelAdapterKind::MockModelAdapter`) |
 
 The default profile is:
 
@@ -277,16 +277,41 @@ active profile — the gateway reads `active_profile.provider`, `.model`, and
 
 `ModelGateway` no longer constructs `MockModelAdapter` directly. Instead, it
 owns a `ModelAdapterRegistry` and delegates every completion call to
-`ModelAdapterRegistry::complete(profile, request) -> ModelOutput`. In the
-current stub, the registry accepts the `ModelProfile` parameter as a future
-routing seam but does not inspect it; it unconditionally delegates to its single
-owned `MockModelAdapter`, preserving the same deterministic mock path.
+`ModelAdapterRegistry::complete(profile, request) -> ModelOutput`. The registry
+selects the adapter by matching on the typed `ModelAdapterKind` from the
+`ModelProfile`; the single supported arm is `ModelAdapterKind::MockModelAdapter`,
+which delegates to the owned `MockModelAdapter` instance and preserves the same
+deterministic mock path.
 
 > **This is still a mock stub.** The `ModelAdapterRegistry` performs no model
 > switching, fallback, or runtime reconfiguration. There is no real LLM, no API
 > key, no config file lookup, and no network call. The registry seam exists to
 > isolate adapter construction from the gateway and to make future real-adapter
 > registration possible without changing `ModelGateway`.
+
+## Provider / Adapter Type Cleanup POC
+
+`provider` and `adapter` in `ModelProfile` are now small typed enums rather than
+plain strings. Both are defined in `src/model_types.rs`:
+
+- **`ModelProvider`** — variants: `Mock`. Exposes `as_str()` returning `"mock"`.
+- **`ModelAdapterKind`** — variants: `MockModelAdapter`. Exposes `as_str()` returning
+  `"MockModelAdapter"`.
+
+The `model` field remains a `String` (e.g. `"mock-model"`).
+
+The `ModelRoute` event detail emitted by `ModelGateway` is unchanged:
+
+```
+provider=mock model=mock-model adapter=MockModelAdapter
+```
+
+`as_str()` on each enum produces those values, so the observable event output is
+identical to the plain-string era.
+
+> **This is type-tidying only.** There is no real provider selection, model
+> switching, or API integration. The enum variants (`Mock`, `MockModelAdapter`)
+> still drive the same deterministic mock path as before.
 
 ## Event Persistence
 
