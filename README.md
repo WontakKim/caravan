@@ -75,7 +75,7 @@ log recording the newly selected `seq`.
 | `RunCreate`                  | When a new Run is initialised for a submitted user message|
 | `RunStart`                   | When the Run begins executing (before the first Turn)    |
 | `TurnStart`                  | When a Turn begins within a Run                          |
-| `PromptCompile`              | When `compile_prompt` assembles the structured prompt; `detail` holds the compiled prompt preview |
+| `PromptCompile`              | When the prompt compiler assembles the structured prompt; `detail` holds the compiled prompt preview |
 | `ModelRoute`                 | After `PromptCompile`, before the first `ModelToken`; carries mock provider/model/adapter route metadata selected by `ModelGateway` |
 | `ModelToken`                 | Each token emitted during the mock model reply           |
 | `RunComplete`                | When the Run finishes successfully                       |
@@ -95,7 +95,7 @@ When `hello world` is entered, the following events are appended in order:
 2. `RunCreate` — a new Run is created; `run_id` is stored in the event `detail`.
 3. `RunStart` — the Run transitions to the running state.
 4. `TurnStart` — the first (and only) Turn begins; `turn_id` is in `detail`.
-5. `PromptCompile` — `compile_prompt(message)` compiles the input into the
+5. `PromptCompile` — the prompt compiler processes the input into the
    System/User/Context/Output template; the event `detail` holds the compiled
    prompt preview.
 6. `ModelRoute` — `ModelGateway` selects the provider/model/adapter route; the
@@ -155,8 +155,7 @@ running terminal.
 ## Prompt Compiler POC
 
 Plain-text user input is compiled into a structured prompt before being passed
-to the mock model. The `compile_prompt(message)` function produces a fixed
-four-section template:
+to the mock model. The prompt compiler produces a fixed four-section template:
 
 ```
 System:
@@ -187,7 +186,7 @@ logic. Those responsibilities are delegated to a `ModelAdapter`.
 The `ModelAdapter` trait (defined in `src/model.rs`) exposes a single method:
 
 ```rust
-fn complete(&self, prompt: &str, user_message: &str) -> ModelOutput;
+fn complete(&self, request: &ModelRequest) -> ModelOutput;
 ```
 
 `ModelOutput` carries two fields:
@@ -207,8 +206,8 @@ delegates to `ModelGateway`, which calls `MockModelAdapter.complete` internally
 
 `MockModelAdapter` is the concrete implementation used in the POC. It produces
 a deterministic `"Mock response for: <message>"` response and splits it via
-`split_whitespace()` to derive the token list. The `prompt` argument is
-reserved for a future real adapter and is unused by the mock (`_prompt`).
+`split_whitespace()` to derive the token list. The mock receives a `&ModelRequest`
+and simply leaves `request.prompt` unread.
 
 This is a **structural boundary only** — user-visible behavior and the event
 sequence are unchanged. The boundary gives Caravan a clear seam for a real model
@@ -217,6 +216,8 @@ wraps the concrete `MockModelAdapter`, introducing a real adapter is a localized
 `runner.rs`/`src/model.rs`/gateway wiring change rather than an App-layer change.
 
 ## ModelGateway Boundary
+
+`ModelRequest is now defined in` `src/model.rs` as the shared core adapter request type used by `ModelAdapter`, `ModelAdapterRegistry`, `ModelGateway`, and the runner — no longer a gateway-local type.
 
 `runner::run_mock_turn` obtains model output through
 `ModelGateway::complete(ModelRequest) -> ModelResponse` rather than calling a
