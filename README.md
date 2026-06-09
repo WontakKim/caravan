@@ -277,10 +277,10 @@ active profile — the gateway reads `active_profile.provider`, `.model`, and
 
 `ModelGateway` no longer constructs `MockModelAdapter` directly. Instead, it
 owns a `ModelAdapterRegistry` and delegates every completion call to
-`ModelAdapterRegistry::complete(profile, request) -> ModelOutput`. The registry
-looks up the appropriate adapter for the given `ModelProfile` and dispatches the
-request. Currently only `MockModelAdapter` is registered, so the dispatch always
-resolves to the same deterministic mock path.
+`ModelAdapterRegistry::complete(profile, request) -> ModelOutput`. In the
+current stub, the registry accepts the `ModelProfile` parameter as a future
+routing seam but does not inspect it; it unconditionally delegates to its single
+owned `MockModelAdapter`, preserving the same deterministic mock path.
 
 > **This is still a mock stub.** The `ModelAdapterRegistry` performs no model
 > switching, fallback, or runtime reconfiguration. There is no real LLM, no API
