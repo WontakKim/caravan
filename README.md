@@ -273,6 +273,21 @@ active profile — the gateway reads `active_profile.provider`, `.model`, and
 > `ModelProfile` structures exist solely to establish the routing seam; no
 > connection to any external model provider is made.
 
+## Model Adapter Registry Stub
+
+`ModelGateway` no longer constructs `MockModelAdapter` directly. Instead, it
+owns a `ModelAdapterRegistry` and delegates every completion call to
+`ModelAdapterRegistry::complete(profile, request) -> ModelOutput`. The registry
+looks up the appropriate adapter for the given `ModelProfile` and dispatches the
+request. Currently only `MockModelAdapter` is registered, so the dispatch always
+resolves to the same deterministic mock path.
+
+> **This is still a mock stub.** The `ModelAdapterRegistry` performs no model
+> switching, fallback, or runtime reconfiguration. There is no real LLM, no API
+> key, no config file lookup, and no network call. The registry seam exists to
+> isolate adapter construction from the gateway and to make future real-adapter
+> registration possible without changing `ModelGateway`.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
