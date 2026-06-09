@@ -145,7 +145,7 @@ the App uses to render the `User:` / `Assistant:` lines in the Main panel.
 `App` owns the `ModelGateway` and injects it into the runner on every call.
 The runner receives the gateway as a parameter rather than constructing it
 internally, keeping the App layer in control of gateway lifecycle and making
-the runner independently testable with any gateway implementation.
+the runner independently testable with a supplied gateway instance.
 
 This is a **structural boundary only** — user-visible behaviour is unchanged.
 The split ensures that the TUI/App layer and the execution runner remain
