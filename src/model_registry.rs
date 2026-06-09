@@ -1,4 +1,4 @@
-use crate::model::{MockModelAdapter, ModelAdapter, ModelOutput, ModelRequest};
+use crate::model::{MockModelAdapter, ModelAdapter, ModelError, ModelOutput, ModelRequest};
 use crate::model_config::ModelProfile;
 use crate::model_types::ModelAdapterKind;
 
@@ -17,7 +17,11 @@ impl Default for ModelAdapterRegistry {
 impl ModelAdapterRegistry {
     // Mock-only invariant: always delegates to MockModelAdapter.
     // Adapter selection is by ModelAdapterKind; switching, fallback, and error handling are out of scope.
-    pub fn complete(&self, profile: &ModelProfile, request: &ModelRequest) -> ModelOutput {
+    pub fn complete(
+        &self,
+        profile: &ModelProfile,
+        request: &ModelRequest,
+    ) -> Result<ModelOutput, ModelError> {
         match profile.adapter {
             ModelAdapterKind::MockModelAdapter => self.mock.complete(request),
         }
@@ -37,7 +41,7 @@ mod tests {
             prompt: "any".into(),
             user_message: "hello caravan".into(),
         };
-        let output = registry.complete(&profile, &request);
+        let output = registry.complete(&profile, &request).unwrap();
         assert_eq!(output.response, "Mock response for: hello caravan");
         assert_eq!(
             output.tokens,

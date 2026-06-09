@@ -1,4 +1,4 @@
-use crate::model::ModelRequest;
+use crate::model::{ModelError, ModelRequest};
 use crate::model_config::ModelConfig;
 use crate::model_registry::ModelAdapterRegistry;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
@@ -29,6 +29,8 @@ pub struct ModelResponse {
 pub struct ModelGateway {
     config: ModelConfig,
     registry: ModelAdapterRegistry,
+    #[cfg(test)]
+    forced_error: Option<ModelError>,
 }
 
 impl ModelGateway {
@@ -36,20 +38,38 @@ impl ModelGateway {
         ModelGateway {
             config,
             registry: ModelAdapterRegistry::default(),
+            #[cfg(test)]
+            forced_error: None,
         }
     }
 
-    pub fn complete(&self, request: ModelRequest) -> ModelResponse {
+    #[cfg(test)]
+    pub fn failing_for_test(error: ModelError) -> Self {
+        ModelGateway {
+            config: ModelConfig::default(),
+            registry: ModelAdapterRegistry::default(),
+            forced_error: Some(error),
+        }
+    }
+
+    pub fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
+        #[cfg(test)]
+        if let Some(ref err) = self.forced_error {
+            return Err(err.clone());
+        }
+
         let profile = &self.config.active_profile;
-        let output = self.registry.complete(profile, &request);
-        ModelResponse {
-            route: ModelRoute {
-                provider: profile.provider,
-                model: profile.model.clone(),
-                adapter: profile.adapter,
-            },
-            assistant_response: output.response,
-            tokens: output.tokens,
+        match self.registry.complete(profile, &request) {
+            Ok(output) => Ok(ModelResponse {
+                route: ModelRoute {
+                    provider: profile.provider,
+                    model: profile.model.clone(),
+                    adapter: profile.adapter,
+                },
+                assistant_response: output.response,
+                tokens: output.tokens,
+            }),
+            Err(e) => Err(e),
         }
     }
 }
@@ -66,10 +86,12 @@ mod tests {
 
     #[test]
     fn complete_returns_expected_response_and_tokens() {
-        let response = ModelGateway::default().complete(ModelRequest {
-            prompt: "any".into(),
-            user_message: "hello caravan".into(),
-        });
+        let response = ModelGateway::default()
+            .complete(ModelRequest {
+                prompt: "any".into(),
+                user_message: "hello caravan".into(),
+            })
+            .unwrap();
         assert_eq!(
             response.assistant_response,
             "Mock response for: hello caravan"
@@ -82,10 +104,12 @@ mod tests {
 
     #[test]
     fn complete_returns_expected_route() {
-        let response = ModelGateway::default().complete(ModelRequest {
-            prompt: "any".into(),
-            user_message: "hello caravan".into(),
-        });
+        let response = ModelGateway::default()
+            .complete(ModelRequest {
+                prompt: "any".into(),
+                user_message: "hello caravan".into(),
+            })
+            .unwrap();
         assert_eq!(response.route.provider, ModelProvider::Mock);
         assert_eq!(response.route.model, "mock-model");
         assert_eq!(response.route.adapter, ModelAdapterKind::MockModelAdapter);
@@ -93,10 +117,12 @@ mod tests {
 
     #[test]
     fn route_detail_formats_mock_route() {
-        let response = ModelGateway::default().complete(ModelRequest {
-            prompt: "any".into(),
-            user_message: "hello caravan".into(),
-        });
+        let response = ModelGateway::default()
+            .complete(ModelRequest {
+                prompt: "any".into(),
+                user_message: "hello caravan".into(),
+            })
+            .unwrap();
         assert_eq!(
             response.route.detail(),
             "provider=mock model=mock-model adapter=MockModelAdapter"
@@ -118,10 +144,12 @@ mod tests {
 
     #[test]
     fn default_config_route_detail_and_response_match_mock_adapter() {
-        let response = ModelGateway::default().complete(ModelRequest {
-            prompt: String::new(),
-            user_message: String::new(),
-        });
+        let response = ModelGateway::default()
+            .complete(ModelRequest {
+                prompt: String::new(),
+                user_message: String::new(),
+            })
+            .unwrap();
         assert_eq!(
             response.route.detail(),
             "provider=mock model=mock-model adapter=MockModelAdapter"

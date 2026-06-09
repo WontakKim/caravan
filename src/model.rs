@@ -9,16 +9,16 @@ pub struct ModelRequest {
 }
 
 pub trait ModelAdapter {
-    fn complete(&self, request: &ModelRequest) -> ModelOutput;
+    fn complete(&self, request: &ModelRequest) -> ModelResult<ModelOutput>;
 }
 
 pub struct MockModelAdapter;
 
 impl ModelAdapter for MockModelAdapter {
-    fn complete(&self, request: &ModelRequest) -> ModelOutput {
+    fn complete(&self, request: &ModelRequest) -> ModelResult<ModelOutput> {
         let response = format!("Mock response for: {}", request.user_message);
         let tokens = response.split_whitespace().map(str::to_string).collect();
-        ModelOutput { response, tokens }
+        Ok(ModelOutput { response, tokens })
     }
 }
 
@@ -65,7 +65,7 @@ mod tests {
             user_message: "hello".into(),
         };
         assert_eq!(
-            MockModelAdapter.complete(&request).response,
+            MockModelAdapter.complete(&request).unwrap().response,
             "Mock response for: hello"
         );
     }
@@ -76,7 +76,7 @@ mod tests {
             prompt: "any prompt".into(),
             user_message: "hello caravan".into(),
         };
-        let output = MockModelAdapter.complete(&request);
+        let output = MockModelAdapter.complete(&request).unwrap();
         assert_eq!(output.response, "Mock response for: hello caravan");
         assert_eq!(
             output.tokens,
@@ -90,7 +90,7 @@ mod tests {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
         };
-        let output = MockModelAdapter.complete(&request);
+        let output = MockModelAdapter.complete(&request).unwrap();
         assert_eq!(
             output.tokens.len(),
             output.response.split_whitespace().count()

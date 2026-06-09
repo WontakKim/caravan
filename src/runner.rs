@@ -31,23 +31,39 @@ pub fn run_mock_turn(
         prompt,
         user_message: message.to_string(),
     };
-    let response = gateway.complete(request);
-    event_log.append(EventKind::ModelRoute, response.route.detail());
-    for word in &response.tokens {
-        event_log.append(
-            EventKind::ModelToken,
-            format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
-        );
-    }
-    event_log.append(
-        EventKind::RunComplete,
-        format!("run_id={} outcome=ok", run_id),
-    );
-    MockRunOutput {
-        user_message: message.to_string(),
-        assistant_response: response.assistant_response,
-        run_id: run_id.to_string(),
-        turn_id: turn_id.to_string(),
+    match gateway.complete(request) {
+        Ok(response) => {
+            event_log.append(EventKind::ModelRoute, response.route.detail());
+            for word in &response.tokens {
+                event_log.append(
+                    EventKind::ModelToken,
+                    format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
+                );
+            }
+            event_log.append(
+                EventKind::RunComplete,
+                format!("run_id={} outcome=ok", run_id),
+            );
+            MockRunOutput {
+                user_message: message.to_string(),
+                assistant_response: response.assistant_response,
+                run_id: run_id.to_string(),
+                turn_id: turn_id.to_string(),
+            }
+        }
+        Err(err) => {
+            event_log.append(EventKind::ModelError, err.to_string());
+            event_log.append(
+                EventKind::RunFail,
+                format!("run_id={} outcome=error", run_id),
+            );
+            MockRunOutput {
+                user_message: message.to_string(),
+                assistant_response: String::new(),
+                run_id: run_id.to_string(),
+                turn_id: turn_id.to_string(),
+            }
+        }
     }
 }
 
@@ -55,6 +71,7 @@ pub fn run_mock_turn(
 mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
+    use crate::model::ModelError;
 
     #[test]
     fn run_mock_turn_appends_correct_event_sequence() {
@@ -178,6 +195,7 @@ mod tests {
                 prompt: crate::prompt::compile_prompt("hello"),
                 user_message: "hello".to_string(),
             })
+            .unwrap()
             .tokens
             .len();
         assert_eq!(token_events, expected);
@@ -196,6 +214,7 @@ mod tests {
                     prompt: crate::prompt::compile_prompt("hello"),
                     user_message: "hello".to_string(),
                 })
+                .unwrap()
                 .assistant_response
         );
     }
@@ -253,8 +272,48 @@ mod tests {
                 prompt: String::new(),
                 user_message: String::new(),
             })
+            .unwrap()
             .route
             .detail();
         assert_eq!(route_event.detail, expected);
+    }
+
+    #[test]
+    fn run_mock_turn_error_path_emits_model_error_and_run_fail_events() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
+            message: "injected failure".into(),
+        });
+        let output = run_mock_turn(&mut event_log, "hello", &gateway);
+
+        let events = event_log.events();
+
+        // assistant_response is empty on the error path.
+        assert_eq!(output.assistant_response, "");
+
+        // Must contain ModelError followed immediately by RunFail.
+        let model_error_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelError)
+            .expect("ModelError event should exist");
+        let run_fail_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::RunFail)
+            .expect("RunFail event should exist");
+        assert_eq!(
+            run_fail_idx,
+            model_error_idx + 1,
+            "RunFail should be immediately after ModelError"
+        );
+
+        // Must NOT contain ModelToken or RunComplete.
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelToken),
+            "error path must not emit ModelToken events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunComplete),
+            "error path must not emit RunComplete event"
+        );
     }
 }
