@@ -1,7 +1,9 @@
+use crate::model_types::{ModelAdapterKind, ModelProvider};
+
 pub struct ModelProfile {
-    pub provider: String,
+    pub provider: ModelProvider,
     pub model: String,
-    pub adapter: String,
+    pub adapter: ModelAdapterKind,
 }
 
 pub struct ModelConfig {
@@ -12,9 +14,9 @@ impl Default for ModelConfig {
     fn default() -> Self {
         ModelConfig {
             active_profile: ModelProfile {
-                provider: "mock".into(),
+                provider: ModelProvider::Mock,
                 model: "mock-model".into(),
-                adapter: "MockModelAdapter".into(),
+                adapter: ModelAdapterKind::MockModelAdapter,
             },
         }
     }
@@ -27,7 +29,7 @@ mod tests {
     #[test]
     fn default_profile_has_mock_provider() {
         let config = ModelConfig::default();
-        assert_eq!(config.active_profile.provider, "mock");
+        assert_eq!(config.active_profile.provider, ModelProvider::Mock);
     }
 
     #[test]
@@ -39,6 +41,9 @@ mod tests {
     #[test]
     fn default_profile_has_mock_adapter() {
         let config = ModelConfig::default();
-        assert_eq!(config.active_profile.adapter, "MockModelAdapter");
+        assert_eq!(
+            config.active_profile.adapter,
+            ModelAdapterKind::MockModelAdapter
+        );
     }
 }

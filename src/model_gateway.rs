@@ -1,5 +1,6 @@
 use crate::model_config::ModelConfig;
 use crate::model_registry::ModelAdapterRegistry;
+use crate::model_types::{ModelAdapterKind, ModelProvider};
 
 pub struct ModelRequest {
     pub prompt: String,
@@ -7,16 +8,18 @@ pub struct ModelRequest {
 }
 
 pub struct ModelRoute {
-    pub provider: String,
+    pub provider: ModelProvider,
     pub model: String,
-    pub adapter: String,
+    pub adapter: ModelAdapterKind,
 }
 
 impl ModelRoute {
     pub fn detail(&self) -> String {
         format!(
             "provider={} model={} adapter={}",
-            self.provider, self.model, self.adapter
+            self.provider.as_str(),
+            self.model,
+            self.adapter.as_str()
         )
     }
 }
@@ -45,9 +48,9 @@ impl ModelGateway {
         let output = self.registry.complete(profile, &request);
         ModelResponse {
             route: ModelRoute {
-                provider: profile.provider.clone(),
+                provider: profile.provider,
                 model: profile.model.clone(),
-                adapter: profile.adapter.clone(),
+                adapter: profile.adapter,
             },
             assistant_response: output.response,
             tokens: output.tokens,
@@ -87,9 +90,9 @@ mod tests {
             prompt: "any".into(),
             user_message: "hello caravan".into(),
         });
-        assert_eq!(response.route.provider, "mock");
+        assert_eq!(response.route.provider, ModelProvider::Mock);
         assert_eq!(response.route.model, "mock-model");
-        assert_eq!(response.route.adapter, "MockModelAdapter");
+        assert_eq!(response.route.adapter, ModelAdapterKind::MockModelAdapter);
     }
 
     #[test]
@@ -107,11 +110,14 @@ mod tests {
     #[test]
     fn route_detail_formats_arbitrary_fields() {
         let route = ModelRoute {
-            provider: "p".into(),
+            provider: ModelProvider::Mock,
             model: "m".into(),
-            adapter: "a".into(),
+            adapter: ModelAdapterKind::MockModelAdapter,
         };
-        assert_eq!(route.detail(), "provider=p model=m adapter=a");
+        assert_eq!(
+            route.detail(),
+            "provider=mock model=m adapter=MockModelAdapter"
+        );
     }
 
     #[test]
