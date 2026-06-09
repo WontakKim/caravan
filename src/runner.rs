@@ -8,7 +8,11 @@ pub struct MockRunOutput {
     pub turn_id: String,
 }
 
-pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
+pub fn run_mock_turn(
+    event_log: &mut EventLog,
+    message: &str,
+    gateway: &ModelGateway,
+) -> MockRunOutput {
     let run_id = RunId(format!("run-{}", event_log.next_seq_value()));
     event_log.append(
         EventKind::RunCreate,
@@ -26,7 +30,7 @@ pub fn run_mock_turn(event_log: &mut EventLog, message: &str) -> MockRunOutput {
         prompt,
         user_message: message.to_string(),
     };
-    let response = ModelGateway::default().complete(request);
+    let response = gateway.complete(request);
     event_log.append(EventKind::ModelRoute, response.route.detail());
     for word in &response.tokens {
         event_log.append(
@@ -55,7 +59,8 @@ mod tests {
     #[test]
     fn run_mock_turn_appends_correct_event_sequence() {
         let mut event_log = EventLog::new();
-        let output = run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway);
 
         let events = event_log.events();
         let n_tokens = "Mock response for: hello".split_whitespace().count();
@@ -87,7 +92,8 @@ mod tests {
     #[test]
     fn run_mock_turn_returns_correct_output_fields() {
         let mut event_log = EventLog::new();
-        let output = run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway);
 
         assert_eq!(output.user_message, "hello");
         assert_eq!(output.assistant_response, "Mock response for: hello");
@@ -96,7 +102,8 @@ mod tests {
     #[test]
     fn run_mock_turn_prompt_compile_detail_matches() {
         let mut event_log = EventLog::new();
-        run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello", &gateway);
 
         let events = event_log.events();
         let pc = events
@@ -110,7 +117,8 @@ mod tests {
     #[test]
     fn run_mock_turn_ids_match_event_seq_details() {
         let mut event_log = EventLog::new();
-        let output = run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway);
 
         let events = event_log.events();
 
@@ -157,7 +165,8 @@ mod tests {
     #[test]
     fn run_mock_turn_token_count_matches_model_output() {
         let mut event_log = EventLog::new();
-        run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello", &gateway);
 
         let token_events = event_log
             .events()
@@ -177,7 +186,8 @@ mod tests {
     #[test]
     fn run_mock_turn_response_matches_model_output() {
         let mut event_log = EventLog::new();
-        let output = run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway);
 
         assert_eq!(
             output.assistant_response,
@@ -193,7 +203,8 @@ mod tests {
     #[test]
     fn run_mock_turn_model_route_event_has_correct_detail() {
         let mut event_log = EventLog::new();
-        run_mock_turn(&mut event_log, "hello");
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello", &gateway);
 
         let events = event_log.events();
 

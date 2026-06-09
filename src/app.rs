@@ -1,4 +1,5 @@
 use crate::events::{EventKind, EventLog};
+use crate::model_gateway::ModelGateway;
 use crate::storage::EventStore;
 
 pub struct App {
@@ -7,6 +8,7 @@ pub struct App {
     pub should_exit: bool,
     pub event_log: EventLog,
     pub selected_event: Option<usize>,
+    pub model_gateway: ModelGateway,
 }
 
 impl App {
@@ -19,6 +21,7 @@ impl App {
             should_exit: false,
             event_log,
             selected_event: None,
+            model_gateway: ModelGateway::default(),
         }
     }
 
@@ -34,6 +37,7 @@ impl App {
             should_exit: false,
             event_log,
             selected_event: None,
+            model_gateway: ModelGateway::default(),
         }
     }
 
@@ -86,7 +90,11 @@ impl App {
             }
             ParsedInput::UserMessage(message) => {
                 self.event_log.append(EventKind::UserMessage, &message);
-                let output = crate::runner::run_mock_turn(&mut self.event_log, &message);
+                let output = crate::runner::run_mock_turn(
+                    &mut self.event_log,
+                    &message,
+                    &self.model_gateway,
+                );
                 self.log.push(format!("User: {}", output.user_message));
                 self.log
                     .push(format!("Assistant: {}", output.assistant_response));
