@@ -1,5 +1,6 @@
 use crate::events::{EventKind, EventLog, RunId, TurnId};
-use crate::model_gateway::{ModelGateway, ModelRequest};
+use crate::model::ModelRequest;
+use crate::model_gateway::ModelGateway;
 
 pub struct MockRunOutput {
     pub user_message: String,
@@ -54,7 +55,6 @@ pub fn run_mock_turn(
 mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
-    use crate::model_gateway::{ModelGateway, ModelRequest};
 
     #[test]
     fn run_mock_turn_appends_correct_event_sequence() {

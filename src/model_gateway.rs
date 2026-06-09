@@ -1,11 +1,7 @@
+use crate::model::ModelRequest;
 use crate::model_config::ModelConfig;
 use crate::model_registry::ModelAdapterRegistry;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
-
-pub struct ModelRequest {
-    pub prompt: String,
-    pub user_message: String,
-}
 
 pub struct ModelRoute {
     pub provider: ModelProvider,

@@ -3,15 +3,20 @@ pub struct ModelOutput {
     pub tokens: Vec<String>,
 }
 
+pub struct ModelRequest {
+    pub prompt: String,
+    pub user_message: String,
+}
+
 pub trait ModelAdapter {
-    fn complete(&self, prompt: &str, user_message: &str) -> ModelOutput;
+    fn complete(&self, request: &ModelRequest) -> ModelOutput;
 }
 
 pub struct MockModelAdapter;
 
 impl ModelAdapter for MockModelAdapter {
-    fn complete(&self, _prompt: &str, user_message: &str) -> ModelOutput {
-        let response = format!("Mock response for: {}", user_message);
+    fn complete(&self, request: &ModelRequest) -> ModelOutput {
+        let response = format!("Mock response for: {}", request.user_message);
         let tokens = response.split_whitespace().map(str::to_string).collect();
         ModelOutput { response, tokens }
     }
@@ -23,15 +28,23 @@ mod tests {
 
     #[test]
     fn mock_adapter_response_single_word() {
+        let request = ModelRequest {
+            prompt: "any prompt".into(),
+            user_message: "hello".into(),
+        };
         assert_eq!(
-            MockModelAdapter.complete("any prompt", "hello").response,
+            MockModelAdapter.complete(&request).response,
             "Mock response for: hello"
         );
     }
 
     #[test]
     fn mock_adapter_response_and_tokens_multi_word() {
-        let output = MockModelAdapter.complete("any prompt", "hello caravan");
+        let request = ModelRequest {
+            prompt: "any prompt".into(),
+            user_message: "hello caravan".into(),
+        };
+        let output = MockModelAdapter.complete(&request);
         assert_eq!(output.response, "Mock response for: hello caravan");
         assert_eq!(
             output.tokens,
@@ -41,7 +54,11 @@ mod tests {
 
     #[test]
     fn mock_adapter_token_count_matches_response_whitespace_split() {
-        let output = MockModelAdapter.complete("any prompt", "hello");
+        let request = ModelRequest {
+            prompt: "any prompt".into(),
+            user_message: "hello".into(),
+        };
+        let output = MockModelAdapter.complete(&request);
         assert_eq!(
             output.tokens.len(),
             output.response.split_whitespace().count()

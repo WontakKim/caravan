@@ -1,6 +1,5 @@
-use crate::model::{MockModelAdapter, ModelAdapter, ModelOutput};
+use crate::model::{MockModelAdapter, ModelAdapter, ModelOutput, ModelRequest};
 use crate::model_config::ModelProfile;
-use crate::model_gateway::ModelRequest;
 use crate::model_types::ModelAdapterKind;
 
 pub struct ModelAdapterRegistry {
@@ -20,9 +19,7 @@ impl ModelAdapterRegistry {
     // Adapter selection is by ModelAdapterKind; switching, fallback, and error handling are out of scope.
     pub fn complete(&self, profile: &ModelProfile, request: &ModelRequest) -> ModelOutput {
         match profile.adapter {
-            ModelAdapterKind::MockModelAdapter => {
-                self.mock.complete(&request.prompt, &request.user_message)
-            }
+            ModelAdapterKind::MockModelAdapter => self.mock.complete(request),
         }
     }
 }
