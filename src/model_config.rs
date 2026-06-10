@@ -1,11 +1,13 @@
 use crate::model_types::{ModelAdapterKind, ModelProvider};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelProfile {
     pub provider: ModelProvider,
     pub model: String,
     pub adapter: ModelAdapterKind,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelConfig {
     pub active_profile: ModelProfile,
 }
