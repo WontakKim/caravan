@@ -2,6 +2,7 @@
 // Payload types are test-only until the OpenAI-compatible adapter wires in;
 // remove this allow when complete() builds real requests.
 
+use crate::model::ModelRequest;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -15,6 +16,19 @@ pub struct OpenAIChatRequest {
 pub struct OpenAIChatMessage {
     pub role: String,
     pub content: String,
+}
+
+impl OpenAIChatRequest {
+    pub fn from_model_request(model: impl Into<String>, request: &ModelRequest) -> Self {
+        Self {
+            model: model.into(),
+            messages: vec![OpenAIChatMessage {
+                role: "user".to_string(),
+                content: request.prompt.clone(),
+            }],
+            stream: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,5 +87,49 @@ mod tests {
         let json = r#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
         let response: OpenAIChatResponse = serde_json::from_str(json).unwrap();
         assert_eq!(response.usage, None);
+    }
+
+    #[test]
+    fn from_model_request_sets_model() {
+        let request = ModelRequest {
+            prompt: "any prompt".to_string(),
+            user_message: "any message".to_string(),
+        };
+        let chat_request = OpenAIChatRequest::from_model_request("gpt-4o", &request);
+        assert_eq!(chat_request.model, "gpt-4o");
+    }
+
+    #[test]
+    fn from_model_request_builds_single_user_message() {
+        let request = ModelRequest {
+            prompt: "any prompt".to_string(),
+            user_message: "any message".to_string(),
+        };
+        let chat_request = OpenAIChatRequest::from_model_request("gpt-4o", &request);
+        assert_eq!(chat_request.messages.len(), 1);
+        assert_eq!(chat_request.messages[0].role, "user");
+    }
+
+    #[test]
+    fn from_model_request_carries_prompt_verbatim() {
+        let request = ModelRequest {
+            prompt: "SYSTEM: you are a helper\nUSER: hi".to_string(),
+            user_message: "hi".to_string(),
+        };
+        let chat_request = OpenAIChatRequest::from_model_request("gpt-4o", &request);
+        assert_eq!(
+            chat_request.messages[0].content,
+            "SYSTEM: you are a helper\nUSER: hi"
+        );
+    }
+
+    #[test]
+    fn from_model_request_disables_streaming() {
+        let request = ModelRequest {
+            prompt: "any prompt".to_string(),
+            user_message: "any message".to_string(),
+        };
+        let chat_request = OpenAIChatRequest::from_model_request("gpt-4o", &request);
+        assert!(!chat_request.stream);
     }
 }
