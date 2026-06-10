@@ -339,6 +339,42 @@ triggers this path during normal application use.
 > token list. The `Result` return type and `failing_for_test` helper exist solely
 > to establish a typed seam for future real-adapter error propagation.
 
+## OpenAI-compatible Adapter Skeleton
+
+`OpenAICompatibleAdapter` lives in `src/model_openai_compatible.rs` and
+implements the `ModelAdapter` trait. Its `complete()` method makes **no real
+network call** and always returns `Err(ModelError::AdapterFailure)`. This is a
+skeleton only — there is no real API or network integration of any kind.
+
+Two new typed variants have been added to the enums in `src/model_types.rs`:
+
+| Enum | Variant | `as_str()` value |
+|------|---------|-----------------|
+| `ModelProvider` | `OpenAICompatible` | `"openai-compatible"` |
+| `ModelAdapterKind` | `OpenAICompatibleAdapter` | `"OpenAICompatibleAdapter"` |
+
+`ModelAdapterRegistry` owns the `OpenAICompatibleAdapter` instance as a normal
+field (alongside `MockModelAdapter`). Adapter selection is driven by matching on
+`ModelAdapterKind` inside the registry — `ModelGateway` delegates to the
+registry as before and is unaware of the concrete adapter type.
+
+`OpenAICompatible` profiles (i.e. `ModelProfile` values whose `adapter` field is
+`ModelAdapterKind::OpenAICompatibleAdapter`) are constructed **only in tests**.
+The adapter itself is always constructed by `ModelAdapterRegistry`; nothing
+outside the registry instantiates `OpenAICompatibleAdapter` directly.
+
+The **default** configuration is unchanged and still routes every real run to
+`MockModelAdapter`:
+
+```
+provider=mock model=mock-model adapter=MockModelAdapter
+```
+
+> **This is a skeleton with no real API/network integration.** `OpenAICompatibleAdapter::complete()`
+> performs no network call and always returns `ModelError::AdapterFailure`. The
+> new enum variants and registry wiring exist solely to establish the structural
+> seam; no connection to any OpenAI-compatible endpoint is made at runtime.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
