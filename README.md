@@ -542,6 +542,53 @@ normal run.
 > `OpenAICompatibleAdapter` still returns a stub error on every invocation. The default
 > user flow continues to use the mock adapter and is wholly unaffected by this wiring.
 
+## App Runtime Config Bootstrap
+
+The App Runtime Config Bootstrap stage wires the process environment into the application
+at startup — still without performing any real API call.
+
+### Environment Keys
+
+| Key | Effect |
+|-----|--------|
+| `CARAVAN_MODEL_PROVIDER` | Selects the active model provider (`mock` or `openai-compatible`); defaults to `mock` |
+| `CARAVAN_MODEL` | Model name passed to the selected adapter; provider-specific default applied if absent |
+| `CARAVAN_OPENAI_BASE_URL` | Base URL for OpenAI-compatible endpoints; defaults to `https://api.openai.com/v1` |
+| `CARAVAN_OPENAI_API_KEY_ENV` | Holds the **name** of the env var that would contain the API key (e.g. `OPENAI_API_KEY`) — the actual key value is never read in this POC |
+| `CARAVAN_OPENAI_TIMEOUT_SECS` | Request timeout in seconds; defaults to `30` |
+
+### Bootstrap Flow
+
+```
+process env → ModelRuntimeConfig::from_process_env() → ModelGateway::from_runtime_config() → App::with_store_and_gateway(...)
+```
+
+`ModelRuntimeConfig::from_process_env()` reads the five `CARAVAN_*` keys from the real
+process environment and builds the typed config. The resulting `ModelRuntimeConfig` is then
+passed to `ModelGateway::from_runtime_config()` to wire the gateway, which is handed to
+`App::with_store_and_gateway(...)` before the TUI starts.
+
+### Config-Error Behavior
+
+Invalid values — such as an unrecognised provider name or a non-numeric timeout — cause the
+bootstrap to print a human-readable error message to stderr and exit with status 1 before
+the TUI is initialised. The error identifies the offending key and explains the expected
+format so the problem can be corrected without reading source code.
+
+### Usage Example
+
+```sh
+CARAVAN_MODEL_PROVIDER=openai-compatible cargo run
+```
+
+The app starts normally. A user message reaches the skeleton `ModelError`/`RunFail` flow
+inside `OpenAICompatibleAdapter` with no network call made; no API key value is read.
+
+> **This is config bootstrap only — NOT a real API integration.**
+> `from_process_env()` reads only the five `CARAVAN_*` keys; no API key value is ever read
+> or resolved. No HTTP client is constructed and no network call of any kind is made. The
+> `OpenAICompatibleAdapter` returns a stub error on every invocation.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
