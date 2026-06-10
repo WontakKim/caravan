@@ -6,7 +6,6 @@ pub struct OpenAICompatibleAdapter {
 }
 
 impl OpenAICompatibleAdapter {
-    #[allow(dead_code)]
     pub fn new(config: OpenAICompatibleConfig) -> Self {
         Self { config }
     }

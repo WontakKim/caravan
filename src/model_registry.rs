@@ -1,6 +1,7 @@
 use crate::model::{MockModelAdapter, ModelAdapter, ModelError, ModelOutput, ModelRequest};
 use crate::model_config::ModelProfile;
 use crate::model_openai_compatible::OpenAICompatibleAdapter;
+use crate::model_openai_config::OpenAICompatibleConfig;
 use crate::model_types::ModelAdapterKind;
 
 pub struct ModelAdapterRegistry {
@@ -10,14 +11,23 @@ pub struct ModelAdapterRegistry {
 
 impl Default for ModelAdapterRegistry {
     fn default() -> Self {
-        ModelAdapterRegistry {
-            mock: MockModelAdapter,
-            openai_compatible: OpenAICompatibleAdapter::default(),
-        }
+        Self::new(OpenAICompatibleConfig::default())
     }
 }
 
 impl ModelAdapterRegistry {
+    pub fn new(openai_config: OpenAICompatibleConfig) -> Self {
+        Self {
+            mock: MockModelAdapter,
+            openai_compatible: OpenAICompatibleAdapter::new(openai_config),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn openai_config_for_test(&self) -> &OpenAICompatibleConfig {
+        self.openai_compatible.config()
+    }
+
     pub fn complete(
         &self,
         profile: &ModelProfile,
@@ -72,5 +82,33 @@ mod tests {
                 "OpenAI-compatible adapter is a skeleton in this POC"
             );
         }
+    }
+
+    #[test]
+    fn new_passes_custom_openai_config_to_adapter() {
+        let custom = OpenAICompatibleConfig {
+            base_url: "https://example.test/v1".into(),
+            api_key_env: "CUSTOM_KEY_ENV".into(),
+            timeout_secs: 99,
+        };
+        let registry = ModelAdapterRegistry::new(custom);
+        assert_eq!(
+            registry.openai_config_for_test().base_url,
+            "https://example.test/v1"
+        );
+        assert_eq!(
+            registry.openai_config_for_test().api_key_env,
+            "CUSTOM_KEY_ENV"
+        );
+        assert_eq!(registry.openai_config_for_test().timeout_secs, 99);
+    }
+
+    #[test]
+    fn default_uses_default_openai_config() {
+        let registry = ModelAdapterRegistry::default();
+        assert_eq!(
+            registry.openai_config_for_test(),
+            &OpenAICompatibleConfig::default()
+        );
     }
 }
