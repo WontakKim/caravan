@@ -572,8 +572,7 @@ passed to `ModelGateway::from_runtime_config()` to wire the gateway, which is ha
 
 Invalid values — such as an unrecognised provider name or a non-numeric timeout — cause the
 bootstrap to print a human-readable error message to stderr and exit with status 1 before
-the TUI is initialised. The error identifies the offending key and explains the expected
-format so the problem can be corrected without reading source code.
+the TUI is initialised. The error includes the config error kind and the invalid value, such as `kind=unknown_provider message="unknown model provider: <value>"` or `kind=invalid_timeout message="invalid timeout seconds: <value>"`.
 
 ### Usage Example
 
