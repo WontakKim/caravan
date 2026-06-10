@@ -1,6 +1,9 @@
 use crate::model::{ModelError, ModelRequest};
 use crate::model_config::ModelConfig;
+#[cfg(test)]
+use crate::model_openai_config::OpenAICompatibleConfig;
 use crate::model_registry::ModelAdapterRegistry;
+use crate::model_runtime_config::ModelRuntimeConfig;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
 
 pub struct ModelRoute {
@@ -41,6 +44,21 @@ impl ModelGateway {
             #[cfg(test)]
             forced_error: None,
         }
+    }
+
+    #[allow(dead_code)] // remove when App constructs the gateway from runtime config
+    pub fn from_runtime_config(runtime_config: ModelRuntimeConfig) -> Self {
+        Self {
+            config: runtime_config.model_config,
+            registry: ModelAdapterRegistry::new(runtime_config.openai_config),
+            #[cfg(test)]
+            forced_error: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn openai_config_for_test(&self) -> &OpenAICompatibleConfig {
+        self.registry.openai_config_for_test()
     }
 
     #[cfg(test)]
@@ -180,5 +198,88 @@ mod tests {
             "provider=mock model=mock-model adapter=MockModelAdapter"
         );
         assert_eq!(response.assistant_response, "Mock response for: ");
+    }
+
+    #[test]
+    fn from_runtime_config_default_returns_mock_response() {
+        let gateway = ModelGateway::from_runtime_config(ModelRuntimeConfig::default());
+        let response = gateway
+            .complete(ModelRequest {
+                prompt: "any".into(),
+                user_message: "hello caravan".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            response.assistant_response,
+            "Mock response for: hello caravan"
+        );
+        assert_eq!(
+            response.tokens,
+            vec!["Mock", "response", "for:", "hello", "caravan"]
+        );
+    }
+
+    #[test]
+    fn from_runtime_config_default_returns_mock_route() {
+        let gateway = ModelGateway::from_runtime_config(ModelRuntimeConfig::default());
+        let response = gateway
+            .complete(ModelRequest {
+                prompt: "any".into(),
+                user_message: "hello caravan".into(),
+            })
+            .unwrap();
+        assert_eq!(
+            response.route.detail(),
+            "provider=mock model=mock-model adapter=MockModelAdapter"
+        );
+    }
+
+    #[test]
+    fn from_runtime_config_openai_profile_returns_adapter_failure() {
+        let runtime_config = ModelRuntimeConfig {
+            model_config: ModelConfig {
+                active_profile: ModelProfile {
+                    provider: ModelProvider::OpenAICompatible,
+                    model: "gpt-4o".into(),
+                    adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+                },
+            },
+            openai_config: OpenAICompatibleConfig::default(),
+        };
+        let result = ModelGateway::from_runtime_config(runtime_config).complete(ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello caravan".into(),
+        });
+        match result {
+            Err(ModelError::AdapterFailure { message }) => {
+                assert_eq!(
+                    message,
+                    "OpenAI-compatible adapter is a skeleton in this POC"
+                );
+            }
+            _ => panic!("expected Err(AdapterFailure)"),
+        }
+    }
+
+    #[test]
+    fn from_runtime_config_passes_custom_openai_config_to_adapter() {
+        let runtime_config = ModelRuntimeConfig {
+            model_config: ModelConfig::default(),
+            openai_config: OpenAICompatibleConfig {
+                base_url: "https://example.test/v1".into(),
+                api_key_env: "CUSTOM_KEY_ENV".into(),
+                timeout_secs: 99,
+            },
+        };
+        let gateway = ModelGateway::from_runtime_config(runtime_config);
+        assert_eq!(
+            gateway.openai_config_for_test().base_url,
+            "https://example.test/v1"
+        );
+        assert_eq!(
+            gateway.openai_config_for_test().api_key_env,
+            "CUSTOM_KEY_ENV"
+        );
+        assert_eq!(gateway.openai_config_for_test().timeout_secs, 99);
     }
 }
