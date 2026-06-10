@@ -375,6 +375,55 @@ provider=mock model=mock-model adapter=MockModelAdapter
 > new enum variants and registry wiring exist solely to establish the structural
 > seam; no connection to any OpenAI-compatible endpoint is made at runtime.
 
+## OpenAI-compatible Request / Response Payload Types
+
+`src/model_openai_types.rs` defines the five serde-serializable structs that
+describe the JSON body for OpenAI-compatible chat completions endpoints:
+
+| Struct | Role |
+|--------|------|
+| `OpenAIChatRequest` | Top-level request body (`model`, `messages`, `stream`) |
+| `OpenAIChatMessage` | Individual message (`role`, `content`) |
+| `OpenAIChatResponse` | Top-level response body (`choices`, optional `usage`) |
+| `OpenAIChatChoice` | Single choice wrapping a `message` |
+| `OpenAIUsage` | Token counts (`prompt_tokens`, `completion_tokens`, `total_tokens`) |
+
+All five structs derive `Serialize` and `Deserialize` (via `serde`).
+
+### `OpenAIChatRequest::from_model_request`
+
+Converts a `ModelRequest` into an `OpenAIChatRequest`:
+
+- `ModelRequest.prompt` is carried verbatim as the `content` of a single `"user"` message.
+- `stream` is always set to `false`.
+- The target model name is passed separately and stored in the `model` field.
+
+### `OpenAIChatResponse::first_assistant_content` and `to_model_output`
+
+- `first_assistant_content` returns the `content` string of the first choice, or
+  `None` if `choices` is empty.
+- `to_model_output` converts the response into a `ModelOutput`:
+  - The response text is taken verbatim from `first_assistant_content`.
+  - Tokens are produced by splitting the response on whitespace (`split_whitespace`).
+  - If `choices` is empty (no assistant content), `to_model_output` returns
+    `Err(ModelError::AdapterFailure)`.
+
+### What did NOT change
+
+`OpenAICompatibleAdapter::complete()` still returns the exact skeleton error:
+
+```
+OpenAI-compatible adapter is a skeleton in this POC
+```
+
+No HTTP client, API key handling, async runtime, or network dependency was added.
+The default mock flow (`provider=mock model=mock-model adapter=MockModelAdapter`)
+is untouched.
+
+> **The module is `#![allow(dead_code)]`** until the adapter wires the payload
+> types into `complete()`. The attribute will be removed once the adapter builds
+> real requests from these structs.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
