@@ -87,37 +87,34 @@ mod tests {
     }
 
     #[test]
-    fn down_from_fresh_app_selects_index_zero_and_appends_event() {
+    fn down_from_fresh_app_selects_index_zero_without_appending() {
         let mut app = App::new();
         handle_key(&mut app, press(KeyCode::Down));
         assert_eq!(app.selected_event, Some(0));
-        assert_eq!(app.event_log.len(), 2);
-        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, crate::events::EventKind::InspectorSelection);
-        assert_eq!(last.detail, "Selected seq 1");
+        // Navigation is pure UI state and must not append events.
+        assert_eq!(app.event_log.len(), 1);
     }
 
     #[test]
-    fn up_from_fresh_app_selects_index_zero_and_appends_event() {
+    fn up_from_fresh_app_selects_index_zero_without_appending() {
         let mut app = App::new();
         handle_key(&mut app, press(KeyCode::Up));
         assert_eq!(app.selected_event, Some(0));
-        assert_eq!(app.event_log.len(), 2);
-        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, crate::events::EventKind::InspectorSelection);
-        assert_eq!(last.detail, "Selected seq 1");
+        // Navigation is pure UI state and must not append events.
+        assert_eq!(app.event_log.len(), 1);
     }
 
     #[test]
-    fn down_twice_advances_selection_and_appends_two_events() {
+    fn down_twice_advances_selection_without_appending() {
         let mut app = App::new();
+        // Seed a second event so there is something to advance to.
+        app.event_log
+            .append(crate::events::EventKind::UserMessage, "hello".to_string());
         handle_key(&mut app, press(KeyCode::Down));
         handle_key(&mut app, press(KeyCode::Down));
         assert_eq!(app.selected_event, Some(1));
-        assert_eq!(app.event_log.len(), 3);
-        let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, crate::events::EventKind::InspectorSelection);
-        assert_eq!(last.detail, "Selected seq 2");
+        // Navigation is pure UI state and must not append events.
+        assert_eq!(app.event_log.len(), 2);
     }
 
     #[test]

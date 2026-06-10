@@ -120,15 +120,6 @@ impl App {
             }
         };
         self.selected_event = Some(new_idx);
-        let seq = self
-            .event_log
-            .get(new_idx)
-            .expect("index is within len_before")
-            .seq;
-        self.event_log.append(
-            EventKind::InspectorSelection,
-            format!("Selected seq {}", seq),
-        );
     }
 
     pub fn select_prev(&mut self) {
@@ -146,15 +137,6 @@ impl App {
             }
         };
         self.selected_event = Some(new_idx);
-        let seq = self
-            .event_log
-            .get(new_idx)
-            .expect("index is within len_before")
-            .seq;
-        self.event_log.append(
-            EventKind::InspectorSelection,
-            format!("Selected seq {}", seq),
-        );
     }
 
     pub fn help_lines() -> Vec<String> {
@@ -393,10 +375,8 @@ mod tests {
         let len_before = app.event_log.len(); // 1
         app.select_next();
         assert_eq!(app.selected_event, Some(0));
-        assert_eq!(app.event_log.len(), len_before + 1);
-        let new_ev = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(new_ev.kind, EventKind::InspectorSelection);
-        assert_eq!(new_ev.detail, "Selected seq 1");
+        // Navigation is pure UI state and must not append events.
+        assert_eq!(app.event_log.len(), len_before);
     }
 
     #[test]

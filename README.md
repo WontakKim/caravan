@@ -54,8 +54,7 @@ When no event is selected the panel displays `No event selected`.
 ### Navigation
 
 Use the **Up** and **Down** arrow keys to move the selection through the Event
-Log. Each navigation step appends an `InspectorSelection` event to the
-log recording the newly selected `seq`.
+Log. Navigation is pure UI state — it does not append any event to the log.
 
 - **Down** — move to the next (newer) event; no-op at the bottom boundary.
 - **Up** — move to the previous (older) event; no-op at the top boundary.
@@ -69,7 +68,6 @@ log recording the newly selected `seq`.
 | `HelpRequest`                | When `/help` is processed                                |
 | `UserMessage`                | When plain (non-command) text is submitted               |
 | `LogClear`                   | When `/clear` is processed                               |
-| `InspectorSelection`         | Each time the Up/Down selection changes                  |
 | `ExitRequest`                | When `/exit` is processed or Ctrl+C is pressed           |
 | `UnknownSlashCommand`        | When an unrecognised `/command` is entered               |
 | `RunCreate`                  | When a new Run is initialised for a submitted user message|
