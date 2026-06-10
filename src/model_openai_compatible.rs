@@ -1,6 +1,27 @@
 use crate::model::{ModelAdapter, ModelError, ModelOutput, ModelRequest, ModelResult};
+use crate::model_openai_config::OpenAICompatibleConfig;
 
-pub struct OpenAICompatibleAdapter;
+pub struct OpenAICompatibleAdapter {
+    config: OpenAICompatibleConfig,
+}
+
+impl OpenAICompatibleAdapter {
+    #[allow(dead_code)]
+    pub fn new(config: OpenAICompatibleConfig) -> Self {
+        Self { config }
+    }
+
+    #[allow(dead_code)]
+    pub fn config(&self) -> &OpenAICompatibleConfig {
+        &self.config
+    }
+}
+
+impl Default for OpenAICompatibleAdapter {
+    fn default() -> Self {
+        Self::new(OpenAICompatibleConfig::default())
+    }
+}
 
 impl ModelAdapter for OpenAICompatibleAdapter {
     fn complete(&self, _request: &ModelRequest) -> ModelResult<ModelOutput> {
@@ -20,7 +41,11 @@ mod tests {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
         };
-        assert!(OpenAICompatibleAdapter.complete(&request).is_err());
+        assert!(
+            OpenAICompatibleAdapter::default()
+                .complete(&request)
+                .is_err()
+        );
     }
 
     #[test]
@@ -29,7 +54,7 @@ mod tests {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
         };
-        let result = OpenAICompatibleAdapter.complete(&request);
+        let result = OpenAICompatibleAdapter::default().complete(&request);
         assert!(matches!(result, Err(ModelError::AdapterFailure { .. })));
     }
 
@@ -40,7 +65,7 @@ mod tests {
             user_message: "hello".into(),
         };
         if let Err(ModelError::AdapterFailure { message }) =
-            OpenAICompatibleAdapter.complete(&request)
+            OpenAICompatibleAdapter::default().complete(&request)
         {
             assert_eq!(
                 message,
@@ -50,5 +75,21 @@ mod tests {
         } else {
             panic!("expected AdapterFailure");
         }
+    }
+
+    #[test]
+    fn default_adapter_uses_default_config() {
+        assert!(*OpenAICompatibleAdapter::default().config() == OpenAICompatibleConfig::default());
+    }
+
+    #[test]
+    fn new_adapter_stores_custom_config() {
+        let custom = OpenAICompatibleConfig {
+            base_url: "https://example.com/v1".to_string(),
+            api_key_env: "CUSTOM_KEY".to_string(),
+            timeout_secs: 5,
+        };
+        let adapter = OpenAICompatibleAdapter::new(custom.clone());
+        assert_eq!(*adapter.config(), custom);
     }
 }

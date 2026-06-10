@@ -12,7 +12,7 @@ impl Default for ModelAdapterRegistry {
     fn default() -> Self {
         ModelAdapterRegistry {
             mock: MockModelAdapter,
-            openai_compatible: OpenAICompatibleAdapter,
+            openai_compatible: OpenAICompatibleAdapter::default(),
         }
     }
 }
