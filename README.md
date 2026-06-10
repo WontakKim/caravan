@@ -455,6 +455,37 @@ The default application flow is unchanged: every real run still routes to
 > config struct and `chat_completions_url()` helper exist solely to establish the
 > typed configuration seam that a future real adapter implementation will use.
 
+## OpenAI-compatible Request Builder
+
+`build_request` in `src/model_openai_request.rs` combines an `OpenAICompatibleConfig`,
+a model name (`&str`), and a `ModelRequest` into an `OpenAIRequestPlan` — a request plan
+describing what *would* be sent to the OpenAI-compatible endpoint if a real HTTP client
+existed. Producing an `OpenAIRequestPlan` is not an API call; no network connection is
+opened and no credentials are touched.
+
+### `OpenAIRequestPlan` Fields
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `url` | `String` | The fully-resolved chat-completions URL (from `OpenAICompatibleConfig::chat_completions_url()`) |
+| `api_key_env` | `String` | The **name** of the environment variable that would hold the API key — never the key value itself; `std::env::var` is never called |
+| `timeout_secs` | `u64` | Request timeout in seconds, copied from the config |
+| `body` | `OpenAIChatBody` | The serialisable request body, containing the model name and the messages list built from `ModelRequest` |
+
+`build_request(config, model, request)` returns `OpenAIRequestPlan` by value. It
+reads fields from the config and converts the `ModelRequest` messages into
+`OpenAIChatMessage` entries (`role: "user"` for each prompt message). No I/O of any
+kind is performed.
+
+> **This is a request-plan builder only — NOT a real HTTP integration.**
+> No HTTP call is performed. `std::env::var` is never called — `api_key_env` is
+> copied as a plain string and the actual API key is never read or resolved. No
+> `Authorization header` is constructed. No `reqwest`, `tokio`, or `hyper`
+> dependency is added. `OpenAICompatibleAdapter::complete()` still always returns
+> `Err(ModelError::AdapterFailure)` with the same skeleton error message. The plan
+> struct exists solely to make the intended request shape inspectable and testable
+> without performing any I/O.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
