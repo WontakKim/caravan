@@ -10,6 +10,7 @@ mod model_openai_config;
 mod model_openai_request;
 mod model_openai_types;
 mod model_registry;
+mod model_runtime_config;
 mod model_types;
 mod prompt;
 mod runner;

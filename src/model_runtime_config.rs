@@ -1,0 +1,280 @@
+#![allow(dead_code)]
+// This module is a config-assembly source not yet wired into the app;
+// remove this allow when from_env_map is called from a production path.
+
+//! Config-assembly layer for `ModelRuntimeConfig`.
+//!
+//! `ModelConfigError` (config-assembly phase) is intentionally distinct from
+//! `ModelError` (runtime adapter phase): config errors arise before any adapter
+//! is instantiated, whereas `ModelError` is produced by an already-running adapter.
+
+use crate::model_config::{ModelConfig, ModelProfile};
+use crate::model_openai_config::OpenAICompatibleConfig;
+use crate::model_types::{ModelAdapterKind, ModelProvider};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelConfigError {
+    UnknownProvider { value: String },
+    InvalidTimeout { value: String },
+}
+
+impl ModelConfigError {
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ModelConfigError::UnknownProvider { .. } => "unknown_provider",
+            ModelConfigError::InvalidTimeout { .. } => "invalid_timeout",
+        }
+    }
+
+    pub fn message(&self) -> String {
+        match self {
+            ModelConfigError::UnknownProvider { value } => {
+                format!("unknown model provider: {value}")
+            }
+            ModelConfigError::InvalidTimeout { value } => {
+                format!("invalid timeout seconds: {value}")
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for ModelConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "kind={} message=\"{}\"", self.kind(), self.message())
+    }
+}
+
+impl std::error::Error for ModelConfigError {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelRuntimeConfig {
+    pub model_config: ModelConfig,
+    pub openai_config: OpenAICompatibleConfig,
+}
+
+impl Default for ModelRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            model_config: ModelConfig::default(),
+            openai_config: OpenAICompatibleConfig::default(),
+        }
+    }
+}
+
+impl ModelRuntimeConfig {
+    pub fn from_env_map(vars: &HashMap<String, String>) -> Result<Self, ModelConfigError> {
+        let provider = match vars.get("CARAVAN_MODEL_PROVIDER") {
+            None => ModelProvider::Mock,
+            Some(v) => parse_provider(v)?,
+        };
+
+        let adapter = match provider {
+            ModelProvider::Mock => ModelAdapterKind::MockModelAdapter,
+            ModelProvider::OpenAICompatible => ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+
+        let default_model = match provider {
+            ModelProvider::Mock => "mock-model",
+            ModelProvider::OpenAICompatible => "openai-compatible-model",
+        };
+        let model = vars
+            .get("CARAVAN_MODEL")
+            .cloned()
+            .unwrap_or_else(|| default_model.to_string());
+
+        let base_url = vars
+            .get("CARAVAN_OPENAI_BASE_URL")
+            .cloned()
+            .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+
+        let api_key_env = vars
+            .get("CARAVAN_OPENAI_API_KEY_ENV")
+            .cloned()
+            .unwrap_or_else(|| "OPENAI_API_KEY".to_string());
+
+        let timeout_secs = match vars.get("CARAVAN_OPENAI_TIMEOUT_SECS") {
+            None => 30u64,
+            Some(v) => {
+                let parsed: u64 = v
+                    .parse()
+                    .map_err(|_| ModelConfigError::InvalidTimeout { value: v.clone() })?;
+                if parsed == 0 {
+                    return Err(ModelConfigError::InvalidTimeout { value: v.clone() });
+                }
+                parsed
+            }
+        };
+
+        Ok(Self {
+            model_config: ModelConfig {
+                active_profile: ModelProfile {
+                    provider,
+                    model,
+                    adapter,
+                },
+            },
+            openai_config: OpenAICompatibleConfig {
+                base_url,
+                api_key_env,
+                timeout_secs,
+            },
+        })
+    }
+}
+
+fn parse_provider(value: &str) -> Result<ModelProvider, ModelConfigError> {
+    match value {
+        "mock" => Ok(ModelProvider::Mock),
+        "openai-compatible" => Ok(ModelProvider::OpenAICompatible),
+        other => Err(ModelConfigError::UnknownProvider {
+            value: other.to_string(),
+        }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_is_mock_provider_with_openai_defaults() {
+        let cfg = ModelRuntimeConfig::default();
+        assert_eq!(
+            cfg.model_config.active_profile.provider,
+            ModelProvider::Mock
+        );
+        assert_eq!(cfg.model_config.active_profile.model, "mock-model");
+        assert_eq!(
+            cfg.model_config.active_profile.adapter,
+            ModelAdapterKind::MockModelAdapter
+        );
+        assert_eq!(cfg.openai_config.base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.openai_config.api_key_env, "OPENAI_API_KEY");
+        assert_eq!(cfg.openai_config.timeout_secs, 30);
+    }
+
+    #[test]
+    fn from_env_map_empty_map_returns_mock_defaults() {
+        let cfg = ModelRuntimeConfig::from_env_map(&HashMap::new()).unwrap();
+        assert_eq!(cfg, ModelRuntimeConfig::default());
+    }
+
+    #[test]
+    fn from_env_map_mock_provider_explicit() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "mock".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(
+            cfg.model_config.active_profile.provider,
+            ModelProvider::Mock
+        );
+        assert_eq!(
+            cfg.model_config.active_profile.adapter,
+            ModelAdapterKind::MockModelAdapter
+        );
+    }
+
+    #[test]
+    fn from_env_map_openai_compatible_provider() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(
+            cfg.model_config.active_profile.provider,
+            ModelProvider::OpenAICompatible
+        );
+        assert_eq!(
+            cfg.model_config.active_profile.adapter,
+            ModelAdapterKind::OpenAICompatibleAdapter
+        );
+        assert_eq!(
+            cfg.model_config.active_profile.model,
+            "openai-compatible-model"
+        );
+    }
+
+    #[test]
+    fn from_env_map_unknown_provider_returns_error() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "gpt-99".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::UnknownProvider {
+                value: "gpt-99".into()
+            }
+        );
+    }
+
+    #[test]
+    fn from_env_map_custom_model_name() {
+        let vars = HashMap::from([("CARAVAN_MODEL".into(), "my-custom-model".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.model_config.active_profile.model, "my-custom-model");
+    }
+
+    #[test]
+    fn from_env_map_custom_base_url() {
+        let vars = HashMap::from([(
+            "CARAVAN_OPENAI_BASE_URL".into(),
+            "https://example.com/v1".into(),
+        )]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_config.base_url, "https://example.com/v1");
+    }
+
+    #[test]
+    fn from_env_map_custom_api_key_env() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_API_KEY_ENV".into(), "MY_API_KEY".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_config.api_key_env, "MY_API_KEY");
+    }
+
+    #[test]
+    fn from_env_map_valid_timeout() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_TIMEOUT_SECS".into(), "60".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_config.timeout_secs, 60);
+    }
+
+    #[test]
+    fn from_env_map_zero_timeout_returns_error() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_TIMEOUT_SECS".into(), "0".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(err, ModelConfigError::InvalidTimeout { value: "0".into() });
+    }
+
+    #[test]
+    fn from_env_map_non_numeric_timeout_returns_error() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_TIMEOUT_SECS".into(), "abc".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::InvalidTimeout {
+                value: "abc".into()
+            }
+        );
+    }
+
+    #[test]
+    fn model_config_error_unknown_provider_display() {
+        let err = ModelConfigError::UnknownProvider {
+            value: "bad-provider".into(),
+        };
+        assert_eq!(err.kind(), "unknown_provider");
+        assert_eq!(
+            err.to_string(),
+            "kind=unknown_provider message=\"unknown model provider: bad-provider\""
+        );
+    }
+
+    #[test]
+    fn model_config_error_invalid_timeout_display() {
+        let err = ModelConfigError::InvalidTimeout {
+            value: "oops".into(),
+        };
+        assert_eq!(err.kind(), "invalid_timeout");
+        assert_eq!(
+            err.to_string(),
+            "kind=invalid_timeout message=\"invalid timeout seconds: oops\""
+        );
+    }
+}
