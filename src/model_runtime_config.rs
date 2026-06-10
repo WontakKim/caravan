@@ -63,6 +63,27 @@ impl Default for ModelRuntimeConfig {
 }
 
 impl ModelRuntimeConfig {
+    /// Reads only the five allowed CARAVAN_* keys from the process environment
+    /// via individual `std::env::var` calls and delegates to [`Self::from_env_map`].
+    ///
+    /// Note: `CARAVAN_OPENAI_API_KEY_ENV` is treated as the **name** of the env var
+    /// that holds the API key — its value is never resolved here.
+    pub fn from_process_env() -> Result<Self, ModelConfigError> {
+        let mut vars = HashMap::new();
+        for key in [
+            "CARAVAN_MODEL_PROVIDER",
+            "CARAVAN_MODEL",
+            "CARAVAN_OPENAI_BASE_URL",
+            "CARAVAN_OPENAI_API_KEY_ENV",
+            "CARAVAN_OPENAI_TIMEOUT_SECS",
+        ] {
+            if let Ok(value) = std::env::var(key) {
+                vars.insert(key.to_string(), value);
+            }
+        }
+        Self::from_env_map(&vars)
+    }
+
     pub fn from_env_map(vars: &HashMap<String, String>) -> Result<Self, ModelConfigError> {
         let provider = match vars.get("CARAVAN_MODEL_PROVIDER") {
             None => ModelProvider::Mock,
@@ -391,5 +412,20 @@ mod tests {
         let vars = HashMap::from([("CARAVAN_OPENAI_TIMEOUT_SECS".into(), "90".into())]);
         let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
         assert_eq!(cfg.openai_config.timeout_secs, 90);
+    }
+
+    #[test]
+    fn from_process_env_in_clean_env_matches_default() {
+        // Assumption: no CARAVAN_* variables are set in the dev/CI environment when
+        // this test runs. With none of the five keys present, from_process_env must
+        // produce the same result as an empty map, which equals ModelRuntimeConfig::default().
+        //
+        // This test intentionally avoids mutating the process environment: env mutation
+        // is unsafe in Rust edition 2024, and tests run on parallel threads sharing the
+        // same process environment, making any mutation unsafe and non-deterministic.
+        assert_eq!(
+            ModelRuntimeConfig::from_process_env().unwrap(),
+            ModelRuntimeConfig::default()
+        );
     }
 }
