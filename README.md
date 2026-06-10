@@ -517,6 +517,31 @@ consulted during a normal run.
 > any kind. It exists solely to translate a flat key/value map into the typed config structs
 > consumed by the model adapter selection logic.
 
+## Model Runtime Config Gateway Wiring
+
+The Model Runtime Config Gateway Wiring stage connects the typed configuration produced by
+`ModelRuntimeConfig` to the `ModelGateway` construction boundary — still without performing
+any real API integration.
+
+`ModelGateway::from_runtime_config(ModelRuntimeConfig)` wires the configuration into the
+gateway in two steps:
+
+1. `runtime_config.model_config` is used as the gateway routing config, selecting which
+   model adapter handles requests.
+2. `runtime_config.openai_config` is passed through `ModelAdapterRegistry::new` into the
+   `OpenAICompatibleAdapter`, making the typed config available at the adapter construction
+   boundary.
+
+`ModelGateway::default()` and the main App flow are unchanged — the default path continues
+to use the mock adapter exclusively, and no OpenAI-compatible logic is executed during a
+normal run.
+
+> **This is construction wiring only — NOT a real API integration.**
+> No environment variables are read at this stage. No API key value is read or resolved.
+> No HTTP client is constructed, and no network call of any kind is made. The
+> `OpenAICompatibleAdapter` still returns a stub error on every invocation. The default
+> user flow continues to use the mock adapter and is wholly unaffected by this wiring.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
