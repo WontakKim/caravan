@@ -422,6 +422,39 @@ is untouched.
 > types into `complete()`. The attribute will be removed once the adapter builds
 > real requests from these structs.
 
+## OpenAI-compatible Adapter Config Stub
+
+`OpenAICompatibleConfig` in `src/model_openai_config.rs` is the configuration
+boundary for the OpenAI-compatible adapter. It carries three fields:
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `base_url` | `https://api.openai.com/v1` | Root URL of the target OpenAI-compatible endpoint |
+| `api_key_env` | `OPENAI_API_KEY` | Name of the environment variable that holds the API key — the variable name only, never the key value itself |
+| `timeout_secs` | `30` | Request timeout in seconds (reserved for future use) |
+
+The `chat_completions_url()` helper returns `base_url` joined with
+`/chat/completions`, trimming any trailing slash from `base_url` before
+appending so the path is never doubled (e.g. `https://api.openai.com/v1/chat/completions`).
+
+`OpenAICompatibleAdapter` now owns this config. It is constructed via:
+
+- `OpenAICompatibleAdapter::new(config)` — accepts an explicit `OpenAICompatibleConfig`.
+- `OpenAICompatibleAdapter::config()` — returns a shared reference to the stored config.
+- `OpenAICompatibleAdapter::default()` — delegates to `OpenAICompatibleConfig::default()`,
+  producing the standard OpenAI endpoint / `OPENAI_API_KEY` / 30 s configuration.
+
+The default application flow is unchanged: every real run still routes to
+`MockModelAdapter` (`provider=mock model=mock-model adapter=MockModelAdapter`).
+`OpenAICompatible` profiles are constructed only in tests.
+
+> **This is configuration boundary preparation only — NOT a real API integration.**
+> No environment variable is read, no API key is loaded, no HTTP client exists,
+> and no network call is made. `OpenAICompatibleAdapter::complete()` still always
+> returns `Err(ModelError::AdapterFailure)` with the same skeleton message. The
+> config struct and `chat_completions_url()` helper exist solely to establish the
+> typed configuration seam that a future real adapter implementation will use.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
