@@ -83,6 +83,31 @@ impl Default for ModelGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_config::ModelProfile;
+
+    #[test]
+    fn complete_openai_compatible_profile_returns_adapter_failure() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAICompatible,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let result = ModelGateway::new(config).complete(ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello".into(),
+        });
+        match result {
+            Err(ModelError::AdapterFailure { message }) => {
+                assert_eq!(
+                    message,
+                    "OpenAI-compatible adapter is a skeleton in this POC"
+                );
+            }
+            _ => panic!("expected Err(AdapterFailure)"),
+        }
+    }
 
     #[test]
     fn complete_returns_expected_response_and_tokens() {
