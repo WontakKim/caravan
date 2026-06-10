@@ -277,4 +277,119 @@ mod tests {
             "kind=invalid_timeout message=\"invalid timeout seconds: oops\""
         );
     }
+
+    #[test]
+    fn default_runtime_config_uses_mock_model_config() {
+        let cfg = ModelRuntimeConfig::default();
+        assert_eq!(cfg.model_config, ModelConfig::default());
+        assert_eq!(
+            cfg.model_config.active_profile.provider,
+            ModelProvider::Mock
+        );
+        assert_eq!(cfg.model_config.active_profile.model, "mock-model");
+        assert_eq!(
+            cfg.model_config.active_profile.adapter,
+            ModelAdapterKind::MockModelAdapter
+        );
+    }
+
+    #[test]
+    fn default_runtime_config_uses_default_openai_config() {
+        let cfg = ModelRuntimeConfig::default();
+        assert_eq!(cfg.openai_config, OpenAICompatibleConfig::default());
+        assert_eq!(cfg.openai_config.base_url, "https://api.openai.com/v1");
+        assert_eq!(cfg.openai_config.api_key_env, "OPENAI_API_KEY");
+        assert_eq!(cfg.openai_config.timeout_secs, 30);
+    }
+
+    #[test]
+    fn from_env_map_empty_map_equals_default() {
+        assert_eq!(
+            ModelRuntimeConfig::from_env_map(&HashMap::new()).unwrap(),
+            ModelRuntimeConfig::default()
+        );
+    }
+
+    #[test]
+    fn from_env_map_mock_provider_sets_mock_adapter() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "mock".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(
+            cfg.model_config.active_profile.provider,
+            ModelProvider::Mock
+        );
+        assert_eq!(
+            cfg.model_config.active_profile.adapter,
+            ModelAdapterKind::MockModelAdapter
+        );
+        assert_eq!(cfg.model_config.active_profile.model, "mock-model");
+    }
+
+    #[test]
+    fn from_env_map_openai_compatible_provider_sets_openai_adapter() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(
+            cfg.model_config.active_profile.provider,
+            ModelProvider::OpenAICompatible
+        );
+        assert_eq!(
+            cfg.model_config.active_profile.adapter,
+            ModelAdapterKind::OpenAICompatibleAdapter
+        );
+    }
+
+    #[test]
+    fn from_env_map_openai_compatible_without_model_uses_placeholder() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(
+            cfg.model_config.active_profile.model,
+            "openai-compatible-model"
+        );
+    }
+
+    #[test]
+    fn from_env_map_mock_provider_applies_model_override() {
+        let vars = HashMap::from([
+            ("CARAVAN_MODEL_PROVIDER".into(), "mock".into()),
+            ("CARAVAN_MODEL".into(), "custom-model".into()),
+        ]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.model_config.active_profile.model, "custom-model");
+    }
+
+    #[test]
+    fn from_env_map_openai_compatible_provider_applies_model_override() {
+        let vars = HashMap::from([
+            ("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into()),
+            ("CARAVAN_MODEL".into(), "custom-model".into()),
+        ]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.model_config.active_profile.model, "custom-model");
+    }
+
+    #[test]
+    fn from_env_map_applies_base_url_override() {
+        let vars = HashMap::from([(
+            "CARAVAN_OPENAI_BASE_URL".into(),
+            "https://example.test/v1".into(),
+        )]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_config.base_url, "https://example.test/v1");
+    }
+
+    #[test]
+    fn from_env_map_applies_api_key_env_override() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_API_KEY_ENV".into(), "MY_KEY_ENV".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_config.api_key_env, "MY_KEY_ENV");
+    }
+
+    #[test]
+    fn from_env_map_applies_timeout_override() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_TIMEOUT_SECS".into(), "90".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_config.timeout_secs, 90);
+    }
 }
