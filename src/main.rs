@@ -5,6 +5,7 @@ mod input;
 mod model;
 mod model_config;
 mod model_gateway;
+mod model_openai_compatible;
 mod model_registry;
 mod model_types;
 mod prompt;
