@@ -6,6 +6,7 @@ mod model;
 mod model_config;
 mod model_gateway;
 mod model_openai_compatible;
+mod model_openai_config;
 mod model_openai_types;
 mod model_registry;
 mod model_types;
