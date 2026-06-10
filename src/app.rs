@@ -29,6 +29,13 @@ impl App {
     /// `AppStart` (which is persisted at `seq = max_loaded + 1`), and returns
     /// a fresh app whose screen log starts with only "Caravan started.".
     pub fn with_store(store: EventStore) -> App {
+        Self::with_store_and_gateway(store, ModelGateway::default())
+    }
+
+    /// Constructs a store-backed app with the given `gateway`: loads existing events
+    /// from `store`, appends `AppStart`, and returns a fresh app whose screen log
+    /// starts with only "Caravan started.".
+    pub fn with_store_and_gateway(store: EventStore, gateway: ModelGateway) -> App {
         let mut event_log = EventLog::load_from(store);
         event_log.append(EventKind::AppStart, "Caravan started.");
         App {
@@ -37,7 +44,7 @@ impl App {
             should_exit: false,
             event_log,
             selected_event: None,
-            model_gateway: ModelGateway::default(),
+            model_gateway: gateway,
         }
     }
 
