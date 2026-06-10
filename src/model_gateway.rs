@@ -46,7 +46,6 @@ impl ModelGateway {
         }
     }
 
-    #[allow(dead_code)] // remove when App constructs the gateway from runtime config
     pub fn from_runtime_config(runtime_config: ModelRuntimeConfig) -> Self {
         Self {
             config: runtime_config.model_config,

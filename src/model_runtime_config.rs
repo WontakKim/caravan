@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-// This module is a config-assembly source not yet wired into the app;
-// remove this allow when from_env_map is called from a production path.
-
 //! Config-assembly layer for `ModelRuntimeConfig`.
 //!
 //! `ModelConfigError` (config-assembly phase) is intentionally distinct from

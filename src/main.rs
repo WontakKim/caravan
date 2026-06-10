@@ -71,7 +71,16 @@ fn main() -> std::io::Result<()> {
         prev_hook(info);
     }));
 
-    let mut app = app::App::with_store(storage::EventStore::new(".caravan"));
+    let runtime_config = match model_runtime_config::ModelRuntimeConfig::from_process_env() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("caravan: invalid model runtime config: {e}");
+            std::process::exit(1);
+        }
+    };
+    let gateway = model_gateway::ModelGateway::from_runtime_config(runtime_config);
+
+    let mut app = app::App::with_store_and_gateway(storage::EventStore::new(".caravan"), gateway);
 
     // Terminal setup: clean up on any early failure after raw mode is enabled.
     let mut stdout = std::io::stdout();
