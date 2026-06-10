@@ -457,7 +457,7 @@ The default application flow is unchanged: every real run still routes to
 
 ## OpenAI-compatible Request Builder
 
-`build_request` in `src/model_openai_request.rs` combines an `OpenAICompatibleConfig`,
+`OpenAIRequestBuilder::build` in `src/model_openai_request.rs` combines an `OpenAICompatibleConfig`,
 a model name (`&str`), and a `ModelRequest` into an `OpenAIRequestPlan` — a request plan
 describing what *would* be sent to the OpenAI-compatible endpoint if a real HTTP client
 existed. Producing an `OpenAIRequestPlan` is not an API call; no network connection is
@@ -470,12 +470,11 @@ opened and no credentials are touched.
 | `url` | `String` | The fully-resolved chat-completions URL (from `OpenAICompatibleConfig::chat_completions_url()`) |
 | `api_key_env` | `String` | The **name** of the environment variable that would hold the API key — never the key value itself; `std::env::var` is never called |
 | `timeout_secs` | `u64` | Request timeout in seconds, copied from the config |
-| `body` | `OpenAIChatBody` | The serialisable request body, containing the model name and the messages list built from `ModelRequest` |
+| `body` | `OpenAIChatRequest` | The serialisable request body, containing the model name and the messages list built from `ModelRequest` |
 
-`build_request(config, model, request)` returns `OpenAIRequestPlan` by value. It
-reads fields from the config and converts the `ModelRequest` messages into
-`OpenAIChatMessage` entries (`role: "user"` for each prompt message). No I/O of any
-kind is performed.
+`OpenAIRequestBuilder::build(config, model, request)` returns `OpenAIRequestPlan` by value. It
+reads fields from the config and maps `ModelRequest.prompt` to a single user message
+(`role: "user"`). No I/O of any kind is performed.
 
 > **This is a request-plan builder only — NOT a real HTTP integration.**
 > No HTTP call is performed. `std::env::var` is never called — `api_key_env` is
