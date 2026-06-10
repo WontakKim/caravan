@@ -2,7 +2,7 @@
 // Payload types are test-only until the OpenAI-compatible adapter wires in;
 // remove this allow when complete() builds real requests.
 
-use crate::model::ModelRequest;
+use crate::model::{ModelError, ModelOutput, ModelRequest, ModelResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +35,27 @@ impl OpenAIChatRequest {
 pub struct OpenAIChatResponse {
     pub choices: Vec<OpenAIChatChoice>,
     pub usage: Option<OpenAIUsage>,
+}
+
+impl OpenAIChatResponse {
+    pub fn first_assistant_content(&self) -> Option<&str> {
+        self.choices
+            .first()
+            .map(|choice| choice.message.content.as_str())
+    }
+
+    pub fn to_model_output(&self) -> ModelResult<ModelOutput> {
+        let text = self
+            .first_assistant_content()
+            .ok_or_else(|| ModelError::AdapterFailure {
+                message: "OpenAI-compatible response did not contain assistant content".to_string(),
+            })?;
+
+        Ok(ModelOutput {
+            response: text.to_string(),
+            tokens: text.split_whitespace().map(str::to_string).collect(),
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,5 +152,72 @@ mod tests {
         };
         let chat_request = OpenAIChatRequest::from_model_request("gpt-4o", &request);
         assert!(!chat_request.stream);
+    }
+
+    #[test]
+    fn first_assistant_content_returns_first_choice_content() {
+        let response = OpenAIChatResponse {
+            choices: vec![
+                OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "first content".to_string(),
+                    },
+                },
+                OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "second content".to_string(),
+                    },
+                },
+            ],
+            usage: None,
+        };
+        assert_eq!(response.first_assistant_content(), Some("first content"));
+    }
+
+    #[test]
+    fn first_assistant_content_returns_none_when_choices_empty() {
+        let response = OpenAIChatResponse {
+            choices: vec![],
+            usage: None,
+        };
+        assert_eq!(response.first_assistant_content(), None);
+    }
+
+    #[test]
+    fn to_model_output_maps_response_and_tokens() {
+        let response = OpenAIChatResponse {
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: "Mock response for: hello caravan".to_string(),
+                },
+            }],
+            usage: None,
+        };
+        let output = response.to_model_output().unwrap();
+        assert_eq!(output.response, "Mock response for: hello caravan");
+        assert_eq!(
+            output.tokens,
+            vec!["Mock", "response", "for:", "hello", "caravan"]
+        );
+    }
+
+    #[test]
+    fn to_model_output_errors_when_no_assistant_content() {
+        let response = OpenAIChatResponse {
+            choices: vec![],
+            usage: None,
+        };
+        match response.to_model_output() {
+            Err(ModelError::AdapterFailure { message }) => {
+                assert_eq!(
+                    message,
+                    "OpenAI-compatible response did not contain assistant content"
+                );
+            }
+            _ => panic!("expected Err(AdapterFailure), got something else"),
+        }
     }
 }
