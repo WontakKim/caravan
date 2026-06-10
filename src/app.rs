@@ -103,8 +103,10 @@ impl App {
                     &self.model_gateway,
                 );
                 self.log.push(format!("User: {}", output.user_message));
-                self.log
-                    .push(format!("Assistant: {}", output.assistant_response));
+                if !output.assistant_response.is_empty() {
+                    self.log
+                        .push(format!("Assistant: {}", output.assistant_response));
+                }
             }
         }
 
@@ -159,11 +161,13 @@ impl App {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::path::Path;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
     use crate::events::{EventKind, EventLog, EventSeq};
+    use crate::model_runtime_config::ModelRuntimeConfig;
     use crate::storage::EventStore;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -668,5 +672,67 @@ mod tests {
         assert!(pc.detail.contains("Context:"));
         assert!(pc.detail.contains("Output:"));
         assert!(pc.detail.contains("hello caravan"));
+    }
+
+    #[test]
+    fn openai_compatible_gateway_records_model_error_and_run_fail() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+
+        let vars = HashMap::from([(
+            "CARAVAN_MODEL_PROVIDER".to_string(),
+            "openai-compatible".to_string(),
+        )]);
+        let runtime_config = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        let gateway = ModelGateway::from_runtime_config(runtime_config);
+
+        let mut app = App::with_store_and_gateway(store, gateway);
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert_eq!(events[0].kind, EventKind::AppStart);
+
+        let after_app_start = &events[1..];
+        let expected_kinds = [
+            EventKind::UserMessage,
+            EventKind::RunCreate,
+            EventKind::RunStart,
+            EventKind::TurnStart,
+            EventKind::PromptCompile,
+            EventKind::ModelError,
+            EventKind::RunFail,
+        ];
+        assert_eq!(after_app_start.len(), expected_kinds.len());
+        for (ev, expected) in after_app_start.iter().zip(expected_kinds.iter()) {
+            assert_eq!(ev.kind, *expected);
+        }
+
+        // No ModelToken, RunComplete, or ModelRoute on the error path.
+        assert!(!events.iter().any(|e| e.kind == EventKind::ModelToken));
+        assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete));
+        assert!(!events.iter().any(|e| e.kind == EventKind::ModelRoute));
+
+        // ModelError detail contains the expected skeleton message.
+        let model_error_event = events
+            .iter()
+            .find(|e| e.kind == EventKind::ModelError)
+            .expect("ModelError event should exist");
+        assert!(
+            model_error_event
+                .detail
+                .contains("OpenAI-compatible adapter is a skeleton in this POC"),
+            "ModelError detail should contain expected message: {}",
+            model_error_event.detail
+        );
+
+        // Screen log must contain the user message line.
+        assert!(app.log.contains(&"User: hello caravan".to_string()));
+
+        // No assistant line should be pushed on the error path.
+        assert!(
+            !app.log.iter().any(|l| l.starts_with("Assistant:")),
+            "app.log should not contain any entry starting with 'Assistant:'"
+        );
     }
 }
