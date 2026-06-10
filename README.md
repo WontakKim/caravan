@@ -485,6 +485,38 @@ reads fields from the config and maps `ModelRequest.prompt` to a single user mes
 > struct exists solely to make the intended request shape inspectable and testable
 > without performing any I/O.
 
+## Model Runtime Config Source
+
+The Model Runtime Config Source is a configuration assembly step, not a real API call layer.
+
+`ModelRuntimeConfig` is the top-level configuration type that combines `ModelConfig` (provider
+selection and model name) with `OpenAICompatibleConfig` (base URL, API-key env-var name, and
+timeout). It is constructed through `from_env_map`, which accepts a pure key/value map — it
+never reads process environment variables and never reads API key values.
+`CARAVAN_OPENAI_API_KEY_ENV` carries only the **name** of the environment variable; the actual
+key value is never loaded or resolved at this stage.
+
+### Supported Keys and Defaults
+
+| Key | Values / Default | Notes |
+|-----|-----------------|-------|
+| `CARAVAN_MODEL_PROVIDER` | `mock` \| `openai-compatible`, default `mock` | Selects the active model adapter |
+| `CARAVAN_MODEL` | default `mock-model` (mock) / `openai-compatible-model` (openai-compatible) | Model name passed to the adapter |
+| `CARAVAN_OPENAI_BASE_URL` | default `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints |
+| `CARAVAN_OPENAI_API_KEY_ENV` | default `OPENAI_API_KEY` | Name of the env var that holds the API key — the key value itself is never read here |
+| `CARAVAN_OPENAI_TIMEOUT_SECS` | default `30` | Request timeout in seconds; `0` or a non-numeric value is an error |
+
+### Default Flow
+
+The default user flow is unchanged: the mock provider is selected, and `ModelRoute` logs the
+detail `provider=mock model=mock-model adapter=MockModelAdapter`. No OpenAI-compatible config is
+consulted during a normal run.
+
+> **This is a configuration assembly step only — NOT a real API integration.**
+> `from_env_map` never calls `std::env::var`, never loads an API key, and performs no I/O of
+> any kind. It exists solely to translate a flat key/value map into the typed config structs
+> consumed by the model adapter selection logic.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
