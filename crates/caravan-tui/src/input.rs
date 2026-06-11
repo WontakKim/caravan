@@ -83,7 +83,7 @@ mod tests {
         assert!(app.should_exit);
         // Ctrl+C records an ExitRequest event (matches the README).
         let last = app.event_log.get(app.event_log.len() - 1).unwrap();
-        assert_eq!(last.kind, caravan_core::events::EventKind::ExitRequest);
+        assert_eq!(last.kind, kernel::events::EventKind::ExitRequest);
     }
 
     #[test]
@@ -108,10 +108,8 @@ mod tests {
     fn down_twice_advances_selection_without_appending() {
         let mut app = App::new();
         // Seed a second event so there is something to advance to.
-        app.event_log.append(
-            caravan_core::events::EventKind::UserMessage,
-            "hello".to_string(),
-        );
+        app.event_log
+            .append(kernel::events::EventKind::UserMessage, "hello".to_string());
         handle_key(&mut app, press(KeyCode::Down));
         handle_key(&mut app, press(KeyCode::Down));
         assert_eq!(app.selected_event, Some(1));

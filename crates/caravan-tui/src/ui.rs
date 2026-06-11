@@ -6,7 +6,7 @@ use ratatui::{
 };
 use unicode_width::UnicodeWidthStr;
 
-use caravan_core::events::{AppEvent, EventKind};
+use kernel::events::{AppEvent, EventKind};
 
 /// Terminal display width (in columns) of the prompt input. Wide characters
 /// such as Hangul/CJK occupy two columns, so the cursor must advance by the
@@ -155,7 +155,7 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
 
 #[cfg(test)]
 mod tests {
-    use caravan_core::events::{AppEvent, EventKind, EventSeq};
+    use kernel::events::{AppEvent, EventKind, EventSeq};
 
     use super::{input_display_width, inspector_text, log_skip};
 

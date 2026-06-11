@@ -1,6 +1,6 @@
-use caravan_core::events::{EventKind, EventLog};
-use caravan_core::model_gateway::ModelGateway;
-use caravan_core::storage::EventStore;
+use kernel::events::{EventKind, EventLog};
+use kernel::model_gateway::ModelGateway;
+use kernel::storage::EventStore;
 
 pub struct App {
     pub log: Vec<String>,
@@ -65,7 +65,7 @@ impl App {
     }
 
     pub fn submit(&mut self) {
-        use caravan_core::commands::{Command, ParsedInput, parse_input};
+        use kernel::commands::{Command, ParsedInput, parse_input};
 
         let raw = self.input.clone();
         match parse_input(&raw) {
@@ -97,7 +97,7 @@ impl App {
             }
             ParsedInput::UserMessage(message) => {
                 self.event_log.append(EventKind::UserMessage, &message);
-                let output = caravan_core::runner::run_mock_turn(
+                let output = kernel::runner::run_mock_turn(
                     &mut self.event_log,
                     &message,
                     &self.model_gateway,
@@ -166,9 +166,9 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::*;
-    use caravan_core::events::{EventKind, EventLog, EventSeq};
-    use caravan_core::model_runtime_config::ModelRuntimeConfig;
-    use caravan_core::storage::EventStore;
+    use kernel::events::{EventKind, EventLog, EventSeq};
+    use kernel::model_runtime_config::ModelRuntimeConfig;
+    use kernel::storage::EventStore;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 

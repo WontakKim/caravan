@@ -1,6 +1,6 @@
 use caravan_tui::{app, input, ui};
 
-use caravan_core::{model_gateway, model_runtime_config, storage};
+use kernel::{model_gateway, model_runtime_config, storage};
 
 use std::time::Duration;
 
