@@ -1,6 +1,6 @@
-use tui::{app, input, ui};
+use tui::{App, input, ui};
 
-use kernel::{model_gateway, model_runtime_config, storage};
+use kernel::{EventStore, ModelGateway, ModelRuntimeConfig};
 
 use std::time::Duration;
 
@@ -25,7 +25,7 @@ fn restore_terminal() -> std::io::Result<()> {
 
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    app: &mut app::App,
+    app: &mut App,
 ) -> std::io::Result<()> {
     loop {
         terminal.draw(|frame| ui::draw(frame, app))?;
@@ -56,16 +56,16 @@ fn main() -> std::io::Result<()> {
         prev_hook(info);
     }));
 
-    let runtime_config = match model_runtime_config::ModelRuntimeConfig::from_process_env() {
+    let runtime_config = match ModelRuntimeConfig::from_process_env() {
         Ok(cfg) => cfg,
         Err(e) => {
             eprintln!("caravan: invalid model runtime config: {e}");
             std::process::exit(1);
         }
     };
-    let gateway = model_gateway::ModelGateway::from_runtime_config(runtime_config);
+    let gateway = ModelGateway::from_runtime_config(runtime_config);
 
-    let mut app = app::App::with_store_and_gateway(storage::EventStore::new(".caravan"), gateway);
+    let mut app = App::with_store_and_gateway(EventStore::new(".caravan"), gateway);
 
     // Terminal setup: clean up on any early failure after raw mode is enabled.
     let mut stdout = std::io::stdout();
