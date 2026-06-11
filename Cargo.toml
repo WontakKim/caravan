@@ -1,3 +1,7 @@
+[workspace]
+members = ["crates/caravan-core"]
+resolver = "2"
+
 [package]
 name = "caravan"
 version = "0.1.0"
