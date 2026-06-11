@@ -9,6 +9,6 @@ path = "src/main.rs"
 
 [dependencies]
 kernel = { path = "../kernel" }
-caravan-tui = { path = "../caravan-tui" }
+tui = { path = "../tui" }
 ratatui = "0.29"
 crossterm = "0.28"

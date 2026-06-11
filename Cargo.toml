@@ -1,4 +1,4 @@
 [workspace]
-members = ["crates/kernel", "crates/caravan-tui", "crates/caravan-bin"]
+members = ["crates/kernel", "crates/tui", "crates/caravan-bin"]
 default-members = ["crates/caravan-bin"]
 resolver = "2"

@@ -1,4 +1,4 @@
-use caravan_tui::{app, input, ui};
+use tui::{app, input, ui};
 
 use kernel::{model_gateway, model_runtime_config, storage};
 

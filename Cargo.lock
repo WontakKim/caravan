@@ -18,20 +18,10 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 name = "caravan"
 version = "0.1.0"
 dependencies = [
- "caravan-tui",
  "crossterm",
  "kernel",
  "ratatui",
-]
-
-[[package]]
-name = "caravan-tui"
-version = "0.1.0"
-dependencies = [
- "crossterm",
- "kernel",
- "ratatui",
- "unicode-width 0.2.0",
+ "tui",
 ]
 
 [[package]]
@@ -509,6 +499,16 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "tui"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "kernel",
+ "ratatui",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]
