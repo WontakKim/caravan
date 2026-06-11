@@ -19,11 +19,11 @@ name = "caravan"
 version = "0.1.0"
 dependencies = [
  "caravan-core",
+ "caravan-tui",
  "crossterm",
  "ratatui",
  "serde",
  "serde_json",
- "unicode-width 0.2.0",
 ]
 
 [[package]]
@@ -32,6 +32,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "caravan-tui"
+version = "0.1.0"
+dependencies = [
+ "caravan-core",
+ "crossterm",
+ "ratatui",
+ "unicode-width 0.2.0",
 ]
 
 [[package]]

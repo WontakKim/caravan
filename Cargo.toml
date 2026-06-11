@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/caravan-core"]
+members = ["crates/caravan-core", "crates/caravan-tui"]
 resolver = "2"
 
 [package]
@@ -9,8 +9,8 @@ edition = "2024"
 
 [dependencies]
 caravan-core = { path = "crates/caravan-core" }
+caravan-tui = { path = "crates/caravan-tui" }
 ratatui = "0.29"
 crossterm = "0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-unicode-width = "0.2"

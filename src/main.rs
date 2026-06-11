@@ -1,6 +1,4 @@
-mod app;
-mod input;
-mod ui;
+use caravan_tui::{app, input, ui};
 
 use caravan_core::{model_gateway, model_runtime_config, storage};
 
