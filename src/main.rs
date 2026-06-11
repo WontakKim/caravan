@@ -1,21 +1,8 @@
 mod app;
-mod commands;
-mod events;
 mod input;
-mod model;
-mod model_config;
-mod model_gateway;
-mod model_openai_compatible;
-mod model_openai_config;
-mod model_openai_request;
-mod model_openai_types;
-mod model_registry;
-mod model_runtime_config;
-mod model_types;
-mod prompt;
-mod runner;
-mod storage;
 mod ui;
+
+use caravan_core::{model_gateway, model_runtime_config, storage};
 
 use std::time::Duration;
 
