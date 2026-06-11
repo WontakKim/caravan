@@ -13,6 +13,17 @@ and three crates under `crates/`:
 | `tui` | `crates/tui` | App state, input handling, and rendering (depends on `kernel`) |
 | `cli` | `crates/cli` | Binary entrypoint; produces the `caravan` binary (depends on `kernel` and `tui`) |
 
+## Public API
+
+`kernel` re-exports its frequently used domain, model, and runtime types at the crate root; `tui` re-exports `App`.
+
+```rust
+use kernel::{EventKind, ModelGateway, ModelRuntimeConfig};
+use tui::App;
+```
+
+Full module paths (e.g. `kernel::model_gateway::ModelGateway`) remain available for callers that prefer explicit paths. Note that the OpenAI-compatible adapter is still a skeleton with no real API calls.
+
 ## Running
 
 ```sh
