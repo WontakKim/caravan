@@ -3,8 +3,8 @@ use kernel::{
     MockRunOutput, ModelAdapter, ModelAdapterContext, ModelAdapterKind, ModelConfig,
     ModelConfigError, ModelError, ModelGateway, ModelOutput, ModelProfile, ModelProvider,
     ModelRequest, ModelResponse, ModelResult, ModelRoute, ModelRuntimeConfig, OpenAIHttpClient,
-    OpenAIHttpError, OpenAIHttpResult, ParsedInput, RunId, StubOpenAIHttpClient, TurnId,
-    run_mock_turn,
+    OpenAIHttpClientKind, OpenAIHttpError, OpenAIHttpResult, ParsedInput, RunId,
+    StubOpenAIHttpClient, TurnId, run_mock_turn,
 };
 
 #[test]
@@ -94,6 +94,7 @@ fn importability_checks() {
     let _: Option<ModelResult<()>> = None;
     let _: Option<ModelResponse> = None;
     let _: Option<ModelRoute> = None;
+    let _: Option<OpenAIHttpClientKind> = None;
     let _: Option<OpenAIHttpError> = None;
     let _: Option<OpenAIHttpResult<()>> = None;
     let _: Option<RunId> = None;
