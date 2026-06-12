@@ -2,6 +2,8 @@ use crate::model::{ModelError, ModelRequest};
 use crate::model_config::ModelConfig;
 #[cfg(test)]
 use crate::model_openai_config::OpenAICompatibleConfig;
+#[cfg(test)]
+use crate::model_openai_http::OpenAIHttpClient;
 use crate::model_registry::ModelAdapterRegistry;
 use crate::model_runtime_config::ModelRuntimeConfig;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
@@ -69,6 +71,21 @@ impl ModelGateway {
         }
     }
 
+    #[cfg(test)]
+    pub fn with_openai_http_client_for_test(
+        config: ModelConfig,
+        http_client: Box<dyn OpenAIHttpClient>,
+    ) -> Self {
+        ModelGateway {
+            config,
+            registry: ModelAdapterRegistry::with_openai_http_client(
+                OpenAICompatibleConfig::default(),
+                http_client,
+            ),
+            forced_error: None,
+        }
+    }
+
     pub fn complete(&self, request: ModelRequest) -> Result<ModelResponse, ModelError> {
         #[cfg(test)]
         if let Some(ref err) = self.forced_error {
@@ -101,6 +118,9 @@ impl Default for ModelGateway {
 mod tests {
     use super::*;
     use crate::model_config::ModelProfile;
+    use crate::model_openai_http::OpenAIHttpResult;
+    use crate::model_openai_request::OpenAIRequestPlan;
+    use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
 
     #[test]
     fn complete_openai_compatible_profile_returns_adapter_failure() {
@@ -280,5 +300,46 @@ mod tests {
             "CUSTOM_KEY_ENV"
         );
         assert_eq!(gateway.openai_config_for_test().timeout_secs, 99);
+    }
+
+    struct FakeSuccessOpenAIClient;
+
+    impl OpenAIHttpClient for FakeSuccessOpenAIClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "Hello from fake OpenAI".to_string(),
+                    },
+                }],
+                usage: None,
+            })
+        }
+    }
+
+    #[test]
+    fn gateway_completes_with_injected_fake_success_client() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAICompatible,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway = ModelGateway::with_openai_http_client_for_test(
+            config,
+            Box::new(FakeSuccessOpenAIClient),
+        );
+        let result = gateway.complete(ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello".into(),
+        });
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.assistant_response, "Hello from fake OpenAI");
     }
 }
