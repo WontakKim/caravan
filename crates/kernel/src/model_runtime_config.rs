@@ -67,7 +67,7 @@ impl Default for ModelRuntimeConfig {
 }
 
 impl ModelRuntimeConfig {
-    /// Reads only the five allowed CARAVAN_* keys from the process environment
+    /// Reads only the six allowed CARAVAN_* keys from the process environment
     /// via individual `std::env::var` calls and delegates to [`Self::from_env_map`].
     ///
     /// Note: `CARAVAN_OPENAI_API_KEY_ENV` is treated as the **name** of the env var

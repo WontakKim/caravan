@@ -576,9 +576,10 @@ gateway in two steps:
 
 1. `runtime_config.model_config` is used as the gateway routing config, selecting which
    model adapter handles requests.
-2. `runtime_config.openai_config` is passed through `ModelAdapterRegistry::new` into the
-   `OpenAICompatibleAdapter`, making the typed config available at the adapter construction
-   boundary.
+2. `runtime_config.openai_config` and `runtime_config.openai_http_client_kind` are passed
+   through `ModelAdapterRegistry::from_openai_runtime` into the `OpenAICompatibleAdapter`,
+   making the typed config available at the adapter construction boundary and selecting the
+   stub or blocking HTTP client implementation.
 
 `ModelGateway::default()` and the main App flow are unchanged — the default path continues
 to use the mock adapter exclusively, and no OpenAI-compatible logic is executed during a
