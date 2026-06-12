@@ -1,9 +1,10 @@
 use kernel::{
-    AppEvent, Command, EventKind, EventLog, EventSeq, EventStore, MockRunOutput, ModelAdapter,
-    ModelAdapterContext, ModelAdapterKind, ModelConfig, ModelConfigError, ModelError, ModelGateway,
-    ModelOutput, ModelProfile, ModelProvider, ModelRequest, ModelResponse, ModelResult, ModelRoute,
-    ModelRuntimeConfig, OpenAIHttpClient, OpenAIHttpError, OpenAIHttpResult, ParsedInput, RunId,
-    StubOpenAIHttpClient, TurnId, run_mock_turn,
+    AppEvent, BlockingOpenAIHttpClient, Command, EventKind, EventLog, EventSeq, EventStore,
+    MockRunOutput, ModelAdapter, ModelAdapterContext, ModelAdapterKind, ModelConfig,
+    ModelConfigError, ModelError, ModelGateway, ModelOutput, ModelProfile, ModelProvider,
+    ModelRequest, ModelResponse, ModelResult, ModelRoute, ModelRuntimeConfig, OpenAIHttpClient,
+    OpenAIHttpError, OpenAIHttpResult, ParsedInput, RunId, StubOpenAIHttpClient, TurnId,
+    run_mock_turn,
 };
 
 #[test]
@@ -78,6 +79,7 @@ fn run_mock_turn_event_sequence() {
 #[test]
 fn importability_checks() {
     let _: Option<AppEvent> = None;
+    let _: Option<BlockingOpenAIHttpClient> = None;
     let _: Option<EventSeq> = None;
     let _: Option<EventStore> = None;
     let _: Option<MockRunOutput> = None;

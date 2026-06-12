@@ -25,7 +25,8 @@ pub use model::{
 pub use model_config::{ModelConfig, ModelProfile};
 pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};
 pub use model_openai_http::{
-    OpenAIHttpClient, OpenAIHttpError, OpenAIHttpResult, StubOpenAIHttpClient,
+    BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpError, OpenAIHttpResult,
+    StubOpenAIHttpClient,
 };
 pub use model_runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model_types::{ModelAdapterKind, ModelProvider};

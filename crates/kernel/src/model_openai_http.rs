@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use crate::model_openai_request::OpenAIRequestPlan;
 use crate::model_openai_types::OpenAIChatResponse;
 
@@ -44,6 +46,31 @@ impl std::fmt::Display for OpenAIHttpError {
 
 pub type OpenAIHttpResult<T> = Result<T, OpenAIHttpError>;
 
+fn api_key_from_env_value(
+    env: &str,
+    value: Result<String, std::env::VarError>,
+) -> OpenAIHttpResult<String> {
+    match value {
+        Ok(s) if !s.is_empty() => Ok(s),
+        _ => Err(OpenAIHttpError::MissingApiKey {
+            env: env.to_string(),
+        }),
+    }
+}
+
+fn decode_chat_response(body: &str) -> OpenAIHttpResult<OpenAIChatResponse> {
+    serde_json::from_str(body).map_err(|e| OpenAIHttpError::ResponseDecode {
+        message: e.to_string(),
+    })
+}
+
+fn redact_secret(text: &str, secret: &str) -> String {
+    if secret.is_empty() {
+        return text.to_string();
+    }
+    text.replace(secret, "[REDACTED_API_KEY]")
+}
+
 /// Boundary that would transmit an [`OpenAIRequestPlan`] to an OpenAI-compatible endpoint.
 ///
 /// Synchronous by design for this POC — no async runtime exists in the workspace.
@@ -68,6 +95,61 @@ impl OpenAIHttpClient for StubOpenAIHttpClient {
         Err(OpenAIHttpError::NotImplemented {
             message: "OpenAI-compatible HTTP client is a skeleton in this POC".to_string(),
         })
+    }
+}
+
+/// Blocking HTTP client that performs real network calls to an OpenAI-compatible endpoint.
+///
+/// Uses `reqwest::blocking::Client` under the hood.
+/// **Not wired into the default App path** — `OpenAICompatibleAdapter::new/default`,
+/// `ModelAdapterRegistry::new`, and `ModelGateway` defaults all inject
+/// `StubOpenAIHttpClient`. This is an opt-in POC client only.
+#[derive(Debug, Clone)]
+pub struct BlockingOpenAIHttpClient {
+    client: reqwest::blocking::Client,
+}
+
+impl Default for BlockingOpenAIHttpClient {
+    fn default() -> Self {
+        Self {
+            client: reqwest::blocking::Client::new(),
+        }
+    }
+}
+
+impl OpenAIHttpClient for BlockingOpenAIHttpClient {
+    fn send_chat_completion(
+        &self,
+        plan: &OpenAIRequestPlan,
+    ) -> OpenAIHttpResult<OpenAIChatResponse> {
+        let api_key = api_key_from_env_value(&plan.api_key_env, std::env::var(&plan.api_key_env))?;
+
+        let response = self
+            .client
+            .post(&plan.url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .json(&plan.body)
+            .timeout(Duration::from_secs(plan.timeout_secs))
+            .send()
+            .map_err(|e| OpenAIHttpError::RequestFailure {
+                message: redact_secret(&e.to_string(), &api_key),
+            })?;
+
+        let status = response.status();
+        let text = response
+            .text()
+            .map_err(|e| OpenAIHttpError::RequestFailure {
+                message: redact_secret(&e.to_string(), &api_key),
+            })?;
+
+        if !status.is_success() {
+            return Err(OpenAIHttpError::HttpStatus {
+                status: status.as_u16(),
+                body: redact_secret(&text, &api_key),
+            });
+        }
+
+        decode_chat_response(&text)
     }
 }
 
@@ -242,5 +324,99 @@ mod tests {
             err.to_string(),
             "kind=missing_api_key message=\"missing or empty API key env var: OPENAI_API_KEY\""
         );
+    }
+
+    // --- BlockingOpenAIHttpClient tests ---
+
+    #[test]
+    fn blocking_client_constructs_via_default() {
+        let _client = BlockingOpenAIHttpClient::default();
+    }
+
+    #[test]
+    fn blocking_client_usable_as_boxed_trait_object() {
+        let client = BlockingOpenAIHttpClient::default();
+        let _boxed: Box<dyn OpenAIHttpClient> = Box::new(client);
+    }
+
+    #[test]
+    fn blocking_client_missing_env_returns_error_before_network() {
+        let client = BlockingOpenAIHttpClient::default();
+        let plan = OpenAIRequestPlan {
+            url: "http://127.0.0.1:9/unreachable".to_string(),
+            api_key_env: "CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST".to_string(),
+            timeout_secs: 1,
+            body: crate::model_openai_types::OpenAIChatRequest {
+                model: "test-model".to_string(),
+                messages: vec![],
+                stream: false,
+            },
+        };
+        let result = client.send_chat_completion(&plan);
+        assert!(matches!(result, Err(OpenAIHttpError::MissingApiKey { .. })));
+        assert!(
+            result
+                .unwrap_err()
+                .message()
+                .contains("CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST")
+        );
+    }
+
+    // --- api_key_from_env_value helper tests ---
+
+    #[test]
+    fn api_key_from_env_value_err_not_present_returns_missing() {
+        let result = api_key_from_env_value("MY_KEY", Err(std::env::VarError::NotPresent));
+        assert!(matches!(result, Err(OpenAIHttpError::MissingApiKey { .. })));
+    }
+
+    #[test]
+    fn api_key_from_env_value_ok_empty_returns_missing() {
+        let result = api_key_from_env_value("MY_KEY", Ok(String::new()));
+        assert!(matches!(result, Err(OpenAIHttpError::MissingApiKey { .. })));
+    }
+
+    #[test]
+    fn api_key_from_env_value_ok_non_empty_returns_value() {
+        let result = api_key_from_env_value("MY_KEY", Ok("sk-secret".to_string()));
+        assert_eq!(result, Ok("sk-secret".to_string()));
+    }
+
+    // --- decode_chat_response helper tests ---
+
+    #[test]
+    fn decode_chat_response_invalid_json_returns_decode_error() {
+        let result = decode_chat_response("not json");
+        assert!(matches!(
+            result,
+            Err(OpenAIHttpError::ResponseDecode { .. })
+        ));
+    }
+
+    #[test]
+    fn decode_chat_response_valid_json_returns_response() {
+        let json = r#"{"choices":[{"message":{"role":"assistant","content":"hello"}}]}"#;
+        let result = decode_chat_response(json);
+        assert!(result.is_ok());
+        let response = result.unwrap();
+        assert_eq!(response.choices.len(), 1);
+        assert_eq!(response.choices[0].message.content, "hello");
+    }
+
+    // --- redact_secret helper tests ---
+
+    #[test]
+    fn redact_secret_replaces_key_in_body() {
+        let body = "error: invalid key sk-FAKE-123 provided";
+        let redacted = redact_secret(body, "sk-FAKE-123");
+        assert!(redacted.contains("[REDACTED_API_KEY]"));
+        assert!(!redacted.contains("sk-FAKE-123"));
+    }
+
+    #[test]
+    fn redact_secret_empty_secret_returns_input_unchanged() {
+        let body = "some error message";
+        let result = redact_secret(body, "");
+        assert_eq!(result, "some error message");
     }
 }
