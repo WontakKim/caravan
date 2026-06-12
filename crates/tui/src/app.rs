@@ -721,7 +721,7 @@ mod tests {
         assert!(
             model_error_event
                 .detail
-                .contains("OpenAI-compatible adapter is a skeleton in this POC"),
+                .contains("OpenAI-compatible HTTP client is a skeleton in this POC"),
             "ModelError detail should contain expected message: {}",
             model_error_event.detail
         );

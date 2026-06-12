@@ -119,7 +119,7 @@ mod tests {
             Err(ModelError::AdapterFailure { message }) => {
                 assert_eq!(
                     message,
-                    "OpenAI-compatible adapter is a skeleton in this POC"
+                    "OpenAI-compatible HTTP client is a skeleton in this POC"
                 );
             }
             _ => panic!("expected Err(AdapterFailure)"),
@@ -253,7 +253,7 @@ mod tests {
             Err(ModelError::AdapterFailure { message }) => {
                 assert_eq!(
                     message,
-                    "OpenAI-compatible adapter is a skeleton in this POC"
+                    "OpenAI-compatible HTTP client is a skeleton in this POC"
                 );
             }
             _ => panic!("expected Err(AdapterFailure)"),

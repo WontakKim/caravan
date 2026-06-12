@@ -88,7 +88,7 @@ mod tests {
         if let Err(ModelError::AdapterFailure { message }) = result {
             assert_eq!(
                 message,
-                "OpenAI-compatible adapter is a skeleton in this POC"
+                "OpenAI-compatible HTTP client is a skeleton in this POC"
             );
         }
     }

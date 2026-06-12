@@ -2,14 +2,20 @@ use crate::model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
 };
 use crate::model_openai_config::OpenAICompatibleConfig;
+use crate::model_openai_http::{OpenAIHttpClient, StubOpenAIHttpClient};
+use crate::model_openai_request::OpenAIRequestBuilder;
 
 pub struct OpenAICompatibleAdapter {
     config: OpenAICompatibleConfig,
+    http_client: StubOpenAIHttpClient,
 }
 
 impl OpenAICompatibleAdapter {
     pub fn new(config: OpenAICompatibleConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            http_client: StubOpenAIHttpClient::default(),
+        }
     }
 
     #[allow(dead_code)]
@@ -27,12 +33,16 @@ impl Default for OpenAICompatibleAdapter {
 impl ModelAdapter for OpenAICompatibleAdapter {
     fn complete(
         &self,
-        _context: &ModelAdapterContext,
-        _request: &ModelRequest,
+        context: &ModelAdapterContext,
+        request: &ModelRequest,
     ) -> ModelResult<ModelOutput> {
-        Err(ModelError::AdapterFailure {
-            message: "OpenAI-compatible adapter is a skeleton in this POC".to_string(),
-        })
+        let plan = OpenAIRequestBuilder::build(&self.config, &context.model, request);
+        match self.http_client.send_chat_completion(&plan) {
+            Ok(response) => response.to_model_output(),
+            Err(err) => Err(ModelError::AdapterFailure {
+                message: err.message().to_string(),
+            }),
+        }
     }
 }
 
@@ -79,7 +89,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_returns_exact_d1_message() {
+    fn complete_returns_exact_http_client_skeleton_message() {
         let request = ModelRequest {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
@@ -96,7 +106,7 @@ mod tests {
         {
             assert_eq!(
                 message,
-                "OpenAI-compatible adapter is a skeleton in this POC"
+                "OpenAI-compatible HTTP client is a skeleton in this POC"
             );
             assert!(!message.is_empty());
         } else {
