@@ -19,7 +19,9 @@ pub mod storage;
 
 pub use commands::{Command, ParsedInput};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
-pub use model::{ModelAdapter, ModelError, ModelOutput, ModelRequest, ModelResult};
+pub use model::{
+    ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
+};
 pub use model_config::{ModelConfig, ModelProfile};
 pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};
 pub use model_openai_http::{

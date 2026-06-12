@@ -1,3 +1,5 @@
+use crate::model_types::{ModelAdapterKind, ModelProvider};
+
 pub struct ModelOutput {
     pub response: String,
     pub tokens: Vec<String>,
@@ -6,6 +8,13 @@ pub struct ModelOutput {
 pub struct ModelRequest {
     pub prompt: String,
     pub user_message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelAdapterContext {
+    pub provider: ModelProvider,
+    pub model: String,
+    pub adapter: ModelAdapterKind,
 }
 
 pub trait ModelAdapter {
@@ -119,5 +128,22 @@ mod tests {
             err.to_string(),
             "kind=unsupported_adapter message=\"unsupported adapter: gpt-99\""
         );
+    }
+
+    #[test]
+    fn adapter_context_builds_from_profile_values() {
+        let profile = crate::model_config::ModelProfile {
+            provider: ModelProvider::OpenAICompatible,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+        let ctx = ModelAdapterContext {
+            provider: profile.provider,
+            model: profile.model.clone(),
+            adapter: profile.adapter,
+        };
+        assert_eq!(ctx.provider, profile.provider);
+        assert_eq!(ctx.model, profile.model);
+        assert_eq!(ctx.adapter, profile.adapter);
     }
 }
