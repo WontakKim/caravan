@@ -4,7 +4,9 @@ use crate::model::{
 use crate::model_config::ModelProfile;
 use crate::model_openai_compatible::OpenAICompatibleAdapter;
 use crate::model_openai_config::OpenAICompatibleConfig;
-use crate::model_openai_http::{OpenAIHttpClient, StubOpenAIHttpClient};
+use crate::model_openai_http::{
+    BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, StubOpenAIHttpClient,
+};
 use crate::model_types::ModelAdapterKind;
 
 pub struct ModelAdapterRegistry {
@@ -32,6 +34,19 @@ impl ModelAdapterRegistry {
             openai_compatible: OpenAICompatibleAdapter::with_http_client(
                 openai_config,
                 http_client,
+            ),
+        }
+    }
+
+    pub fn from_openai_runtime(
+        openai_config: OpenAICompatibleConfig,
+        client_kind: OpenAIHttpClientKind,
+    ) -> Self {
+        match client_kind {
+            OpenAIHttpClientKind::Stub => Self::new(openai_config),
+            OpenAIHttpClientKind::Blocking => Self::with_openai_http_client(
+                openai_config,
+                Box::new(BlockingOpenAIHttpClient::default()),
             ),
         }
     }
@@ -173,5 +188,64 @@ mod tests {
         assert!(result.is_ok());
         let output = result.unwrap();
         assert_eq!(output.response, "Hello from fake OpenAI");
+    }
+
+    #[test]
+    fn from_openai_runtime_stub_returns_skeleton_error() {
+        use crate::model_openai_http::OpenAIHttpClientKind;
+
+        let registry = ModelAdapterRegistry::from_openai_runtime(
+            OpenAICompatibleConfig::default(),
+            OpenAIHttpClientKind::Stub,
+        );
+        let profile = ModelProfile {
+            provider: ModelProvider::OpenAICompatible,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+        let request = ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello".into(),
+        };
+        let result = registry.complete(&profile, &request);
+        assert!(matches!(result, Err(ModelError::AdapterFailure { .. })));
+        if let Err(ModelError::AdapterFailure { message }) = result {
+            assert_eq!(
+                message,
+                "OpenAI-compatible HTTP client is a skeleton in this POC"
+            );
+        }
+    }
+
+    #[test]
+    fn from_openai_runtime_blocking_missing_key_returns_missing_api_key() {
+        use crate::model_openai_http::OpenAIHttpClientKind;
+
+        let config = OpenAICompatibleConfig {
+            base_url: "https://api.openai.com/v1".into(),
+            api_key_env: "CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST".into(),
+            timeout_secs: 30,
+        };
+        let registry =
+            ModelAdapterRegistry::from_openai_runtime(config, OpenAIHttpClientKind::Blocking);
+        let profile = ModelProfile {
+            provider: ModelProvider::OpenAICompatible,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+        let request = ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello".into(),
+        };
+        let result = registry.complete(&profile, &request);
+        assert!(matches!(result, Err(ModelError::AdapterFailure { .. })));
+        if let Err(ModelError::AdapterFailure { message }) = result {
+            assert!(
+                message.contains(
+                    "missing or empty API key env var: CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST"
+                ),
+                "unexpected message: {message}"
+            );
+        }
     }
 }
