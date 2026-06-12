@@ -7,6 +7,7 @@ pub mod model_config;
 pub mod model_gateway;
 pub mod model_openai_compatible;
 pub mod model_openai_config;
+pub mod model_openai_http;
 pub mod model_openai_request;
 pub mod model_openai_types;
 pub mod model_registry;
