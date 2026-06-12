@@ -32,6 +32,7 @@ pub enum EventKind {
     PromptCompile,
     ModelRoute,
     ModelToken,
+    ModelUsage,
     RunComplete,
     RunFail,
     ModelError,
@@ -54,6 +55,7 @@ impl EventKind {
             EventKind::PromptCompile => "PromptCompile",
             EventKind::ModelRoute => "ModelRoute",
             EventKind::ModelToken => "ModelToken",
+            EventKind::ModelUsage => "ModelUsage",
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
             EventKind::ModelError => "ModelError",
@@ -350,6 +352,7 @@ mod tests {
             EventKind::PromptCompile,
             EventKind::ModelRoute,
             EventKind::ModelToken,
+            EventKind::ModelUsage,
             EventKind::RunComplete,
             EventKind::RunFail,
         ];
