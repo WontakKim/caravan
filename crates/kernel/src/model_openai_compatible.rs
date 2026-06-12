@@ -1,4 +1,6 @@
-use crate::model::{ModelAdapter, ModelError, ModelOutput, ModelRequest, ModelResult};
+use crate::model::{
+    ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
+};
 use crate::model_openai_config::OpenAICompatibleConfig;
 
 pub struct OpenAICompatibleAdapter {
@@ -23,7 +25,11 @@ impl Default for OpenAICompatibleAdapter {
 }
 
 impl ModelAdapter for OpenAICompatibleAdapter {
-    fn complete(&self, _request: &ModelRequest) -> ModelResult<ModelOutput> {
+    fn complete(
+        &self,
+        _context: &ModelAdapterContext,
+        _request: &ModelRequest,
+    ) -> ModelResult<ModelOutput> {
         Err(ModelError::AdapterFailure {
             message: "OpenAI-compatible adapter is a skeleton in this POC".to_string(),
         })
@@ -33,6 +39,7 @@ impl ModelAdapter for OpenAICompatibleAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_types::{ModelAdapterKind, ModelProvider};
 
     #[test]
     fn complete_returns_err() {
@@ -42,7 +49,14 @@ mod tests {
         };
         assert!(
             OpenAICompatibleAdapter::default()
-                .complete(&request)
+                .complete(
+                    &ModelAdapterContext {
+                        provider: ModelProvider::OpenAICompatible,
+                        model: "gpt-4o".into(),
+                        adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+                    },
+                    &request,
+                )
                 .is_err()
         );
     }
@@ -53,7 +67,14 @@ mod tests {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
         };
-        let result = OpenAICompatibleAdapter::default().complete(&request);
+        let result = OpenAICompatibleAdapter::default().complete(
+            &ModelAdapterContext {
+                provider: ModelProvider::OpenAICompatible,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+            &request,
+        );
         assert!(matches!(result, Err(ModelError::AdapterFailure { .. })));
     }
 
@@ -63,8 +84,15 @@ mod tests {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
         };
-        if let Err(ModelError::AdapterFailure { message }) =
-            OpenAICompatibleAdapter::default().complete(&request)
+        if let Err(ModelError::AdapterFailure { message }) = OpenAICompatibleAdapter::default()
+            .complete(
+                &ModelAdapterContext {
+                    provider: ModelProvider::OpenAICompatible,
+                    model: "gpt-4o".into(),
+                    adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+                },
+                &request,
+            )
         {
             assert_eq!(
                 message,

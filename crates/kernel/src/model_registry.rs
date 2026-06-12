@@ -1,4 +1,6 @@
-use crate::model::{MockModelAdapter, ModelAdapter, ModelError, ModelOutput, ModelRequest};
+use crate::model::{
+    MockModelAdapter, ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest,
+};
 use crate::model_config::ModelProfile;
 use crate::model_openai_compatible::OpenAICompatibleAdapter;
 use crate::model_openai_config::OpenAICompatibleConfig;
@@ -33,9 +35,16 @@ impl ModelAdapterRegistry {
         profile: &ModelProfile,
         request: &ModelRequest,
     ) -> Result<ModelOutput, ModelError> {
+        let context = ModelAdapterContext {
+            provider: profile.provider,
+            model: profile.model.clone(),
+            adapter: profile.adapter,
+        };
         match profile.adapter {
-            ModelAdapterKind::MockModelAdapter => self.mock.complete(request),
-            ModelAdapterKind::OpenAICompatibleAdapter => self.openai_compatible.complete(request),
+            ModelAdapterKind::MockModelAdapter => self.mock.complete(&context, request),
+            ModelAdapterKind::OpenAICompatibleAdapter => {
+                self.openai_compatible.complete(&context, request)
+            }
         }
     }
 }
