@@ -22,7 +22,7 @@ use kernel::{EventKind, ModelGateway, ModelRuntimeConfig};
 use tui::App;
 ```
 
-Full module paths (e.g. `kernel::model_gateway::ModelGateway`) remain available for callers that prefer explicit paths. Note that the OpenAI-compatible adapter is still a skeleton with no real API calls.
+Full module paths (e.g. `kernel::model_gateway::ModelGateway`) remain available for callers that prefer explicit paths. The OpenAI-compatible adapter now calls the HTTP client boundary, but the client is a stub, so no real network calls occur.
 
 ## Running
 
@@ -217,8 +217,20 @@ logic. Those responsibilities are delegated to a `ModelAdapter`.
 The `ModelAdapter` trait (defined in `crates/kernel/src/model.rs`) exposes a single method:
 
 ```rust
-fn complete(&self, request: &ModelRequest) -> ModelResult<ModelOutput>;
+fn complete(
+    &self,
+    context: &ModelAdapterContext,
+    request: &ModelRequest,
+) -> ModelResult<ModelOutput>;
 ```
+
+`ModelAdapterContext` carries the resolved routing fields built by the registry from the active `ModelProfile`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `provider` | `ModelProvider` | The selected model provider (e.g. `ModelProvider::Mock`) |
+| `model` | `String` | The model identifier string (e.g. `"mock-model"`) |
+| `adapter` | `ModelAdapterKind` | The adapter kind (e.g. `ModelAdapterKind::MockModelAdapter`) |
 
 `ModelOutput` carries two fields:
 
@@ -440,19 +452,20 @@ Converts a `ModelRequest` into an `OpenAIChatRequest`:
 
 ### What did NOT change
 
-`OpenAICompatibleAdapter::complete()` still returns the exact skeleton error:
+The default mock flow (`provider=mock model=mock-model adapter=MockModelAdapter`) is untouched.
+
+`OpenAICompatibleAdapter::complete()` now uses the payload types: it builds an
+`OpenAIRequestPlan` via `OpenAIRequestBuilder::build(&self.config, &context.model, request)`,
+then passes the plan to `StubOpenAIHttpClient::send_chat_completion`. The stub always returns
+an error, which the adapter maps to `ModelError::AdapterFailure` carrying the exact message:
 
 ```
-OpenAI-compatible adapter is a skeleton in this POC
+OpenAI-compatible HTTP client is a skeleton in this POC
 ```
 
-No HTTP client, API key handling, async runtime, or network dependency was added.
-The default mock flow (`provider=mock model=mock-model adapter=MockModelAdapter`)
-is untouched.
-
-> **The module is `#![allow(dead_code)]`** until the adapter wires the payload
-> types into `complete()`. The attribute will be removed once the adapter builds
-> real requests from these structs.
+No async runtime, real HTTP call, API key read, or network dependency was added.
+The `#![allow(dead_code)]` attribute on the payload-types module has been removed now
+that `complete()` builds real request plans from those structs.
 
 ## OpenAI-compatible Adapter Config Stub
 
@@ -655,19 +668,27 @@ Err(OpenAIHttpError::NotImplemented {
 })
 ```
 
-### Adapter Wiring Deferred
+### Adapter Wiring
 
-`OpenAICompatibleAdapter` is **not** wired to `OpenAIHttpClient` in this POC. The adapter
-keeps its own distinct skeleton error and continues to return:
+`OpenAICompatibleAdapter` IS now wired to the `OpenAIHttpClient` boundary. The production
+client is `StubOpenAIHttpClient` — the only concrete implementation of `OpenAIHttpClient`.
 
-```
-"OpenAI-compatible adapter is a skeleton in this POC"
-```
+The failure boundary moved one level down:
 
-Wiring the adapter to the HTTP client boundary is deferred to the next POC stage.
+| Before | After |
+|--------|-------|
+| Adapter-level skeleton: `OpenAICompatibleAdapter::complete()` returned a hard-coded error directly | HTTP-client-level skeleton: `StubOpenAIHttpClient::send_chat_completion` returns the error; the adapter propagates it |
 
-> **This is an interface skeleton only — NOT a real HTTP client.** No HTTP dependency, async
-> runtime, API-key read, Authorization header, or network call of any kind exists.
+The old adapter-level skeleton message (`"OpenAI-compatible adapter is a skeleton in this POC"`)
+is no longer produced anywhere on the production path. The error surface is now
+`"OpenAI-compatible HTTP client is a skeleton in this POC"` — emitted by
+`StubOpenAIHttpClient` and mapped by the adapter to `ModelError::AdapterFailure`.
+
+No API key value is read and no `Authorization` header is built at any point in this flow.
+Implementing a real HTTP client (one that performs an actual network call) remains future work.
+
+> **This is an HTTP-client-level skeleton — NOT a real HTTP integration.** No HTTP dependency,
+> async runtime, API-key read, Authorization header, or network call of any kind exists.
 > `StubOpenAIHttpClient` never transmits anything.
 
 ## Event Persistence
