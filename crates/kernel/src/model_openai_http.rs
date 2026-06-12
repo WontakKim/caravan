@@ -71,11 +71,13 @@ fn redact_secret(text: &str, secret: &str) -> String {
     text.replace(secret, "[REDACTED_API_KEY]")
 }
 
-/// Boundary that would transmit an [`OpenAIRequestPlan`] to an OpenAI-compatible endpoint.
+/// Boundary that transmits an [`OpenAIRequestPlan`] to an OpenAI-compatible endpoint.
 ///
-/// Synchronous by design for this POC — no async runtime exists in the workspace.
-/// Implementations receive the full plan (url, api_key_env, timeout_secs, body) but
-/// this POC never resolves API key values or constructs HTTP requests.
+/// Synchronous by design. The default App path injects [`StubOpenAIHttpClient`], which
+/// performs no network call and always returns [`OpenAIHttpError::NotImplemented`].
+/// [`BlockingOpenAIHttpClient`] is the opt-in real implementation (reqwest blocking,
+/// Bearer auth from the env var named by `api_key_env`, per-plan timeout, typed errors)
+/// but is **not wired into the default App path**.
 pub trait OpenAIHttpClient {
     fn send_chat_completion(
         &self,

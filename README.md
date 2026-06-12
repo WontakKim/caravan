@@ -524,11 +524,13 @@ reads fields from the config and maps `ModelRequest.prompt` to a single user mes
 > **This is a request-plan builder only — NOT a real HTTP integration.**
 > No HTTP call is performed. `std::env::var` is never called — `api_key_env` is
 > copied as a plain string and the actual API key is never read or resolved. No
-> `Authorization header` is constructed. No `reqwest`, `tokio`, or `hyper`
-> dependency is added. `OpenAICompatibleAdapter::complete()` still always returns
-> `Err(ModelError::AdapterFailure)` with the same skeleton error message. The plan
-> struct exists solely to make the intended request shape inspectable and testable
-> without performing any I/O.
+> `Authorization header` is constructed. The builder itself performs no HTTP call
+> and never resolves keys; no direct `tokio` or `hyper` dependency exists in the
+> workspace. The kernel crate carries `reqwest` solely for `BlockingOpenAIHttpClient`
+> (the opt-in blocking client, not used here). `OpenAICompatibleAdapter::complete()`
+> still always returns `Err(ModelError::AdapterFailure)` with the same skeleton error
+> message. The plan struct exists solely to make the intended request shape
+> inspectable and testable without performing any I/O.
 
 ## Model Runtime Config Source
 
@@ -583,9 +585,10 @@ normal run.
 
 > **This is construction wiring only — NOT a real API integration.**
 > No environment variables are read at this stage. No API key value is read or resolved.
-> No HTTP client is constructed, and no network call of any kind is made. The
-> `OpenAICompatibleAdapter` still returns a stub error on every invocation. The default
-> user flow continues to use the mock adapter and is wholly unaffected by this wiring.
+> On the default runtime-config path, no HTTP client is constructed and no network call
+> of any kind is made. The `OpenAICompatibleAdapter` still returns a stub error on every
+> invocation. The default user flow continues to use the mock adapter and is wholly
+> unaffected by this wiring.
 
 ## App Runtime Config Bootstrap
 
@@ -630,20 +633,22 @@ inside `OpenAICompatibleAdapter` with no network call made; no API key value is 
 
 > **This is config bootstrap only — NOT a real API integration.**
 > `from_process_env()` reads only the five `CARAVAN_*` keys; no API key value is ever read
-> or resolved. No HTTP client is constructed and no network call of any kind is made. The
-> `OpenAICompatibleAdapter` returns a stub error on every invocation.
+> or resolved. On the default App path, no HTTP client is constructed and no network call
+> of any kind is made. The `OpenAICompatibleAdapter` returns a stub error on every
+> invocation.
 
 ## OpenAI HTTP Client Boundary Skeleton
 
 `crates/kernel/src/model_openai_http.rs` defines the synchronous HTTP client boundary for
-OpenAI-compatible endpoints. It exposes four public items:
+OpenAI-compatible endpoints. It exposes five public items:
 
 | Item | Kind | Description |
 |------|------|-------------|
 | `OpenAIHttpClient` | trait | The client boundary — one method, no async |
-| `OpenAIHttpError` | enum | Error type; single variant `NotImplemented { message: String }` |
+| `OpenAIHttpError` | enum | Five-variant error type: `NotImplemented`, `MissingApiKey`, `RequestFailure`, `HttpStatus`, `ResponseDecode` |
 | `OpenAIHttpResult<T>` | type alias | `Result<T, OpenAIHttpError>` |
-| `StubOpenAIHttpClient` | struct | The only implementation; always returns an error |
+| `StubOpenAIHttpClient` | struct | Stub implementation; performs no network I/O; always returns `OpenAIHttpError::NotImplemented` |
+| `BlockingOpenAIHttpClient` | struct | Opt-in real implementation; reqwest blocking, Bearer auth from env var named by `api_key_env`, per-plan timeout; **not wired into the default App path** |
 
 ### Client Boundary
 
@@ -654,13 +659,12 @@ OpenAIHttpClient::send_chat_completion(&OpenAIRequestPlan) -> OpenAIHttpResult<O
 ```
 
 The method receives a fully-built `OpenAIRequestPlan` whose fields — `url`, `api_key_env`,
-`timeout_secs`, and `body` — reach the boundary intact. The trait is synchronous by design;
-no async runtime exists in the workspace for this POC.
+`timeout_secs`, and `body` — reach the boundary intact. The trait is synchronous by design.
 
 ### Stub Implementation
 
-`StubOpenAIHttpClient` is the only concrete implementation. It performs **no network I/O**
-and always returns:
+`StubOpenAIHttpClient` is the default implementation injected on the App path. It performs
+**no network I/O** and always returns:
 
 ```
 Err(OpenAIHttpError::NotImplemented {
@@ -670,8 +674,8 @@ Err(OpenAIHttpError::NotImplemented {
 
 ### Adapter Wiring
 
-`OpenAICompatibleAdapter` IS now wired to the `OpenAIHttpClient` boundary. The production
-client is `StubOpenAIHttpClient` — the only concrete implementation of `OpenAIHttpClient`.
+`OpenAICompatibleAdapter` IS now wired to the `OpenAIHttpClient` boundary. The default
+production client is `StubOpenAIHttpClient`.
 
 The failure boundary moved one level down:
 
@@ -684,12 +688,27 @@ is no longer produced anywhere on the production path. The error surface is now
 `"OpenAI-compatible HTTP client is a skeleton in this POC"` — emitted by
 `StubOpenAIHttpClient` and mapped by the adapter to `ModelError::AdapterFailure`.
 
-No API key value is read and no `Authorization` header is built at any point in this flow.
-Implementing a real HTTP client (one that performs an actual network call) remains future work.
+No API key value is read and no `Authorization` header is built at any point in the default flow.
 
-> **This is an HTTP-client-level skeleton — NOT a real HTTP integration.** No HTTP dependency,
-> async runtime, API-key read, Authorization header, or network call of any kind exists.
-> `StubOpenAIHttpClient` never transmits anything.
+### BlockingOpenAIHttpClient
+
+`BlockingOpenAIHttpClient` is the opt-in real implementation. It uses `reqwest` blocking,
+sends a Bearer auth header populated from the env var named by `api_key_env`, and applies
+the per-plan `timeout_secs`. Typed errors cover missing key (`MissingApiKey`), request
+failure (`RequestFailure`), non-2xx HTTP status (`HttpStatus`), and JSON decode failure
+(`ResponseDecode`).
+
+`BlockingOpenAIHttpClient` is **not wired into the default App path**:
+`OpenAICompatibleAdapter::new/default` and the runtime-config path still inject
+`StubOpenAIHttpClient`. As a result, `CARAVAN_MODEL_PROVIDER=openai-compatible` still
+returns the exact skeleton error:
+
+```
+OpenAI-compatible HTTP client is a skeleton in this POC
+```
+
+emitted as `ModelError::AdapterFailure` / `RunFail`, with no `ModelToken` or `RunComplete`
+event. The default mock flow is byte-identical.
 
 ## OpenAI HTTP Client Injection Boundary
 
