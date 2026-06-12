@@ -620,6 +620,56 @@ inside `OpenAICompatibleAdapter` with no network call made; no API key value is 
 > or resolved. No HTTP client is constructed and no network call of any kind is made. The
 > `OpenAICompatibleAdapter` returns a stub error on every invocation.
 
+## OpenAI HTTP Client Boundary Skeleton
+
+`crates/kernel/src/model_openai_http.rs` defines the synchronous HTTP client boundary for
+OpenAI-compatible endpoints. It exposes four public items:
+
+| Item | Kind | Description |
+|------|------|-------------|
+| `OpenAIHttpClient` | trait | The client boundary — one method, no async |
+| `OpenAIHttpError` | enum | Error type; single variant `NotImplemented { message: String }` |
+| `OpenAIHttpResult<T>` | type alias | `Result<T, OpenAIHttpError>` |
+| `StubOpenAIHttpClient` | struct | The only implementation; always returns an error |
+
+### Client Boundary
+
+`OpenAIHttpClient` declares a single synchronous method:
+
+```
+OpenAIHttpClient::send_chat_completion(&OpenAIRequestPlan) -> OpenAIHttpResult<OpenAIChatResponse>
+```
+
+The method receives a fully-built `OpenAIRequestPlan` whose fields — `url`, `api_key_env`,
+`timeout_secs`, and `body` — reach the boundary intact. The trait is synchronous by design;
+no async runtime exists in the workspace for this POC.
+
+### Stub Implementation
+
+`StubOpenAIHttpClient` is the only concrete implementation. It performs **no network I/O**
+and always returns:
+
+```
+Err(OpenAIHttpError::NotImplemented {
+    message: "OpenAI-compatible HTTP client is a skeleton in this POC"
+})
+```
+
+### Adapter Wiring Deferred
+
+`OpenAICompatibleAdapter` is **not** wired to `OpenAIHttpClient` in this POC. The adapter
+keeps its own distinct skeleton error and continues to return:
+
+```
+"OpenAI-compatible adapter is a skeleton in this POC"
+```
+
+Wiring the adapter to the HTTP client boundary is deferred to the next POC stage.
+
+> **This is an interface skeleton only — NOT a real HTTP client.** No HTTP dependency, async
+> runtime, API-key read, Authorization header, or network call of any kind exists.
+> `StubOpenAIHttpClient` never transmits anything.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
