@@ -735,4 +735,71 @@ mod tests {
             "app.log should not contain any entry starting with 'Assistant:'"
         );
     }
+
+    #[test]
+    fn blocking_gateway_missing_key_records_model_error_and_run_fail() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+
+        let vars = HashMap::from([
+            (
+                "CARAVAN_MODEL_PROVIDER".to_string(),
+                "openai-compatible".to_string(),
+            ),
+            (
+                "CARAVAN_OPENAI_HTTP_CLIENT".to_string(),
+                "blocking".to_string(),
+            ),
+            (
+                "CARAVAN_OPENAI_API_KEY_ENV".to_string(),
+                "CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST".to_string(),
+            ),
+        ]);
+        let runtime_config = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        let gateway = ModelGateway::from_runtime_config(runtime_config);
+
+        let mut app = App::with_store_and_gateway(store, gateway);
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert_eq!(events[0].kind, EventKind::AppStart);
+
+        let after_app_start = &events[1..];
+        let expected_kinds = [
+            EventKind::UserMessage,
+            EventKind::RunCreate,
+            EventKind::RunStart,
+            EventKind::TurnStart,
+            EventKind::PromptCompile,
+            EventKind::ModelError,
+            EventKind::RunFail,
+        ];
+        assert_eq!(after_app_start.len(), expected_kinds.len());
+        for (ev, expected) in after_app_start.iter().zip(expected_kinds.iter()) {
+            assert_eq!(ev.kind, *expected);
+        }
+
+        // No ModelToken or RunComplete on the missing-key error path.
+        assert!(!events.iter().any(|e| e.kind == EventKind::ModelToken));
+        assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete));
+
+        // ModelError detail contains the env var name but never a key value or Bearer header.
+        let model_error_event = events
+            .iter()
+            .find(|e| e.kind == EventKind::ModelError)
+            .expect("ModelError event should exist");
+        assert!(
+            model_error_event.detail.contains(
+                "missing or empty API key env var: CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST"
+            ),
+            "ModelError detail should contain expected message: {}",
+            model_error_event.detail
+        );
+        assert!(
+            !model_error_event.detail.contains("Bearer"),
+            "ModelError detail must not contain Bearer: {}",
+            model_error_event.detail
+        );
+    }
 }
