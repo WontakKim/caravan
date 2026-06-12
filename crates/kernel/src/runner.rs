@@ -40,6 +40,15 @@ pub fn run_mock_turn(
                     format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
                 );
             }
+            if let Some(usage) = response.usage {
+                event_log.append(
+                    EventKind::ModelUsage,
+                    format!(
+                        "prompt_tokens={} completion_tokens={} total_tokens={}",
+                        usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
+                    ),
+                );
+            }
             event_log.append(
                 EventKind::RunComplete,
                 format!("run_id={} outcome=ok", run_id),
@@ -72,6 +81,14 @@ mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
     use crate::model::ModelError;
+    use crate::model_config::{ModelConfig, ModelProfile};
+    use crate::model_gateway::ModelGateway;
+    use crate::model_openai_http::{OpenAIHttpClient, OpenAIHttpResult};
+    use crate::model_openai_request::OpenAIRequestPlan;
+    use crate::model_openai_types::{
+        OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIUsage,
+    };
+    use crate::model_types::{ModelAdapterKind, ModelProvider};
 
     #[test]
     fn run_mock_turn_appends_correct_event_sequence() {
@@ -315,5 +332,160 @@ mod tests {
             !events.iter().any(|e| e.kind == EventKind::RunComplete),
             "error path must not emit RunComplete event"
         );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelUsage),
+            "error path must not emit ModelUsage events"
+        );
+    }
+
+    struct FakeUsageOpenAIClient;
+
+    impl OpenAIHttpClient for FakeUsageOpenAIClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "Hello from fake OpenAI".to_string(),
+                    },
+                }],
+                usage: Some(OpenAIUsage {
+                    prompt_tokens: 10,
+                    completion_tokens: 5,
+                    total_tokens: 15,
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn run_mock_turn_with_usage_some_emits_model_usage_event_in_correct_position() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAICompatible,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway =
+            ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeUsageOpenAIClient));
+        let mut event_log = EventLog::new();
+        let _output = run_mock_turn(&mut event_log, "hello", &gateway);
+
+        let events = event_log.events();
+
+        // Find the last ModelToken index and the ModelUsage index.
+        let last_model_token_idx = events
+            .iter()
+            .rposition(|e| e.kind == EventKind::ModelToken)
+            .expect("ModelToken events should exist");
+        let model_usage_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelUsage)
+            .expect("ModelUsage event should exist");
+        let run_complete_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::RunComplete)
+            .expect("RunComplete event should exist");
+
+        // ModelUsage must be after the last ModelToken and immediately before RunComplete.
+        assert!(
+            model_usage_idx > last_model_token_idx,
+            "ModelUsage must be after the last ModelToken"
+        );
+        assert_eq!(
+            model_usage_idx + 1,
+            run_complete_idx,
+            "ModelUsage must be immediately before RunComplete"
+        );
+
+        // Verify the full kind sequence.
+        let n_tokens = events
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelToken)
+            .count();
+        let mut expected_kinds = vec![
+            EventKind::RunCreate,
+            EventKind::RunStart,
+            EventKind::TurnStart,
+            EventKind::PromptCompile,
+            EventKind::ModelRoute,
+        ];
+        for _ in 0..n_tokens {
+            expected_kinds.push(EventKind::ModelToken);
+        }
+        expected_kinds.push(EventKind::ModelUsage);
+        expected_kinds.push(EventKind::RunComplete);
+
+        assert_eq!(events.len(), expected_kinds.len());
+        for (ev, expected) in events.iter().zip(expected_kinds.iter()) {
+            assert_eq!(ev.kind, *expected);
+        }
+    }
+
+    #[test]
+    fn run_mock_turn_with_usage_some_model_usage_detail_is_exact() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAICompatible,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway =
+            ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeUsageOpenAIClient));
+        let mut event_log = EventLog::new();
+        run_mock_turn(&mut event_log, "hello", &gateway);
+
+        let events = event_log.events();
+        let usage_event = events
+            .iter()
+            .find(|e| e.kind == EventKind::ModelUsage)
+            .expect("ModelUsage event should exist");
+
+        assert_eq!(
+            usage_event.detail,
+            "prompt_tokens=10 completion_tokens=5 total_tokens=15"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_with_usage_none_emits_no_model_usage_event() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello", &gateway);
+
+        let events = event_log.events();
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelUsage),
+            "usage:None path must not emit ModelUsage events"
+        );
+
+        // Verify the event sequence is unchanged (RunCreate, RunStart, TurnStart,
+        // PromptCompile, ModelRoute, ModelToken*, RunComplete).
+        let n_tokens = events
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelToken)
+            .count();
+        let mut expected_kinds = vec![
+            EventKind::RunCreate,
+            EventKind::RunStart,
+            EventKind::TurnStart,
+            EventKind::PromptCompile,
+            EventKind::ModelRoute,
+        ];
+        for _ in 0..n_tokens {
+            expected_kinds.push(EventKind::ModelToken);
+        }
+        expected_kinds.push(EventKind::RunComplete);
+
+        assert_eq!(events.len(), expected_kinds.len());
+        for (ev, expected) in events.iter().zip(expected_kinds.iter()) {
+            assert_eq!(ev.kind, *expected);
+        }
     }
 }
