@@ -6,6 +6,7 @@
 
 use crate::model_config::{ModelConfig, ModelProfile};
 use crate::model_openai_config::OpenAICompatibleConfig;
+use crate::model_openai_http::OpenAIHttpClientKind;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
 use std::collections::HashMap;
 
@@ -52,6 +53,7 @@ impl std::error::Error for ModelConfigError {}
 pub struct ModelRuntimeConfig {
     pub model_config: ModelConfig,
     pub openai_config: OpenAICompatibleConfig,
+    pub openai_http_client_kind: OpenAIHttpClientKind,
 }
 
 impl Default for ModelRuntimeConfig {
@@ -59,6 +61,7 @@ impl Default for ModelRuntimeConfig {
         Self {
             model_config: ModelConfig::default(),
             openai_config: OpenAICompatibleConfig::default(),
+            openai_http_client_kind: OpenAIHttpClientKind::Stub,
         }
     }
 }
@@ -128,6 +131,11 @@ impl ModelRuntimeConfig {
             }
         };
 
+        let openai_http_client_kind = match vars.get("CARAVAN_OPENAI_HTTP_CLIENT") {
+            None => OpenAIHttpClientKind::Stub,
+            Some(v) => parse_http_client_kind(v)?,
+        };
+
         Ok(Self {
             model_config: ModelConfig {
                 active_profile: ModelProfile {
@@ -141,6 +149,7 @@ impl ModelRuntimeConfig {
                 api_key_env,
                 timeout_secs,
             },
+            openai_http_client_kind,
         })
     }
 }
@@ -150,6 +159,16 @@ fn parse_provider(value: &str) -> Result<ModelProvider, ModelConfigError> {
         "mock" => Ok(ModelProvider::Mock),
         "openai-compatible" => Ok(ModelProvider::OpenAICompatible),
         other => Err(ModelConfigError::UnknownProvider {
+            value: other.to_string(),
+        }),
+    }
+}
+
+fn parse_http_client_kind(value: &str) -> Result<OpenAIHttpClientKind, ModelConfigError> {
+    match value.trim() {
+        "stub" => Ok(OpenAIHttpClientKind::Stub),
+        "blocking" => Ok(OpenAIHttpClientKind::Blocking),
+        other => Err(ModelConfigError::UnknownOpenAIHttpClient {
             value: other.to_string(),
         }),
     }
@@ -439,6 +458,87 @@ mod tests {
         assert_eq!(
             ModelRuntimeConfig::from_process_env().unwrap(),
             ModelRuntimeConfig::default()
+        );
+    }
+
+    #[test]
+    fn default_runtime_config_uses_stub_http_client() {
+        assert_eq!(
+            ModelRuntimeConfig::default().openai_http_client_kind,
+            OpenAIHttpClientKind::Stub
+        );
+    }
+
+    #[test]
+    fn from_env_map_http_client_absent_defaults_to_stub() {
+        let cfg = ModelRuntimeConfig::from_env_map(&HashMap::new()).unwrap();
+        assert_eq!(cfg.openai_http_client_kind, OpenAIHttpClientKind::Stub);
+    }
+
+    #[test]
+    fn from_env_map_http_client_stub() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), "stub".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_http_client_kind, OpenAIHttpClientKind::Stub);
+    }
+
+    #[test]
+    fn from_env_map_http_client_blocking() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), "blocking".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_http_client_kind, OpenAIHttpClientKind::Blocking);
+    }
+
+    #[test]
+    fn from_env_map_http_client_trims_whitespace() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), " blocking ".into())]);
+        let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        assert_eq!(cfg.openai_http_client_kind, OpenAIHttpClientKind::Blocking);
+    }
+
+    #[test]
+    fn from_env_map_http_client_unknown_returns_error() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), "tcp".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::UnknownOpenAIHttpClient {
+                value: "tcp".into()
+            }
+        );
+    }
+
+    #[test]
+    fn from_env_map_http_client_empty_value_returns_error() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), "".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::UnknownOpenAIHttpClient { value: "".into() }
+        );
+    }
+
+    #[test]
+    fn from_env_map_http_client_rejects_uppercase() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), "Blocking".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::UnknownOpenAIHttpClient {
+                value: "Blocking".into()
+            }
+        );
+    }
+
+    #[test]
+    fn from_env_map_http_client_unknown_value_is_trimmed() {
+        let vars = HashMap::from([("CARAVAN_OPENAI_HTTP_CLIENT".into(), " tcp ".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::UnknownOpenAIHttpClient {
+                value: "tcp".into()
+            }
         );
     }
 }

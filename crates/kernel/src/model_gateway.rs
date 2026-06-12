@@ -118,7 +118,7 @@ impl Default for ModelGateway {
 mod tests {
     use super::*;
     use crate::model_config::ModelProfile;
-    use crate::model_openai_http::OpenAIHttpResult;
+    use crate::model_openai_http::{OpenAIHttpClientKind, OpenAIHttpResult};
     use crate::model_openai_request::OpenAIRequestPlan;
     use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
 
@@ -264,6 +264,7 @@ mod tests {
                 },
             },
             openai_config: OpenAICompatibleConfig::default(),
+            openai_http_client_kind: OpenAIHttpClientKind::Stub,
         };
         let result = ModelGateway::from_runtime_config(runtime_config).complete(ModelRequest {
             prompt: "any".into(),
@@ -289,6 +290,7 @@ mod tests {
                 api_key_env: "CUSTOM_KEY_ENV".into(),
                 timeout_secs: 99,
             },
+            openai_http_client_kind: OpenAIHttpClientKind::Stub,
         };
         let gateway = ModelGateway::from_runtime_config(runtime_config);
         assert_eq!(
