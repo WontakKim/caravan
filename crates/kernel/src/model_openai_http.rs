@@ -85,6 +85,23 @@ pub trait OpenAIHttpClient {
     ) -> OpenAIHttpResult<OpenAIChatResponse>;
 }
 
+/// Selects which [`OpenAIHttpClient`] implementation to construct.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OpenAIHttpClientKind {
+    #[default]
+    Stub,
+    Blocking,
+}
+
+impl OpenAIHttpClientKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OpenAIHttpClientKind::Stub => "stub",
+            OpenAIHttpClientKind::Blocking => "blocking",
+        }
+    }
+}
+
 /// Stub client: performs no network I/O and always returns [`OpenAIHttpError::NotImplemented`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct StubOpenAIHttpClient;
@@ -420,5 +437,18 @@ mod tests {
         let body = "some error message";
         let result = redact_secret(body, "");
         assert_eq!(result, "some error message");
+    }
+
+    // --- OpenAIHttpClientKind tests ---
+
+    #[test]
+    fn http_client_kind_default_is_stub() {
+        assert_eq!(OpenAIHttpClientKind::default(), OpenAIHttpClientKind::Stub);
+    }
+
+    #[test]
+    fn http_client_kind_as_str_values() {
+        assert_eq!(OpenAIHttpClientKind::Stub.as_str(), "stub");
+        assert_eq!(OpenAIHttpClientKind::Blocking.as_str(), "blocking");
     }
 }
