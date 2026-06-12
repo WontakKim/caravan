@@ -21,6 +21,7 @@ pub use commands::{Command, ParsedInput};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
+    ModelUsage,
 };
 pub use model_config::{ModelConfig, ModelProfile};
 pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};

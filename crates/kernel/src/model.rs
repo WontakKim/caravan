@@ -1,8 +1,16 @@
 use crate::model_types::{ModelAdapterKind, ModelProvider};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+
 pub struct ModelOutput {
     pub response: String,
     pub tokens: Vec<String>,
+    pub usage: Option<ModelUsage>,
 }
 
 pub struct ModelRequest {
@@ -35,7 +43,11 @@ impl ModelAdapter for MockModelAdapter {
     ) -> ModelResult<ModelOutput> {
         let response = format!("Mock response for: {}", request.user_message);
         let tokens = response.split_whitespace().map(str::to_string).collect();
-        Ok(ModelOutput { response, tokens })
+        Ok(ModelOutput {
+            response,
+            tokens,
+            usage: None,
+        })
     }
 }
 
@@ -164,6 +176,47 @@ mod tests {
             err.to_string(),
             "kind=unsupported_adapter message=\"unsupported adapter: gpt-99\""
         );
+    }
+
+    #[test]
+    fn model_usage_construction_and_equality() {
+        let usage = ModelUsage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            total_tokens: 15,
+        };
+        assert_eq!(usage.prompt_tokens, 10);
+        assert_eq!(usage.completion_tokens, 5);
+        assert_eq!(usage.total_tokens, 15);
+        assert_eq!(
+            usage,
+            ModelUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }
+        );
+    }
+
+    #[test]
+    fn mock_adapter_usage_is_none() {
+        let request = ModelRequest {
+            prompt: "any prompt".into(),
+            user_message: "hello".into(),
+        };
+        let output = MockModelAdapter
+            .complete(
+                &ModelAdapterContext {
+                    provider: ModelProvider::Mock,
+                    model: "mock-model".into(),
+                    adapter: ModelAdapterKind::MockModelAdapter,
+                },
+                &request,
+            )
+            .unwrap();
+        assert_eq!(output.usage, None);
+        assert_eq!(output.response, "Mock response for: hello");
+        assert_eq!(output.tokens, vec!["Mock", "response", "for:", "hello"]);
     }
 
     #[test]

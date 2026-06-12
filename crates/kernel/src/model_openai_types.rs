@@ -1,4 +1,4 @@
-use crate::model::{ModelError, ModelOutput, ModelRequest, ModelResult};
+use crate::model::{ModelError, ModelOutput, ModelRequest, ModelResult, ModelUsage};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,9 +47,15 @@ impl OpenAIChatResponse {
                 message: "OpenAI-compatible response did not contain assistant content".to_string(),
             })?;
 
+        let usage = self.usage.as_ref().map(|u| ModelUsage {
+            prompt_tokens: u.prompt_tokens,
+            completion_tokens: u.completion_tokens,
+            total_tokens: u.total_tokens,
+        });
         Ok(ModelOutput {
             response: text.to_string(),
             tokens: text.split_whitespace().map(str::to_string).collect(),
+            usage,
         })
     }
 }
@@ -215,5 +221,46 @@ mod tests {
             }
             _ => panic!("expected Err(AdapterFailure), got something else"),
         }
+    }
+
+    #[test]
+    fn to_model_output_maps_usage_when_present() {
+        let response = OpenAIChatResponse {
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: "hello caravan".to_string(),
+                },
+            }],
+            usage: Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+        };
+        let output = response.to_model_output().unwrap();
+        assert_eq!(
+            output.usage,
+            Some(crate::model::ModelUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            })
+        );
+    }
+
+    #[test]
+    fn to_model_output_usage_is_none_when_absent() {
+        let response = OpenAIChatResponse {
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: "hello caravan".to_string(),
+                },
+            }],
+            usage: None,
+        };
+        let output = response.to_model_output().unwrap();
+        assert_eq!(output.usage, None);
     }
 }
