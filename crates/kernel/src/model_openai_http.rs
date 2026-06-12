@@ -4,18 +4,34 @@ use crate::model_openai_types::OpenAIChatResponse;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenAIHttpError {
     NotImplemented { message: String },
+    MissingApiKey { env: String },
+    RequestFailure { message: String },
+    HttpStatus { status: u16, body: String },
+    ResponseDecode { message: String },
 }
 
 impl OpenAIHttpError {
     pub fn kind(&self) -> &'static str {
         match self {
             OpenAIHttpError::NotImplemented { .. } => "not_implemented",
+            OpenAIHttpError::MissingApiKey { .. } => "missing_api_key",
+            OpenAIHttpError::RequestFailure { .. } => "request_failure",
+            OpenAIHttpError::HttpStatus { .. } => "http_status",
+            OpenAIHttpError::ResponseDecode { .. } => "response_decode",
         }
     }
 
-    pub fn message(&self) -> &str {
+    pub fn message(&self) -> String {
         match self {
-            OpenAIHttpError::NotImplemented { message } => message,
+            OpenAIHttpError::NotImplemented { message } => message.clone(),
+            OpenAIHttpError::MissingApiKey { env } => {
+                format!("missing or empty API key env var: {env}")
+            }
+            OpenAIHttpError::RequestFailure { message } => message.clone(),
+            OpenAIHttpError::HttpStatus { status, body } => {
+                format!("HTTP status {status}: {body}")
+            }
+            OpenAIHttpError::ResponseDecode { message } => message.clone(),
         }
     }
 }
@@ -167,5 +183,64 @@ mod tests {
         let response = result.unwrap();
         assert_eq!(response.choices.len(), 1);
         assert_eq!(response.choices[0].message.content, "hello");
+    }
+
+    #[test]
+    fn missing_api_key_kind_and_message() {
+        let err = OpenAIHttpError::MissingApiKey {
+            env: "OPENAI_API_KEY".to_string(),
+        };
+        assert_eq!(err.kind(), "missing_api_key");
+        assert_eq!(
+            err.message(),
+            "missing or empty API key env var: OPENAI_API_KEY"
+        );
+    }
+
+    #[test]
+    fn request_failure_kind_and_message() {
+        let err = OpenAIHttpError::RequestFailure {
+            message: "connection refused".to_string(),
+        };
+        assert_eq!(err.kind(), "request_failure");
+        assert_eq!(err.message(), "connection refused");
+    }
+
+    #[test]
+    fn http_status_kind_and_message() {
+        let err = OpenAIHttpError::HttpStatus {
+            status: 429,
+            body: "rate limited".to_string(),
+        };
+        assert_eq!(err.kind(), "http_status");
+        assert_eq!(err.message(), "HTTP status 429: rate limited");
+    }
+
+    #[test]
+    fn response_decode_kind_and_message() {
+        let err = OpenAIHttpError::ResponseDecode {
+            message: "unexpected EOF".to_string(),
+        };
+        assert_eq!(err.kind(), "response_decode");
+        assert_eq!(err.message(), "unexpected EOF");
+    }
+
+    #[test]
+    fn missing_api_key_message_contains_env_name() {
+        let err = OpenAIHttpError::MissingApiKey {
+            env: "SOME_ENV_NAME".to_string(),
+        };
+        assert!(err.message().contains("SOME_ENV_NAME"));
+    }
+
+    #[test]
+    fn missing_api_key_display_format() {
+        let err = OpenAIHttpError::MissingApiKey {
+            env: "OPENAI_API_KEY".to_string(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "kind=missing_api_key message=\"missing or empty API key env var: OPENAI_API_KEY\""
+        );
     }
 }
