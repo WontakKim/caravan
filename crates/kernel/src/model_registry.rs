@@ -4,6 +4,7 @@ use crate::model::{
 use crate::model_config::ModelProfile;
 use crate::model_openai_compatible::OpenAICompatibleAdapter;
 use crate::model_openai_config::OpenAICompatibleConfig;
+use crate::model_openai_http::{OpenAIHttpClient, StubOpenAIHttpClient};
 use crate::model_types::ModelAdapterKind;
 
 pub struct ModelAdapterRegistry {
@@ -19,9 +20,19 @@ impl Default for ModelAdapterRegistry {
 
 impl ModelAdapterRegistry {
     pub fn new(openai_config: OpenAICompatibleConfig) -> Self {
+        Self::with_openai_http_client(openai_config, Box::new(StubOpenAIHttpClient::default()))
+    }
+
+    pub fn with_openai_http_client(
+        openai_config: OpenAICompatibleConfig,
+        http_client: Box<dyn OpenAIHttpClient>,
+    ) -> Self {
         Self {
             mock: MockModelAdapter,
-            openai_compatible: OpenAICompatibleAdapter::new(openai_config),
+            openai_compatible: OpenAICompatibleAdapter::with_http_client(
+                openai_config,
+                http_client,
+            ),
         }
     }
 
@@ -53,7 +64,29 @@ impl ModelAdapterRegistry {
 mod tests {
     use super::*;
     use crate::model_config::ModelConfig;
+    use crate::model_openai_http::OpenAIHttpResult;
+    use crate::model_openai_request::OpenAIRequestPlan;
+    use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
     use crate::model_types::ModelProvider;
+
+    struct FakeSuccessClient;
+
+    impl OpenAIHttpClient for FakeSuccessClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "Hello from fake OpenAI".to_string(),
+                    },
+                }],
+                usage: None,
+            })
+        }
+    }
 
     #[test]
     fn complete_passes_mock_output_through_unchanged() {
@@ -119,5 +152,26 @@ mod tests {
             registry.openai_config_for_test(),
             &OpenAICompatibleConfig::default()
         );
+    }
+
+    #[test]
+    fn registry_completes_with_injected_fake_success_client() {
+        let registry = ModelAdapterRegistry::with_openai_http_client(
+            OpenAICompatibleConfig::default(),
+            Box::new(FakeSuccessClient),
+        );
+        let profile = ModelProfile {
+            provider: ModelProvider::OpenAICompatible,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+        let request = ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello".into(),
+        };
+        let result = registry.complete(&profile, &request);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert_eq!(output.response, "Hello from fake OpenAI");
     }
 }
