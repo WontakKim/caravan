@@ -51,7 +51,10 @@ impl ModelGateway {
     pub fn from_runtime_config(runtime_config: ModelRuntimeConfig) -> Self {
         Self {
             config: runtime_config.model_config,
-            registry: ModelAdapterRegistry::new(runtime_config.openai_config),
+            registry: ModelAdapterRegistry::from_openai_runtime(
+                runtime_config.openai_config,
+                runtime_config.openai_http_client_kind,
+            ),
             #[cfg(test)]
             forced_error: None,
         }
@@ -302,6 +305,64 @@ mod tests {
             "CUSTOM_KEY_ENV"
         );
         assert_eq!(gateway.openai_config_for_test().timeout_secs, 99);
+    }
+
+    #[test]
+    fn from_runtime_config_blocking_kind_missing_key_returns_missing_api_key() {
+        use std::collections::HashMap;
+        let vars = HashMap::from([
+            ("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into()),
+            ("CARAVAN_OPENAI_HTTP_CLIENT".into(), "blocking".into()),
+            (
+                "CARAVAN_OPENAI_API_KEY_ENV".into(),
+                "CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST".into(),
+            ),
+        ]);
+        let runtime_config = crate::model_runtime_config::ModelRuntimeConfig::from_env_map(&vars)
+            .expect("valid config");
+        let result = ModelGateway::from_runtime_config(runtime_config).complete(ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello caravan".into(),
+        });
+        match result {
+            Err(ModelError::AdapterFailure { message }) => {
+                assert!(
+                    message.contains(
+                        "missing or empty API key env var: CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST"
+                    ),
+                    "unexpected message: {message}"
+                );
+                assert!(
+                    !message.contains("Bearer"),
+                    "message must not contain Bearer: {message}"
+                );
+            }
+            _ => panic!("expected Err(AdapterFailure)"),
+        }
+    }
+
+    #[test]
+    fn from_runtime_config_explicit_stub_kind_returns_skeleton_error() {
+        use std::collections::HashMap;
+        let vars = HashMap::from([
+            ("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into()),
+            ("CARAVAN_OPENAI_HTTP_CLIENT".into(), "stub".into()),
+        ]);
+        let runtime_config = crate::model_runtime_config::ModelRuntimeConfig::from_env_map(&vars)
+            .expect("valid config");
+        let result = ModelGateway::from_runtime_config(runtime_config).complete(ModelRequest {
+            prompt: "any".into(),
+            user_message: "hello caravan".into(),
+        });
+        match result {
+            Err(ModelError::AdapterFailure { message }) => {
+                assert_eq!(
+                    message,
+                    "OpenAI-compatible HTTP client is a skeleton in this POC"
+                );
+            }
+            _ => panic!("expected Err(AdapterFailure)"),
+        }
     }
 
     struct FakeSuccessOpenAIClient;
