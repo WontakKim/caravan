@@ -691,6 +691,68 @@ Implementing a real HTTP client (one that performs an actual network call) remai
 > async runtime, API-key read, Authorization header, or network call of any kind exists.
 > `StubOpenAIHttpClient` never transmits anything.
 
+## OpenAI HTTP Client Injection Boundary
+
+This subsection documents the dependency-injection seam added on top of the skeleton above.
+The injection boundary is a preparation step for swapping in a real HTTP client in a future
+iteration — it performs **no real network calls**, reads **no API keys**, and adds **no
+network or runtime dependencies**.
+
+### Adapter-Level Injection (`with_http_client`)
+
+`OpenAICompatibleAdapter` now holds a `Box<dyn OpenAIHttpClient>` field instead of
+hard-coding the stub internally. Injection is done via the secondary constructor:
+
+```
+OpenAICompatibleAdapter::with_http_client(config, client: Box<dyn OpenAIHttpClient>) -> Self
+```
+
+The primary constructor (`OpenAICompatibleAdapter::new`) continues to use
+`StubOpenAIHttpClient` as the default, so the production path is unchanged:
+
+```
+OpenAICompatibleAdapter::new(config)
+  └─ delegates to with_http_client(config, Box::new(StubOpenAIHttpClient::default()))
+```
+
+### Registry-Level Injection (`with_openai_http_client`)
+
+`ModelAdapterRegistry` exposes a secondary constructor that carries the injected client
+through to the adapter:
+
+```
+ModelAdapterRegistry::with_openai_http_client(openai_config, client: Box<dyn OpenAIHttpClient>) -> Self
+```
+
+The primary constructor (`ModelAdapterRegistry::new`) continues to supply
+`StubOpenAIHttpClient`, keeping the default production path intact.
+
+### Default-Path Behavior (unchanged)
+
+When the production path is used, `StubOpenAIHttpClient` is the active implementation and
+every call to `send_chat_completion` returns:
+
+```
+Err(OpenAIHttpError::NotImplemented {
+    message: "OpenAI-compatible HTTP client is a skeleton in this POC"
+})
+```
+
+The adapter maps this to `ModelError::AdapterFailure` — the same surface as before T-4.
+
+### Test-Injection Pattern
+
+`ModelGateway::with_openai_http_client_for_test` accepts an arbitrary
+`Box<dyn OpenAIHttpClient>` and wires it through the registry and adapter. Tests supply a
+fake success client that returns a valid `OpenAIChatResponse`, allowing the
+`OpenAIChatResponse → ModelOutput` conversion path to be exercised in isolation without
+any network I/O.
+
+> **This is a seam for a future real client — NOT a real integration.** No real network
+> calls are made, no API key is read, no `Authorization` header is constructed, and no
+> HTTP or async dependency is introduced. Swapping in a real HTTP client is explicitly
+> deferred to a future task.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
