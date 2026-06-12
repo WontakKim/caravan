@@ -13,6 +13,7 @@ use std::collections::HashMap;
 pub enum ModelConfigError {
     UnknownProvider { value: String },
     InvalidTimeout { value: String },
+    UnknownOpenAIHttpClient { value: String },
 }
 
 impl ModelConfigError {
@@ -20,6 +21,7 @@ impl ModelConfigError {
         match self {
             ModelConfigError::UnknownProvider { .. } => "unknown_provider",
             ModelConfigError::InvalidTimeout { .. } => "invalid_timeout",
+            ModelConfigError::UnknownOpenAIHttpClient { .. } => "unknown_openai_http_client",
         }
     }
 
@@ -30,6 +32,9 @@ impl ModelConfigError {
             }
             ModelConfigError::InvalidTimeout { value } => {
                 format!("invalid timeout seconds: {value}")
+            }
+            ModelConfigError::UnknownOpenAIHttpClient { value } => {
+                format!("unknown OpenAI HTTP client: {value}")
             }
         }
     }
@@ -292,6 +297,18 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "kind=invalid_timeout message=\"invalid timeout seconds: oops\""
+        );
+    }
+
+    #[test]
+    fn model_config_error_unknown_openai_http_client_display() {
+        let err = ModelConfigError::UnknownOpenAIHttpClient {
+            value: "tcp".into(),
+        };
+        assert_eq!(err.kind(), "unknown_openai_http_client");
+        assert_eq!(
+            err.to_string(),
+            "kind=unknown_openai_http_client message=\"unknown OpenAI HTTP client: tcp\""
         );
     }
 
