@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-// The request plan is unused until the OpenAI-compatible adapter performs real calls;
-// remove this allow when the adapter wires in the plan.
-
 use crate::model::ModelRequest;
 use crate::model_openai_config::OpenAICompatibleConfig;
 use crate::model_openai_types::OpenAIChatRequest;

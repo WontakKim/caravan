@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-// The HTTP client boundary is unused until the OpenAI-compatible adapter wires it in;
-// remove this allow when the adapter sends real requests through this client.
-
 use crate::model_openai_request::OpenAIRequestPlan;
 use crate::model_openai_types::OpenAIChatResponse;
 

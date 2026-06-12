@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-// Config fields are unused until the OpenAI-compatible adapter performs real calls;
-// remove this allow when complete() wires in the config.
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenAICompatibleConfig {
     pub base_url: String,

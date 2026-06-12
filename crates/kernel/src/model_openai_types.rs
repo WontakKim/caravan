@@ -1,7 +1,3 @@
-#![allow(dead_code)]
-// Payload types are test-only until the OpenAI-compatible adapter wires in;
-// remove this allow when complete() builds real requests.
-
 use crate::model::{ModelError, ModelOutput, ModelRequest, ModelResult};
 use serde::{Deserialize, Serialize};
 

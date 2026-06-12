@@ -18,7 +18,6 @@ impl OpenAICompatibleAdapter {
         }
     }
 
-    #[allow(dead_code)]
     pub fn config(&self) -> &OpenAICompatibleConfig {
         &self.config
     }
