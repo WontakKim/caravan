@@ -586,7 +586,7 @@ normal run.
 
 > **This is construction wiring only — NOT a real API integration.**
 > No environment variables are read at this stage. No API key value is read or resolved.
-> On the default runtime-config path, no HTTP client is constructed and no network call
+> On the default runtime-config path, Caravan wires the stub HTTP client; the real blocking HTTP client is not constructed, and no network call
 > of any kind is made. The `OpenAICompatibleAdapter` still returns a stub error on every
 > invocation. The default user flow continues to use the mock adapter and is wholly
 > unaffected by this wiring.
@@ -639,7 +639,7 @@ inside `OpenAICompatibleAdapter` with no network call made; no API key value is 
 > **This is config bootstrap only — NOT a real API integration.**
 > `from_process_env()` reads only the six `CARAVAN_*` keys; no API key value is ever read
 > or resolved at bootstrap time. On the default App path (`CARAVAN_OPENAI_HTTP_CLIENT=stub`
-> or absent), no HTTP client is constructed and no network call of any kind is made.
+> or absent), Caravan wires the stub HTTP client; the real blocking HTTP client is not constructed, and no network call of any kind is made.
 > Real network calls are possible **only** when both `CARAVAN_MODEL_PROVIDER=openai-compatible`
 > and `CARAVAN_OPENAI_HTTP_CLIENT=blocking` are set explicitly; setting
 > `CARAVAN_MODEL_PROVIDER=openai-compatible` alone (without `CARAVAN_OPENAI_HTTP_CLIENT=blocking`)
