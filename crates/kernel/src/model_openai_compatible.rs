@@ -55,7 +55,29 @@ impl ModelAdapter for OpenAICompatibleAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model_openai_http::OpenAIHttpResult;
+    use crate::model_openai_request::OpenAIRequestPlan;
+    use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
     use crate::model_types::{ModelAdapterKind, ModelProvider};
+
+    struct FakeSuccessClient;
+
+    impl OpenAIHttpClient for FakeSuccessClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "Hello from fake OpenAI".to_string(),
+                    },
+                }],
+                usage: None,
+            })
+        }
+    }
 
     #[test]
     fn complete_returns_err() {
@@ -134,5 +156,54 @@ mod tests {
         };
         let adapter = OpenAICompatibleAdapter::new(custom.clone());
         assert_eq!(*adapter.config(), custom);
+    }
+
+    fn fake_success_context() -> ModelAdapterContext {
+        ModelAdapterContext {
+            provider: ModelProvider::OpenAICompatible,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        }
+    }
+
+    fn fake_success_request() -> ModelRequest {
+        ModelRequest {
+            prompt: "any prompt".into(),
+            user_message: "hello".into(),
+        }
+    }
+
+    #[test]
+    fn complete_with_fake_client_returns_ok() {
+        let adapter = OpenAICompatibleAdapter::with_http_client(
+            OpenAICompatibleConfig::default(),
+            Box::new(FakeSuccessClient),
+        );
+        let result = adapter.complete(&fake_success_context(), &fake_success_request());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn complete_with_fake_client_response_equals_hello_from_fake_openai() {
+        let adapter = OpenAICompatibleAdapter::with_http_client(
+            OpenAICompatibleConfig::default(),
+            Box::new(FakeSuccessClient),
+        );
+        let output = adapter
+            .complete(&fake_success_context(), &fake_success_request())
+            .unwrap();
+        assert_eq!(output.response, "Hello from fake OpenAI");
+    }
+
+    #[test]
+    fn complete_with_fake_client_tokens_equal_split_whitespace() {
+        let adapter = OpenAICompatibleAdapter::with_http_client(
+            OpenAICompatibleConfig::default(),
+            Box::new(FakeSuccessClient),
+        );
+        let output = adapter
+            .complete(&fake_success_context(), &fake_success_request())
+            .unwrap();
+        assert_eq!(output.tokens, vec!["Hello", "from", "fake", "OpenAI"]);
     }
 }
