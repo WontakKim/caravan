@@ -800,6 +800,93 @@ any network I/O.
 > HTTP or async dependency is introduced. Swapping in a real HTTP client is explicitly
 > deferred to a future task.
 
+## Model Usage Metadata Boundary
+
+This section documents the token-usage metadata path added on top of the OpenAI HTTP client
+injection boundary. When a real (or test-injected) HTTP client returns token counts,
+the runner captures them as a `ModelUsage` event. When the mock adapter is used, the path
+is a no-op — no event is emitted and no existing behavior changes.
+
+### `ModelUsage` Type
+
+`ModelUsage` is a plain value type defined in `crates/kernel/src/model.rs`:
+
+```rust
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelUsage {
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+}
+```
+
+It deliberately derives no serde traits. Usage data lives only in the event log's detail
+string; the struct itself is never serialized to or deserialized from JSON.
+
+`ModelOutput` and `ModelResponse` each carry `usage: Option<ModelUsage>`. `None` means
+the adapter did not supply usage information; `Some` carries the three token counts.
+
+### Conversion Point (`OpenAIChatResponse::to_model_output`)
+
+`OpenAIChatResponse::to_model_output()` maps `OpenAIUsage` to `ModelUsage` field-by-field:
+
+```
+OpenAIUsage { prompt_tokens, completion_tokens, total_tokens }
+    → ModelUsage { prompt_tokens, completion_tokens, total_tokens }
+```
+
+The mapping is 1:1 with no rounding, clamping, or transformation. If the HTTP response
+carries `"usage": null` or omits the field entirely, `output.usage` is `None`.
+
+`MockModelAdapter::complete()` always returns `usage: None` — the mock adapter has no
+token-count concept and the default flow is unchanged.
+
+### Runner Event Emission
+
+The runner in `crates/kernel/src/runner.rs` emits a `ModelUsage` event only when
+`response.usage` is `Some`. The event is appended **after** the last `ModelToken` event
+and **immediately before** `RunComplete`:
+
+```
+… ModelToken (×N) → ModelUsage → RunComplete
+```
+
+The detail string uses the exact format:
+
+```
+prompt_tokens=10 completion_tokens=5 total_tokens=15
+```
+
+When `usage` is `None` (the default mock flow), no `ModelUsage` event is emitted and the
+sequence remains `… ModelToken (×N) → RunComplete` — byte-identical to the pre-T-3
+behavior. Error paths (`ModelError` / `RunFail`) emit neither `ModelToken`, `ModelUsage`,
+nor `RunComplete`.
+
+### Forward-Compatibility with Stored Events
+
+`ModelUsage` events are written to `.caravan/events.jsonl` as ordinary JSONL lines. A
+binary built before this boundary was introduced will encounter these lines on restore and
+skip them via the existing malformed/unknown-line skip behavior in `storage.rs` — the same
+path already used for any line that cannot be deserialized into a known `EventKind`. This
+is intentional: no migration, no schema versioning, and no changes to the persistence layer
+are required.
+
+### Non-Goals
+
+This boundary explicitly does not include:
+
+- Pricing, cost tracking, or billing calculation.
+- Streaming usage (the `stream` flag is always `false`).
+- Retry logic or partial-usage recovery on error.
+- Async or `tokio` dependencies (the client boundary remains synchronous).
+- New crate dependencies of any kind.
+- Tests against a real OpenAI API endpoint.
+
+> **This is usage metadata capture only — NOT a billing or analytics feature.** Token counts
+> are surfaced in the event log for observability during development. No pricing data is
+> computed, no usage is reported to any external service, and no new runtime dependencies
+> are introduced.
+
 ## Event Persistence
 
 Events are appended to `.caravan/events.jsonl` as JSONL (one JSON object per
