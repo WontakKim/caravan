@@ -7,14 +7,21 @@ use crate::model_openai_request::OpenAIRequestBuilder;
 
 pub struct OpenAICompatibleAdapter {
     config: OpenAICompatibleConfig,
-    http_client: StubOpenAIHttpClient,
+    http_client: Box<dyn OpenAIHttpClient>,
 }
 
 impl OpenAICompatibleAdapter {
     pub fn new(config: OpenAICompatibleConfig) -> Self {
+        Self::with_http_client(config, Box::new(StubOpenAIHttpClient::default()))
+    }
+
+    pub fn with_http_client(
+        config: OpenAICompatibleConfig,
+        http_client: Box<dyn OpenAIHttpClient>,
+    ) -> Self {
         Self {
             config,
-            http_client: StubOpenAIHttpClient::default(),
+            http_client,
         }
     }
 
