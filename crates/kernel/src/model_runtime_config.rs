@@ -80,6 +80,7 @@ impl ModelRuntimeConfig {
             "CARAVAN_OPENAI_BASE_URL",
             "CARAVAN_OPENAI_API_KEY_ENV",
             "CARAVAN_OPENAI_TIMEOUT_SECS",
+            "CARAVAN_OPENAI_HTTP_CLIENT",
         ] {
             if let Ok(value) = std::env::var(key) {
                 vars.insert(key.to_string(), value);
@@ -449,8 +450,10 @@ mod tests {
     #[test]
     fn from_process_env_in_clean_env_matches_default() {
         // Assumption: no CARAVAN_* variables are set in the dev/CI environment when
-        // this test runs. With none of the five keys present, from_process_env must
-        // produce the same result as an empty map, which equals ModelRuntimeConfig::default().
+        // this test runs. With none of the six keys present (CARAVAN_MODEL_PROVIDER,
+        // CARAVAN_MODEL, CARAVAN_OPENAI_BASE_URL, CARAVAN_OPENAI_API_KEY_ENV,
+        // CARAVAN_OPENAI_TIMEOUT_SECS, CARAVAN_OPENAI_HTTP_CLIENT), from_process_env
+        // must produce the same result as an empty map, which equals ModelRuntimeConfig::default().
         //
         // This test intentionally avoids mutating the process environment: env mutation
         // is unsafe in Rust edition 2024, and tests run on parallel threads sharing the
