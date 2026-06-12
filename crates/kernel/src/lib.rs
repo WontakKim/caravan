@@ -22,6 +22,9 @@ pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use model::{ModelAdapter, ModelError, ModelOutput, ModelRequest, ModelResult};
 pub use model_config::{ModelConfig, ModelProfile};
 pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};
+pub use model_openai_http::{
+    OpenAIHttpClient, OpenAIHttpError, OpenAIHttpResult, StubOpenAIHttpClient,
+};
 pub use model_runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model_types::{ModelAdapterKind, ModelProvider};
 pub use runner::{MockRunOutput, run_mock_turn};
