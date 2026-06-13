@@ -91,6 +91,15 @@ Log. Navigation is pure UI state — it does not append any event to the log.
 - **Down** — move to the next (newer) event; no-op at the bottom boundary.
 - **Up** — move to the previous (older) event; no-op at the top boundary.
 
+Use **PageUp** and **PageDown** to scroll the **Inspector** panel vertically
+when its content exceeds the visible area.
+
+- **PageUp** — scroll the Inspector panel up.
+- **PageDown** — scroll the Inspector panel down.
+
+Inspector scroll is pure UI state — it is not recorded in the event log and
+not persisted to `.caravan/events.jsonl`.
+
 ### EventKind Values
 
 | EventKind                    | When it is recorded                                      |
