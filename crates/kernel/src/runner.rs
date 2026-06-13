@@ -25,7 +25,13 @@ pub fn run_mock_turn(
         EventKind::TurnStart,
         format!("run_id={} turn_id={}", run_id, turn_id),
     );
-    let prompt = crate::prompt::compile_prompt(message);
+    // Project the recent conversation history and drop the current (trailing)
+    // user message, which the app appended before this runner ran. The
+    // projection clones into an owned transcript, so no borrow of `event_log`
+    // survives the subsequent PromptCompile append.
+    let transcript = crate::transcript::ConversationTranscript::from_event_log(event_log);
+    let history = transcript.without_trailing_user_message();
+    let prompt = crate::prompt::compile_prompt_with_context(message, history);
     event_log.append(EventKind::PromptCompile, prompt.clone());
     let request = ModelRequest {
         prompt,
@@ -151,6 +157,79 @@ mod tests {
             .expect("PromptCompile event should exist");
 
         assert_eq!(pc.detail, crate::prompt::compile_prompt("hello"));
+        // Pin the empty-history delegation contract: with no prior UserMessage
+        // in the log, the compiled prompt must carry the no-prior marker.
+        assert!(pc.detail.contains("No prior conversation context."));
+    }
+
+    #[test]
+    fn run_mock_turn_first_message_prompt_has_no_prior_context() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello", &gateway);
+
+        let pc = event_log
+            .events()
+            .iter()
+            .find(|e| e.kind == EventKind::PromptCompile)
+            .expect("PromptCompile event should exist");
+        assert!(pc.detail.contains("No prior conversation context."));
+    }
+
+    #[test]
+    fn run_mock_turn_second_message_includes_prior_transcript() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+
+        // The app appends the UserMessage before the runner runs; mirror that.
+        event_log.append(EventKind::UserMessage, "first");
+        run_mock_turn(&mut event_log, "first", &gateway);
+
+        event_log.append(EventKind::UserMessage, "second");
+        run_mock_turn(&mut event_log, "second", &gateway);
+
+        let events = event_log.events();
+        let second_pc = events
+            .iter()
+            .filter(|e| e.kind == EventKind::PromptCompile)
+            .nth(1)
+            .expect("second PromptCompile event should exist");
+
+        assert!(second_pc.detail.contains("User: first"));
+        assert!(
+            second_pc
+                .detail
+                .contains("Assistant: Mock response for: first")
+        );
+        assert!(second_pc.detail.contains("Current User:\nsecond"));
+        // The current message must not be duplicated into the Conversation section.
+        assert!(!second_pc.detail.contains("User: second"));
+    }
+
+    #[test]
+    fn run_mock_turn_excludes_non_conversation_events_from_context() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+
+        event_log.append(EventKind::UserMessage, "first");
+        run_mock_turn(&mut event_log, "first", &gateway);
+
+        // A slash command and other trace events must never enter the context.
+        event_log.append(EventKind::SlashCommand, "/help");
+        event_log.append(EventKind::UserMessage, "second");
+        run_mock_turn(&mut event_log, "second", &gateway);
+
+        let events = event_log.events();
+        let second_pc = events
+            .iter()
+            .filter(|e| e.kind == EventKind::PromptCompile)
+            .nth(1)
+            .expect("second PromptCompile event should exist");
+
+        assert!(!second_pc.detail.contains("/help"));
+        assert!(!second_pc.detail.contains("ModelRoute"));
+        assert!(!second_pc.detail.contains("ModelOutputChunk"));
+        assert!(!second_pc.detail.contains("ModelUsage"));
     }
 
     #[test]
