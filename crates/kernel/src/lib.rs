@@ -16,6 +16,7 @@ pub mod model_types;
 pub mod prompt;
 pub mod runner;
 pub mod storage;
+pub mod transcript;
 
 pub use commands::{Command, ParsedInput};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
