@@ -32,6 +32,7 @@ pub enum EventKind {
     PromptCompile,
     ModelRoute,
     ModelOutputChunk,
+    AssistantMessage,
     ModelUsage,
     RunComplete,
     RunFail,
@@ -55,6 +56,7 @@ impl EventKind {
             EventKind::PromptCompile => "PromptCompile",
             EventKind::ModelRoute => "ModelRoute",
             EventKind::ModelOutputChunk => "ModelOutputChunk",
+            EventKind::AssistantMessage => "AssistantMessage",
             EventKind::ModelUsage => "ModelUsage",
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
@@ -426,6 +428,24 @@ mod tests {
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert_eq!(event, restored);
         assert_eq!(restored.kind, EventKind::ModelError);
+    }
+
+    #[test]
+    fn assistant_message_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::AssistantMessage.name(), "AssistantMessage");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::AssistantMessage,
+            detail: "The assistant replied.".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "AssistantMessage");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
     }
 
     #[test]
