@@ -36,7 +36,7 @@ pub fn run_mock_turn(
             event_log.append(EventKind::ModelRoute, response.route.detail());
             for chunk in &response.chunks {
                 event_log.append(
-                    EventKind::ModelToken,
+                    EventKind::ModelOutputChunk,
                     format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, chunk),
                 );
             }
@@ -107,7 +107,7 @@ mod tests {
             EventKind::ModelRoute,
         ];
         for _ in 0..n_tokens {
-            expected_kinds.push(EventKind::ModelToken);
+            expected_kinds.push(EventKind::ModelOutputChunk);
         }
         expected_kinds.push(EventKind::RunComplete);
 
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[test]
-    fn run_mock_turn_token_count_matches_model_output() {
+    fn run_mock_turn_chunk_count_matches_model_output() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
         run_mock_turn(&mut event_log, "hello", &gateway);
@@ -205,7 +205,7 @@ mod tests {
         let token_events = event_log
             .events()
             .iter()
-            .filter(|e| e.kind == EventKind::ModelToken)
+            .filter(|e| e.kind == EventKind::ModelOutputChunk)
             .count();
         let expected = ModelGateway::default()
             .complete(ModelRequest {
@@ -244,15 +244,15 @@ mod tests {
 
         let events = event_log.events();
 
-        // Find the PromptCompile and first ModelToken indices.
+        // Find the PromptCompile and first ModelOutputChunk indices.
         let prompt_compile_idx = events
             .iter()
             .position(|e| e.kind == EventKind::PromptCompile)
             .expect("PromptCompile event should exist");
         let first_model_token_idx = events
             .iter()
-            .position(|e| e.kind == EventKind::ModelToken)
-            .expect("ModelToken event should exist");
+            .position(|e| e.kind == EventKind::ModelOutputChunk)
+            .expect("ModelOutputChunk event should exist");
 
         // Exactly one ModelRoute event.
         let model_route_events: Vec<_> = events
@@ -267,7 +267,7 @@ mod tests {
 
         let route_event = model_route_events[0];
 
-        // ModelRoute must be immediately after PromptCompile and before first ModelToken.
+        // ModelRoute must be immediately after PromptCompile and before first ModelOutputChunk.
         let route_idx = events
             .iter()
             .position(|e| e.kind == EventKind::ModelRoute)
@@ -279,7 +279,7 @@ mod tests {
         );
         assert!(
             route_idx < first_model_token_idx,
-            "ModelRoute should be before the first ModelToken"
+            "ModelRoute should be before the first ModelOutputChunk"
         );
 
         // Derive the expected detail at runtime from the default gateway so
@@ -323,10 +323,10 @@ mod tests {
             "RunFail should be immediately after ModelError"
         );
 
-        // Must NOT contain ModelToken or RunComplete.
+        // Must NOT contain ModelOutputChunk or RunComplete.
         assert!(
-            !events.iter().any(|e| e.kind == EventKind::ModelToken),
-            "error path must not emit ModelToken events"
+            !events.iter().any(|e| e.kind == EventKind::ModelOutputChunk),
+            "error path must not emit ModelOutputChunk events"
         );
         assert!(
             !events.iter().any(|e| e.kind == EventKind::RunComplete),
@@ -377,11 +377,11 @@ mod tests {
 
         let events = event_log.events();
 
-        // Find the last ModelToken index and the ModelUsage index.
+        // Find the last ModelOutputChunk index and the ModelUsage index.
         let last_model_token_idx = events
             .iter()
-            .rposition(|e| e.kind == EventKind::ModelToken)
-            .expect("ModelToken events should exist");
+            .rposition(|e| e.kind == EventKind::ModelOutputChunk)
+            .expect("ModelOutputChunk events should exist");
         let model_usage_idx = events
             .iter()
             .position(|e| e.kind == EventKind::ModelUsage)
@@ -391,10 +391,10 @@ mod tests {
             .position(|e| e.kind == EventKind::RunComplete)
             .expect("RunComplete event should exist");
 
-        // ModelUsage must be after the last ModelToken and immediately before RunComplete.
+        // ModelUsage must be after the last ModelOutputChunk and immediately before RunComplete.
         assert!(
             model_usage_idx > last_model_token_idx,
-            "ModelUsage must be after the last ModelToken"
+            "ModelUsage must be after the last ModelOutputChunk"
         );
         assert_eq!(
             model_usage_idx + 1,
@@ -405,7 +405,7 @@ mod tests {
         // Verify the full kind sequence.
         let n_tokens = events
             .iter()
-            .filter(|e| e.kind == EventKind::ModelToken)
+            .filter(|e| e.kind == EventKind::ModelOutputChunk)
             .count();
         let mut expected_kinds = vec![
             EventKind::RunCreate,
@@ -415,7 +415,7 @@ mod tests {
             EventKind::ModelRoute,
         ];
         for _ in 0..n_tokens {
-            expected_kinds.push(EventKind::ModelToken);
+            expected_kinds.push(EventKind::ModelOutputChunk);
         }
         expected_kinds.push(EventKind::ModelUsage);
         expected_kinds.push(EventKind::RunComplete);
@@ -466,10 +466,10 @@ mod tests {
         );
 
         // Verify the event sequence is unchanged (RunCreate, RunStart, TurnStart,
-        // PromptCompile, ModelRoute, ModelToken*, RunComplete).
+        // PromptCompile, ModelRoute, ModelOutputChunk*, RunComplete).
         let n_tokens = events
             .iter()
-            .filter(|e| e.kind == EventKind::ModelToken)
+            .filter(|e| e.kind == EventKind::ModelOutputChunk)
             .count();
         let mut expected_kinds = vec![
             EventKind::RunCreate,
@@ -479,7 +479,7 @@ mod tests {
             EventKind::ModelRoute,
         ];
         for _ in 0..n_tokens {
-            expected_kinds.push(EventKind::ModelToken);
+            expected_kinds.push(EventKind::ModelOutputChunk);
         }
         expected_kinds.push(EventKind::RunComplete);
 

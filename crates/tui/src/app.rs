@@ -535,7 +535,7 @@ mod tests {
             EventKind::ModelRoute,
         ];
         for _ in 0..n {
-            expected_kinds.push(EventKind::ModelToken);
+            expected_kinds.push(EventKind::ModelOutputChunk);
         }
         expected_kinds.push(EventKind::RunComplete);
 
@@ -610,8 +610,8 @@ mod tests {
             "reloaded log should contain RunCreate"
         );
         assert!(
-            events.iter().any(|e| e.kind == EventKind::ModelToken),
-            "reloaded log should contain ModelToken"
+            events.iter().any(|e| e.kind == EventKind::ModelOutputChunk),
+            "reloaded log should contain ModelOutputChunk"
         );
         assert!(
             events.iter().any(|e| e.kind == EventKind::RunComplete),
@@ -705,8 +705,8 @@ mod tests {
             assert_eq!(ev.kind, *expected);
         }
 
-        // No ModelToken, RunComplete, or ModelRoute on the error path.
-        assert!(!events.iter().any(|e| e.kind == EventKind::ModelToken));
+        // No ModelOutputChunk, RunComplete, or ModelRoute on the error path.
+        assert!(!events.iter().any(|e| e.kind == EventKind::ModelOutputChunk));
         assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete));
         assert!(!events.iter().any(|e| e.kind == EventKind::ModelRoute));
 
@@ -774,8 +774,8 @@ mod tests {
             assert_eq!(ev.kind, *expected);
         }
 
-        // No ModelToken or RunComplete on the missing-key error path.
-        assert!(!events.iter().any(|e| e.kind == EventKind::ModelToken));
+        // No ModelOutputChunk or RunComplete on the missing-key error path.
+        assert!(!events.iter().any(|e| e.kind == EventKind::ModelOutputChunk));
         assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete));
 
         // ModelError detail contains the env var name but never a key value or Bearer header.

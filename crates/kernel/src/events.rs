@@ -31,7 +31,7 @@ pub enum EventKind {
     TurnStart,
     PromptCompile,
     ModelRoute,
-    ModelToken,
+    ModelOutputChunk,
     ModelUsage,
     RunComplete,
     RunFail,
@@ -54,7 +54,7 @@ impl EventKind {
             EventKind::TurnStart => "TurnStart",
             EventKind::PromptCompile => "PromptCompile",
             EventKind::ModelRoute => "ModelRoute",
-            EventKind::ModelToken => "ModelToken",
+            EventKind::ModelOutputChunk => "ModelOutputChunk",
             EventKind::ModelUsage => "ModelUsage",
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
@@ -351,7 +351,7 @@ mod tests {
             EventKind::TurnStart,
             EventKind::PromptCompile,
             EventKind::ModelRoute,
-            EventKind::ModelToken,
+            EventKind::ModelOutputChunk,
             EventKind::ModelUsage,
             EventKind::RunComplete,
             EventKind::RunFail,
@@ -368,7 +368,7 @@ mod tests {
             assert_eq!(event, restored);
         }
 
-        // Assert the serialized `kind` field is the variant-name string for RunCreate and ModelToken.
+        // Assert the serialized `kind` field is the variant-name string for RunCreate and ModelOutputChunk.
         let run_create_event = AppEvent {
             seq: EventSeq(1),
             kind: EventKind::RunCreate,
@@ -379,15 +379,16 @@ mod tests {
             serde_json::from_str(&json).expect("parsing to Value should succeed");
         assert_eq!(v["kind"], "RunCreate");
 
-        let model_token_event = AppEvent {
+        let model_output_chunk_event = AppEvent {
             seq: EventSeq(2),
-            kind: EventKind::ModelToken,
+            kind: EventKind::ModelOutputChunk,
             detail: String::new(),
         };
-        let json = serde_json::to_string(&model_token_event).expect("serialization should succeed");
+        let json =
+            serde_json::to_string(&model_output_chunk_event).expect("serialization should succeed");
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("parsing to Value should succeed");
-        assert_eq!(v["kind"], "ModelToken");
+        assert_eq!(v["kind"], "ModelOutputChunk");
     }
 
     #[test]
