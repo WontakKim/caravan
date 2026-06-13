@@ -1,14 +1,14 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelProvider {
     Mock,
-    OpenAICompatible,
+    OpenAI,
 }
 
 impl ModelProvider {
     pub fn as_str(&self) -> &'static str {
         match self {
             ModelProvider::Mock => "mock",
-            ModelProvider::OpenAICompatible => "openai-compatible",
+            ModelProvider::OpenAI => "openai",
         }
     }
 }
@@ -46,11 +46,8 @@ mod tests {
     }
 
     #[test]
-    fn model_provider_openai_compatible_as_str() {
-        assert_eq!(
-            ModelProvider::OpenAICompatible.as_str(),
-            "openai-compatible"
-        );
+    fn model_provider_openai_as_str() {
+        assert_eq!(ModelProvider::OpenAI.as_str(), "openai");
     }
 
     #[test]

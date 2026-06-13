@@ -97,12 +97,12 @@ impl ModelRuntimeConfig {
 
         let adapter = match provider {
             ModelProvider::Mock => ModelAdapterKind::MockModelAdapter,
-            ModelProvider::OpenAICompatible => ModelAdapterKind::OpenAICompatibleAdapter,
+            ModelProvider::OpenAI => ModelAdapterKind::OpenAICompatibleAdapter,
         };
 
         let default_model = match provider {
             ModelProvider::Mock => "mock-model",
-            ModelProvider::OpenAICompatible => "openai-compatible-model",
+            ModelProvider::OpenAI => "openai-compatible-model",
         };
         let model = vars
             .get("CARAVAN_MODEL")
@@ -158,7 +158,7 @@ impl ModelRuntimeConfig {
 fn parse_provider(value: &str) -> Result<ModelProvider, ModelConfigError> {
     match value {
         "mock" => Ok(ModelProvider::Mock),
-        "openai-compatible" => Ok(ModelProvider::OpenAICompatible),
+        "openai" => Ok(ModelProvider::OpenAI),
         other => Err(ModelConfigError::UnknownProvider {
             value: other.to_string(),
         }),
@@ -217,12 +217,12 @@ mod tests {
     }
 
     #[test]
-    fn from_env_map_openai_compatible_provider() {
-        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+    fn from_env_map_openai_provider() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai".into())]);
         let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
         assert_eq!(
             cfg.model_config.active_profile.provider,
-            ModelProvider::OpenAICompatible
+            ModelProvider::OpenAI
         );
         assert_eq!(
             cfg.model_config.active_profile.adapter,
@@ -242,6 +242,18 @@ mod tests {
             err,
             ModelConfigError::UnknownProvider {
                 value: "gpt-99".into()
+            }
+        );
+    }
+
+    #[test]
+    fn from_env_map_rejects_openai_compatible_provider() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+        let err = ModelRuntimeConfig::from_env_map(&vars).unwrap_err();
+        assert_eq!(
+            err,
+            ModelConfigError::UnknownProvider {
+                value: "openai-compatible".into()
             }
         );
     }
@@ -380,12 +392,12 @@ mod tests {
     }
 
     #[test]
-    fn from_env_map_openai_compatible_provider_sets_openai_adapter() {
-        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+    fn from_env_map_openai_provider_sets_openai_adapter() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai".into())]);
         let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
         assert_eq!(
             cfg.model_config.active_profile.provider,
-            ModelProvider::OpenAICompatible
+            ModelProvider::OpenAI
         );
         assert_eq!(
             cfg.model_config.active_profile.adapter,
@@ -394,8 +406,8 @@ mod tests {
     }
 
     #[test]
-    fn from_env_map_openai_compatible_without_model_uses_placeholder() {
-        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into())]);
+    fn from_env_map_openai_without_model_uses_placeholder() {
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai".into())]);
         let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
         assert_eq!(
             cfg.model_config.active_profile.model,
@@ -414,9 +426,9 @@ mod tests {
     }
 
     #[test]
-    fn from_env_map_openai_compatible_provider_applies_model_override() {
+    fn from_env_map_openai_provider_applies_model_override() {
         let vars = HashMap::from([
-            ("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into()),
+            ("CARAVAN_MODEL_PROVIDER".into(), "openai".into()),
             ("CARAVAN_MODEL".into(), "custom-model".into()),
         ]);
         let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
@@ -448,19 +460,30 @@ mod tests {
     }
 
     #[test]
-    fn from_process_env_in_clean_env_matches_default() {
-        // Assumption: no CARAVAN_* variables are set in the dev/CI environment when
-        // this test runs. With none of the six keys present (CARAVAN_MODEL_PROVIDER,
-        // CARAVAN_MODEL, CARAVAN_OPENAI_BASE_URL, CARAVAN_OPENAI_API_KEY_ENV,
-        // CARAVAN_OPENAI_TIMEOUT_SECS, CARAVAN_OPENAI_HTTP_CLIENT), from_process_env
-        // must produce the same result as an empty map, which equals ModelRuntimeConfig::default().
-        //
-        // This test intentionally avoids mutating the process environment: env mutation
-        // is unsafe in Rust edition 2024, and tests run on parallel threads sharing the
-        // same process environment, making any mutation unsafe and non-deterministic.
+    fn from_process_env_matches_from_env_map_over_ambient() {
+        // Verifies the wiring invariant: from_process_env() must produce the same
+        // Result as from_env_map() when given the same set of ambient CARAVAN_* keys.
+        // By reading both sides from the same ambient environment this test is
+        // deterministic regardless of which (if any) CARAVAN_* vars are present —
+        // both sides are Ok-equal when the env is clean and both sides return the
+        // same Err when the env holds an invalid provider value. No env mutation is
+        // performed (unsafe in edition 2024 with parallel test threads).
+        let mut ambient = HashMap::new();
+        for key in [
+            "CARAVAN_MODEL_PROVIDER",
+            "CARAVAN_MODEL",
+            "CARAVAN_OPENAI_BASE_URL",
+            "CARAVAN_OPENAI_API_KEY_ENV",
+            "CARAVAN_OPENAI_TIMEOUT_SECS",
+            "CARAVAN_OPENAI_HTTP_CLIENT",
+        ] {
+            if let Ok(value) = std::env::var(key) {
+                ambient.insert(key.to_string(), value);
+            }
+        }
         assert_eq!(
-            ModelRuntimeConfig::from_process_env().unwrap(),
-            ModelRuntimeConfig::default()
+            ModelRuntimeConfig::from_process_env(),
+            ModelRuntimeConfig::from_env_map(&ambient)
         );
     }
 

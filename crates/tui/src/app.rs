@@ -675,14 +675,11 @@ mod tests {
     }
 
     #[test]
-    fn openai_compatible_gateway_records_model_error_and_run_fail() {
+    fn openai_gateway_records_model_error_and_run_fail() {
         let dir = TempDir::new();
         let store = EventStore::new(dir.path());
 
-        let vars = HashMap::from([(
-            "CARAVAN_MODEL_PROVIDER".to_string(),
-            "openai-compatible".to_string(),
-        )]);
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".to_string(), "openai".to_string())]);
         let runtime_config = ModelRuntimeConfig::from_env_map(&vars).unwrap();
         let gateway = ModelGateway::from_runtime_config(runtime_config);
 
@@ -742,10 +739,7 @@ mod tests {
         let store = EventStore::new(dir.path());
 
         let vars = HashMap::from([
-            (
-                "CARAVAN_MODEL_PROVIDER".to_string(),
-                "openai-compatible".to_string(),
-            ),
+            ("CARAVAN_MODEL_PROVIDER".to_string(), "openai".to_string()),
             (
                 "CARAVAN_OPENAI_HTTP_CLIENT".to_string(),
                 "blocking".to_string(),

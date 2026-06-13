@@ -130,10 +130,10 @@ mod tests {
     };
 
     #[test]
-    fn complete_openai_compatible_profile_returns_adapter_failure() {
+    fn complete_openai_profile_returns_adapter_failure() {
         let config = ModelConfig {
             active_profile: ModelProfile {
-                provider: ModelProvider::OpenAICompatible,
+                provider: ModelProvider::OpenAI,
                 model: "gpt-4o".into(),
                 adapter: ModelAdapterKind::OpenAICompatibleAdapter,
             },
@@ -212,6 +212,19 @@ mod tests {
     }
 
     #[test]
+    fn route_detail_formats_openai_route() {
+        let route = ModelRoute {
+            provider: ModelProvider::OpenAI,
+            model: "test-model".to_string(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+        assert_eq!(
+            route.detail(),
+            "provider=openai model=test-model adapter=OpenAICompatibleAdapter"
+        );
+    }
+
+    #[test]
     fn default_config_route_detail_and_response_match_mock_adapter() {
         let response = ModelGateway::default()
             .complete(ModelRequest {
@@ -265,7 +278,7 @@ mod tests {
         let runtime_config = ModelRuntimeConfig {
             model_config: ModelConfig {
                 active_profile: ModelProfile {
-                    provider: ModelProvider::OpenAICompatible,
+                    provider: ModelProvider::OpenAI,
                     model: "gpt-4o".into(),
                     adapter: ModelAdapterKind::OpenAICompatibleAdapter,
                 },
@@ -315,7 +328,7 @@ mod tests {
     fn from_runtime_config_blocking_kind_missing_key_returns_missing_api_key() {
         use std::collections::HashMap;
         let vars = HashMap::from([
-            ("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into()),
+            ("CARAVAN_MODEL_PROVIDER".into(), "openai".into()),
             ("CARAVAN_OPENAI_HTTP_CLIENT".into(), "blocking".into()),
             (
                 "CARAVAN_OPENAI_API_KEY_ENV".into(),
@@ -349,7 +362,7 @@ mod tests {
     fn from_runtime_config_explicit_stub_kind_returns_skeleton_error() {
         use std::collections::HashMap;
         let vars = HashMap::from([
-            ("CARAVAN_MODEL_PROVIDER".into(), "openai-compatible".into()),
+            ("CARAVAN_MODEL_PROVIDER".into(), "openai".into()),
             ("CARAVAN_OPENAI_HTTP_CLIENT".into(), "stub".into()),
         ]);
         let runtime_config = crate::model_runtime_config::ModelRuntimeConfig::from_env_map(&vars)
@@ -392,7 +405,7 @@ mod tests {
     fn gateway_completes_with_injected_fake_success_client() {
         let config = ModelConfig {
             active_profile: ModelProfile {
-                provider: ModelProvider::OpenAICompatible,
+                provider: ModelProvider::OpenAI,
                 model: "gpt-4o".into(),
                 adapter: ModelAdapterKind::OpenAICompatibleAdapter,
             },
@@ -437,7 +450,7 @@ mod tests {
     fn gateway_completes_with_injected_fake_success_with_usage_client() {
         let config = ModelConfig {
             active_profile: ModelProfile {
-                provider: ModelProvider::OpenAICompatible,
+                provider: ModelProvider::OpenAI,
                 model: "gpt-4o".into(),
                 adapter: ModelAdapterKind::OpenAICompatibleAdapter,
             },

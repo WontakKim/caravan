@@ -89,7 +89,7 @@ mod tests {
             OpenAICompatibleAdapter::default()
                 .complete(
                     &ModelAdapterContext {
-                        provider: ModelProvider::OpenAICompatible,
+                        provider: ModelProvider::OpenAI,
                         model: "gpt-4o".into(),
                         adapter: ModelAdapterKind::OpenAICompatibleAdapter,
                     },
@@ -107,7 +107,7 @@ mod tests {
         };
         let result = OpenAICompatibleAdapter::default().complete(
             &ModelAdapterContext {
-                provider: ModelProvider::OpenAICompatible,
+                provider: ModelProvider::OpenAI,
                 model: "gpt-4o".into(),
                 adapter: ModelAdapterKind::OpenAICompatibleAdapter,
             },
@@ -125,7 +125,7 @@ mod tests {
         if let Err(ModelError::AdapterFailure { message }) = OpenAICompatibleAdapter::default()
             .complete(
                 &ModelAdapterContext {
-                    provider: ModelProvider::OpenAICompatible,
+                    provider: ModelProvider::OpenAI,
                     model: "gpt-4o".into(),
                     adapter: ModelAdapterKind::OpenAICompatibleAdapter,
                 },
@@ -160,7 +160,7 @@ mod tests {
 
     fn fake_success_context() -> ModelAdapterContext {
         ModelAdapterContext {
-            provider: ModelProvider::OpenAICompatible,
+            provider: ModelProvider::OpenAI,
             model: "gpt-4o".into(),
             adapter: ModelAdapterKind::OpenAICompatibleAdapter,
         }

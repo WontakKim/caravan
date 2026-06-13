@@ -120,10 +120,10 @@ mod tests {
     }
 
     #[test]
-    fn complete_openai_compatible_returns_adapter_failure() {
+    fn complete_openai_returns_adapter_failure() {
         let registry = ModelAdapterRegistry::default();
         let profile = ModelProfile {
-            provider: ModelProvider::OpenAICompatible,
+            provider: ModelProvider::OpenAI,
             model: "gpt-4o".into(),
             adapter: ModelAdapterKind::OpenAICompatibleAdapter,
         };
@@ -176,7 +176,7 @@ mod tests {
             Box::new(FakeSuccessClient),
         );
         let profile = ModelProfile {
-            provider: ModelProvider::OpenAICompatible,
+            provider: ModelProvider::OpenAI,
             model: "gpt-4o".into(),
             adapter: ModelAdapterKind::OpenAICompatibleAdapter,
         };
@@ -199,7 +199,7 @@ mod tests {
             OpenAIHttpClientKind::Stub,
         );
         let profile = ModelProfile {
-            provider: ModelProvider::OpenAICompatible,
+            provider: ModelProvider::OpenAI,
             model: "gpt-4o".into(),
             adapter: ModelAdapterKind::OpenAICompatibleAdapter,
         };
@@ -229,7 +229,7 @@ mod tests {
         let registry =
             ModelAdapterRegistry::from_openai_runtime(config, OpenAIHttpClientKind::Blocking);
         let profile = ModelProfile {
-            provider: ModelProvider::OpenAICompatible,
+            provider: ModelProvider::OpenAI,
             model: "gpt-4o".into(),
             adapter: ModelAdapterKind::OpenAICompatibleAdapter,
         };

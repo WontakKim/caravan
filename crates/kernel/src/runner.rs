@@ -365,7 +365,7 @@ mod tests {
     fn run_mock_turn_with_usage_some_emits_model_usage_event_in_correct_position() {
         let config = ModelConfig {
             active_profile: ModelProfile {
-                provider: ModelProvider::OpenAICompatible,
+                provider: ModelProvider::OpenAI,
                 model: "gpt-4o".into(),
                 adapter: ModelAdapterKind::OpenAICompatibleAdapter,
             },
@@ -430,7 +430,7 @@ mod tests {
     fn run_mock_turn_with_usage_some_model_usage_detail_is_exact() {
         let config = ModelConfig {
             active_profile: ModelProfile {
-                provider: ModelProvider::OpenAICompatible,
+                provider: ModelProvider::OpenAI,
                 model: "gpt-4o".into(),
                 adapter: ModelAdapterKind::OpenAICompatibleAdapter,
             },
