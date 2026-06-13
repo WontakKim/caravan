@@ -102,7 +102,7 @@ impl ModelRuntimeConfig {
 
         let default_model = match provider {
             ModelProvider::Mock => "mock-model",
-            ModelProvider::OpenAI => "openai-compatible-model",
+            ModelProvider::OpenAI => "openai-model",
         };
         let model = vars
             .get("CARAVAN_MODEL")
@@ -228,10 +228,7 @@ mod tests {
             cfg.model_config.active_profile.adapter,
             ModelAdapterKind::OpenAICompatibleAdapter
         );
-        assert_eq!(
-            cfg.model_config.active_profile.model,
-            "openai-compatible-model"
-        );
+        assert_eq!(cfg.model_config.active_profile.model, "openai-model");
     }
 
     #[test]
@@ -409,10 +406,7 @@ mod tests {
     fn from_env_map_openai_without_model_uses_placeholder() {
         let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".into(), "openai".into())]);
         let cfg = ModelRuntimeConfig::from_env_map(&vars).unwrap();
-        assert_eq!(
-            cfg.model_config.active_profile.model,
-            "openai-compatible-model"
-        );
+        assert_eq!(cfg.model_config.active_profile.model, "openai-model");
     }
 
     #[test]
