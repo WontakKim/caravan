@@ -40,6 +40,10 @@ pub fn run_mock_turn(
                     format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, chunk),
                 );
             }
+            event_log.append(
+                EventKind::AssistantMessage,
+                response.assistant_response.clone(),
+            );
             if let Some(usage) = response.usage {
                 event_log.append(
                     EventKind::ModelUsage,
@@ -109,6 +113,7 @@ mod tests {
         for _ in 0..n_tokens {
             expected_kinds.push(EventKind::ModelOutputChunk);
         }
+        expected_kinds.push(EventKind::AssistantMessage);
         expected_kinds.push(EventKind::RunComplete);
 
         assert_eq!(events.len(), expected_kinds.len());
@@ -336,6 +341,10 @@ mod tests {
             !events.iter().any(|e| e.kind == EventKind::ModelUsage),
             "error path must not emit ModelUsage events"
         );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::AssistantMessage),
+            "error path must not emit AssistantMessage events"
+        );
     }
 
     struct FakeUsageOpenAIClient;
@@ -417,6 +426,7 @@ mod tests {
         for _ in 0..n_tokens {
             expected_kinds.push(EventKind::ModelOutputChunk);
         }
+        expected_kinds.push(EventKind::AssistantMessage);
         expected_kinds.push(EventKind::ModelUsage);
         expected_kinds.push(EventKind::RunComplete);
 
@@ -466,7 +476,7 @@ mod tests {
         );
 
         // Verify the event sequence is unchanged (RunCreate, RunStart, TurnStart,
-        // PromptCompile, ModelRoute, ModelOutputChunk*, RunComplete).
+        // PromptCompile, ModelRoute, ModelOutputChunk*, AssistantMessage, RunComplete).
         let n_tokens = events
             .iter()
             .filter(|e| e.kind == EventKind::ModelOutputChunk)
@@ -481,11 +491,48 @@ mod tests {
         for _ in 0..n_tokens {
             expected_kinds.push(EventKind::ModelOutputChunk);
         }
+        expected_kinds.push(EventKind::AssistantMessage);
         expected_kinds.push(EventKind::RunComplete);
 
         assert_eq!(events.len(), expected_kinds.len());
         for (ev, expected) in events.iter().zip(expected_kinds.iter()) {
             assert_eq!(ev.kind, *expected);
         }
+    }
+
+    #[test]
+    fn run_mock_turn_assistant_message_detail_and_position_for_hello_caravan() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello caravan", &gateway);
+
+        let events = event_log.events();
+
+        let assistant_msg_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::AssistantMessage)
+            .expect("AssistantMessage event should exist");
+        assert_eq!(
+            events[assistant_msg_idx].detail,
+            "Mock response for: hello caravan"
+        );
+
+        let last_chunk_idx = events
+            .iter()
+            .rposition(|e| e.kind == EventKind::ModelOutputChunk)
+            .expect("ModelOutputChunk events should exist");
+        let run_complete_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::RunComplete)
+            .expect("RunComplete event should exist");
+
+        assert!(
+            assistant_msg_idx > last_chunk_idx,
+            "AssistantMessage must be after the last ModelOutputChunk"
+        );
+        assert!(
+            assistant_msg_idx < run_complete_idx,
+            "AssistantMessage must be before RunComplete"
+        );
     }
 }

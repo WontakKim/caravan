@@ -537,6 +537,7 @@ mod tests {
         for _ in 0..n {
             expected_kinds.push(EventKind::ModelOutputChunk);
         }
+        expected_kinds.push(EventKind::AssistantMessage);
         expected_kinds.push(EventKind::RunComplete);
 
         assert_eq!(after_app_started.len(), expected_kinds.len());
