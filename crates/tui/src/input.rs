@@ -14,6 +14,8 @@ pub fn handle_key(app: &mut crate::app::App, key: KeyEvent) {
     match key.code {
         KeyCode::Up => app.select_prev(),
         KeyCode::Down => app.select_next(),
+        KeyCode::PageUp => app.scroll_inspector_up(),
+        KeyCode::PageDown => app.scroll_inspector_down(),
         KeyCode::Char(c) => app.push_char(c),
         KeyCode::Backspace => app.backspace(),
         KeyCode::Enter => app.submit(),
@@ -128,5 +130,57 @@ mod tests {
         handle_key(&mut app, press(KeyCode::Up));
         assert_eq!(app.selected_event, Some(0));
         assert_eq!(app.event_log.len(), len_before);
+    }
+
+    #[test]
+    fn page_down_increments_inspector_scroll_without_appending() {
+        let mut app = App::new();
+        let log_len_before = app.event_log.len();
+        let selected_before = app.selected_event;
+        assert_eq!(app.inspector_scroll, 0);
+
+        handle_key(&mut app, press(KeyCode::PageDown));
+
+        assert!(
+            app.inspector_scroll > 0,
+            "inspector_scroll should increase after PageDown"
+        );
+        assert_eq!(
+            app.event_log.len(),
+            log_len_before,
+            "PageDown must not append to event_log"
+        );
+        assert_eq!(
+            app.selected_event, selected_before,
+            "PageDown must not change selected_event"
+        );
+    }
+
+    #[test]
+    fn page_up_decrements_inspector_scroll_without_appending() {
+        let mut app = App::new();
+        // Scroll down first so there is room to scroll back up.
+        handle_key(&mut app, press(KeyCode::PageDown));
+        let scroll_after_down = app.inspector_scroll;
+        assert!(scroll_after_down > 0, "pre-condition: scroll must be > 0");
+
+        let log_len_before = app.event_log.len();
+        let selected_before = app.selected_event;
+
+        handle_key(&mut app, press(KeyCode::PageUp));
+
+        assert!(
+            app.inspector_scroll < scroll_after_down,
+            "inspector_scroll should decrease after PageUp"
+        );
+        assert_eq!(
+            app.event_log.len(),
+            log_len_before,
+            "PageUp must not append to event_log"
+        );
+        assert_eq!(
+            app.selected_event, selected_before,
+            "PageUp must not change selected_event"
+        );
     }
 }
