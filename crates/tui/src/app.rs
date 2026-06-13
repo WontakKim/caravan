@@ -9,6 +9,7 @@ pub struct App {
     pub event_log: EventLog,
     pub selected_event: Option<usize>,
     pub model_gateway: ModelGateway,
+    pub inspector_scroll: u16,
 }
 
 impl App {
@@ -22,6 +23,7 @@ impl App {
             event_log,
             selected_event: None,
             model_gateway: ModelGateway::default(),
+            inspector_scroll: 0,
         }
     }
 
@@ -45,6 +47,7 @@ impl App {
             event_log,
             selected_event: None,
             model_gateway: gateway,
+            inspector_scroll: 0,
         }
     }
 
@@ -796,6 +799,20 @@ mod tests {
             "ModelError detail must not contain Bearer: {}",
             model_error_event.detail
         );
+    }
+
+    #[test]
+    fn new_initializes_inspector_scroll_to_zero() {
+        let app = App::new();
+        assert_eq!(app.inspector_scroll, 0);
+    }
+
+    #[test]
+    fn with_store_initializes_inspector_scroll_to_zero() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+        let app = App::with_store(store);
+        assert_eq!(app.inspector_scroll, 0);
     }
 
     #[test]
