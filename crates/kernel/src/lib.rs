@@ -16,6 +16,7 @@ pub mod model_types;
 pub mod prompt;
 pub mod runner;
 pub mod storage;
+pub mod tools;
 pub mod transcript;
 
 pub use commands::{Command, ParsedInput};
@@ -34,4 +35,7 @@ pub use model_runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model_types::{ModelAdapterKind, ModelProvider};
 pub use runner::{MockRunOutput, run_mock_turn};
 pub use storage::EventStore;
+pub use tools::{
+    ToolError, ToolExecutionContext, ToolName, ToolOutput, ToolRegistry, ToolRequest, ToolRisk,
+};
 pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};
