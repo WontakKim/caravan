@@ -51,6 +51,23 @@ impl ConversationTranscript {
     pub fn from_event_log(event_log: &EventLog) -> Self {
         Self::from_events(event_log.events())
     }
+
+    /// Returns the conversation history with the current user message excluded.
+    ///
+    /// In the live turn flow the current `UserMessage` is appended to the event
+    /// log before the transcript is projected, so it is always the trailing
+    /// message here. This drops ONLY that trailing message and ONLY when its
+    /// role is `User`, leaving every prior message intact — including a dangling
+    /// user message left by an earlier failed turn. Read-only: it borrows
+    /// `self` and mutates nothing.
+    pub fn without_trailing_user_message(&self) -> &[TranscriptMessage] {
+        match self.messages.last() {
+            Some(last) if last.role == TranscriptRole::User => {
+                &self.messages[..self.messages.len() - 1]
+            }
+            _ => &self.messages,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -163,5 +180,64 @@ mod tests {
     fn empty_events_produces_empty_transcript() {
         let transcript = ConversationTranscript::from_events(&[]);
         assert_eq!(transcript.messages.len(), 0);
+    }
+
+    #[test]
+    fn without_trailing_user_message_drops_only_trailing_user() {
+        let events = vec![
+            make_event(1, EventKind::UserMessage, "first"),
+            make_event(2, EventKind::AssistantMessage, "reply"),
+            make_event(3, EventKind::UserMessage, "current"),
+        ];
+        let transcript = ConversationTranscript::from_events(&events);
+        let history = transcript.without_trailing_user_message();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].content, "first");
+        assert_eq!(history[1].content, "reply");
+        assert!(!history.iter().any(|m| m.content == "current"));
+    }
+
+    #[test]
+    fn without_trailing_user_message_keeps_when_last_is_assistant() {
+        let events = vec![
+            make_event(1, EventKind::UserMessage, "first"),
+            make_event(2, EventKind::AssistantMessage, "reply"),
+        ];
+        let transcript = ConversationTranscript::from_events(&events);
+        let history = transcript.without_trailing_user_message();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[1].role, TranscriptRole::Assistant);
+    }
+
+    #[test]
+    fn without_trailing_user_message_empty_is_empty() {
+        let transcript = ConversationTranscript::from_events(&[]);
+        assert!(transcript.without_trailing_user_message().is_empty());
+    }
+
+    #[test]
+    fn without_trailing_user_message_preserves_prior_dangling_user() {
+        // A prior failed turn left User("failed") with no assistant reply; the
+        // user then sends User("current"). Only the trailing current is dropped.
+        let events = vec![
+            make_event(1, EventKind::UserMessage, "failed"),
+            make_event(2, EventKind::UserMessage, "current"),
+        ];
+        let transcript = ConversationTranscript::from_events(&events);
+        let history = transcript.without_trailing_user_message();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].content, "failed");
+    }
+
+    #[test]
+    fn without_trailing_user_message_does_not_mutate_log() {
+        let mut log = EventLog::new();
+        log.append(EventKind::UserMessage, "first");
+        log.append(EventKind::AssistantMessage, "reply");
+        log.append(EventKind::UserMessage, "current");
+        let len_before = log.len();
+        let transcript = ConversationTranscript::from_event_log(&log);
+        let _ = transcript.without_trailing_user_message();
+        assert_eq!(log.len(), len_before);
     }
 }
