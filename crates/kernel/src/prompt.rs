@@ -1,19 +1,75 @@
-pub fn compile_prompt(message: &str) -> String {
+use crate::transcript::{TranscriptMessage, TranscriptRole};
+
+/// Number of most-recent transcript messages rendered in the prompt's
+/// conversation window. This is a small fixed window — NOT long-term memory.
+pub const DEFAULT_PROMPT_HISTORY_MESSAGES: usize = 6;
+
+/// Compiles the prompt for the current user message, including a short recent
+/// conversation window.
+///
+/// `history` is the prior conversation, already excluding the current user
+/// message (see `ConversationTranscript::without_trailing_user_message`). Only
+/// the last `DEFAULT_PROMPT_HISTORY_MESSAGES` messages are rendered; when that
+/// window is empty the Conversation section shows `No prior conversation
+/// context.`. The function renders whatever history it is given verbatim — it
+/// does not de-duplicate by content.
+pub fn compile_prompt_with_context(
+    current_user_message: &str,
+    history: &[TranscriptMessage],
+) -> String {
+    let window_start = history
+        .len()
+        .saturating_sub(DEFAULT_PROMPT_HISTORY_MESSAGES);
+    let window = &history[window_start..];
+
+    let conversation = if window.is_empty() {
+        "No prior conversation context.".to_string()
+    } else {
+        window
+            .iter()
+            .map(|message| {
+                let role = match message.role {
+                    TranscriptRole::User => "User",
+                    TranscriptRole::Assistant => "Assistant",
+                };
+                format!("{}: {}", role, message.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
     format!(
-        "System:\nYou are Caravan's local mock assistant.\n\nUser:\n{}\n\nContext:\nNo external context is available in this POC.\n\nOutput:\nRespond with a deterministic mock response.",
-        message
+        "System:\nYou are Caravan's local assistant.\n\nConversation:\n{}\n\nCurrent User:\n{}\n\nContext:\nNo external tool context is available in this POC.\n\nOutput:\nRespond to the current user message.",
+        conversation, current_user_message
     )
+}
+
+/// Compiles the prompt for `message` with no prior conversation context.
+///
+/// This is the empty-history case of `compile_prompt_with_context`, delegating
+/// to it so there is one prompt-template source of truth.
+pub fn compile_prompt(message: &str) -> String {
+    compile_prompt_with_context(message, &[])
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::EventSeq;
+
+    fn msg(role: TranscriptRole, content: &str, seq: u64) -> TranscriptMessage {
+        TranscriptMessage {
+            role,
+            content: content.to_string(),
+            seq: EventSeq(seq),
+        }
+    }
 
     #[test]
     fn compile_prompt_exact_template() {
         assert_eq!(
             compile_prompt("hello"),
-            "System:\nYou are Caravan's local mock assistant.\n\nUser:\nhello\n\nContext:\nNo external context is available in this POC.\n\nOutput:\nRespond with a deterministic mock response."
+            "System:\nYou are Caravan's local assistant.\n\nConversation:\nNo prior conversation context.\n\nCurrent User:\nhello\n\nContext:\nNo external tool context is available in this POC.\n\nOutput:\nRespond to the current user message."
         );
     }
 
@@ -21,9 +77,77 @@ mod tests {
     fn compile_prompt_contains_required_sections() {
         let result = compile_prompt("hello");
         assert!(result.contains("System:"));
-        assert!(result.contains("User:"));
+        assert!(result.contains("Conversation:"));
+        assert!(result.contains("Current User:"));
         assert!(result.contains("Context:"));
         assert!(result.contains("Output:"));
         assert!(result.contains("hello"));
+    }
+
+    #[test]
+    fn compile_prompt_delegates_to_empty_history() {
+        assert_eq!(
+            compile_prompt("hello"),
+            compile_prompt_with_context("hello", &[])
+        );
+    }
+
+    #[test]
+    fn compile_prompt_with_context_empty_history_has_no_prior_marker() {
+        let result = compile_prompt_with_context("hi", &[]);
+        assert!(result.contains("Conversation:"));
+        assert!(result.contains("No prior conversation context."));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_renders_prior_user_and_assistant() {
+        let history = vec![
+            msg(TranscriptRole::User, "hi", 1),
+            msg(TranscriptRole::Assistant, "hello back", 2),
+        ];
+        let result = compile_prompt_with_context("next", &history);
+        assert!(result.contains("User: hi"));
+        assert!(result.contains("Assistant: hello back"));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_current_in_current_user_only() {
+        // History does NOT contain the current message; the compiler renders the
+        // provided history verbatim and places the current message under
+        // Current User. (Excluding the real current message is the runner's job.)
+        let history = vec![
+            msg(TranscriptRole::User, "earlier", 1),
+            msg(TranscriptRole::Assistant, "earlier reply", 2),
+        ];
+        let result = compile_prompt_with_context("current", &history);
+        assert!(result.contains("Current User:\ncurrent"));
+
+        let conversation = result
+            .split("\n\nCurrent User:")
+            .next()
+            .expect("conversation section should exist");
+        assert!(conversation.contains("User: earlier"));
+        assert!(conversation.contains("Assistant: earlier reply"));
+        assert!(!conversation.contains("current"));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_caps_history_to_six() {
+        let history: Vec<TranscriptMessage> = (0..8)
+            .map(|i| {
+                let role = if i % 2 == 0 {
+                    TranscriptRole::User
+                } else {
+                    TranscriptRole::Assistant
+                };
+                msg(role, &format!("m{i}"), i + 1)
+            })
+            .collect();
+        let result = compile_prompt_with_context("now", &history);
+        // Only the last 6 (m2..m7) are rendered; the oldest two are dropped.
+        assert!(!result.contains("m0"));
+        assert!(!result.contains("m1"));
+        assert!(result.contains("m2"));
+        assert!(result.contains("m7"));
     }
 }
