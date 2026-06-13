@@ -106,17 +106,17 @@ Log. Navigation is pure UI state — it does not append any event to the log.
 | `RunStart`                   | When the Run begins executing (before the first Turn)    |
 | `TurnStart`                  | When a Turn begins within a Run                          |
 | `PromptCompile`              | When the prompt compiler assembles the structured prompt; `detail` holds the compiled prompt preview |
-| `ModelRoute`                 | After `PromptCompile`, before the first `ModelToken`; carries mock provider/model/adapter route metadata selected by `ModelGateway` |
-| `ModelToken`                 | Each token emitted during the mock model reply           |
+| `ModelRoute`                 | After `PromptCompile`, before the first `ModelOutputChunk`; carries mock provider/model/adapter route metadata selected by `ModelGateway` |
+| `ModelOutputChunk`           | Each incremental model-output chunk (not a tokenizer token; chunks are whitespace-split output fragments or future streaming deltas) |
 | `RunComplete`                | When the Run finishes successfully                       |
-| `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelToken` or `RunComplete` is appended |
+| `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelOutputChunk` or `RunComplete` is appended |
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
 
 ## Mock Run/Turn Flow
 
 Submitting plain text (any input not starting with `/`) is a **deterministic
 mock** — it does not call a real LLM. The reply is always
-`Mock response for: <text>`, split into one `ModelToken` event per word.
+`Mock response for: <text>`, split into one `ModelOutputChunk` event per word.
 
 ### Event sequence
 
@@ -131,7 +131,7 @@ When `hello world` is entered, the following events are appended in order:
    prompt preview.
 6. `ModelRoute` — `ModelGateway` selects the provider/model/adapter route; the
    event `detail` carries the route metadata (mock provider, model, and adapter).
-7. `ModelToken` × N — one event per word in `Mock response for: <text>`.
+7. `ModelOutputChunk` × N — one event per word in `Mock response for: <text>`.
 8. `RunComplete` — the Run finishes successfully.
 
 ### Main panel output
@@ -169,7 +169,7 @@ Run/Turn event assembly to `crates/kernel/src/runner.rs`.
 
 `runner::run_mock_turn(event_log, message, gateway)` owns the full Run/Turn lifecycle.
 It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
-ModelRoute → ModelToken* → RunComplete` to the event log (but **not**
+ModelRoute → ModelOutputChunk* → RunComplete` to the event log (but **not**
 `UserMessage`, which `App::submit()` has already recorded). It returns a `MockRunOutput` value that
 the App uses to render the `User:` / `Assistant:` lines in the Main panel.
 
@@ -211,7 +211,7 @@ letting you inspect exactly what was compiled for that turn.
 
 `runner::run_mock_turn` owns the Run/Turn lifecycle and event append — it
 appends `RunCreate → RunStart → TurnStart → PromptCompile → ModelRoute →
-ModelToken* → RunComplete` — but it no longer contains inline response or token generation
+ModelOutputChunk* → RunComplete` — but it no longer contains inline response or token generation
 logic. Those responsibilities are delegated to a `ModelAdapter`.
 
 The `ModelAdapter` trait (defined in `crates/kernel/src/model.rs`) exposes a single method:
@@ -237,14 +237,19 @@ fn complete(
 ```rust
 pub struct ModelOutput {
     pub response: String,
-    pub tokens: Vec<String>,
+    pub chunks: Vec<String>,
 }
 ```
+
+`chunks` are incremental output fragments (produced by whitespace-splitting the
+response text, or future streaming deltas). They are distinct from token counts:
+`ModelUsage` (carried separately) holds `prompt_tokens`, `completion_tokens`, and
+`total_tokens` from the model API.
 
 `runner::run_mock_turn` no longer calls `MockModelAdapter` directly. Instead it
 delegates to `ModelGateway`, which calls `MockModelAdapter.complete` internally
 (see [ModelGateway Boundary](#modelgateway-boundary)). The runner iterates
-`ModelOutput.tokens` to append one `ModelToken` event per token, and stores
+`ModelOutput.chunks` to append one `ModelOutputChunk` event per chunk, and stores
 `ModelOutput.response` for the `Assistant:` line in the Main panel.
 
 `MockModelAdapter` is the concrete implementation used in the POC. It produces
@@ -338,9 +343,14 @@ deterministic mock path.
 `provider` and `adapter` in `ModelProfile` are now small typed enums rather than
 plain strings. Both are defined in `crates/kernel/src/model_types.rs`:
 
-- **`ModelProvider`** — variants: `Mock`. Exposes `as_str()` returning `"mock"`.
-- **`ModelAdapterKind`** — variants: `MockModelAdapter`. Exposes `as_str()` returning
-  `"MockModelAdapter"`.
+- **`ModelProvider`** — variants: `Mock`, `OpenAI`. Exposes `as_str()` returning `"mock"` and `"openai"` respectively.
+- **`ModelAdapterKind`** — variants: `MockModelAdapter`, `OpenAICompatibleAdapter`. Exposes `as_str()` returning
+  `"MockModelAdapter"` and `"OpenAICompatibleAdapter"` respectively.
+
+**Provider vs. adapter distinction:** `provider` is the user-selected vendor name (e.g. `openai`) that
+appears in `ModelRoute` events and config keys. `adapter` is the internal protocol implementation
+(e.g. `OpenAICompatibleAdapter`) that handles the actual request/response translation. The adapter name
+deliberately remains `OpenAICompatibleAdapter` — it identifies the protocol, not the vendor.
 
 The `model` field remains a `String` (e.g. `"mock-model"`).
 
@@ -368,7 +378,7 @@ When `ModelGateway::complete` returns an `Err(ModelError)`, the runner:
 
 1. Appends a `ModelError` event carrying the `kind=... message="..."` detail.
 2. Appends a `RunFail` event to signal that the Run did not complete successfully.
-3. Does **not** append any `ModelToken` or `RunComplete` events.
+3. Does **not** append any `ModelOutputChunk` or `RunComplete` events.
 
 The failure path is exercised only via the `#[cfg(test)]` helper
 `ModelGateway::failing_for_test`, which constructs a gateway wired to always
@@ -392,7 +402,7 @@ Two new typed variants have been added to the enums in `crates/kernel/src/model_
 
 | Enum | Variant | `as_str()` value |
 |------|---------|-----------------|
-| `ModelProvider` | `OpenAICompatible` | `"openai-compatible"` |
+| `ModelProvider` | `OpenAI` | `"openai"` |
 | `ModelAdapterKind` | `OpenAICompatibleAdapter` | `"OpenAICompatibleAdapter"` |
 
 `ModelAdapterRegistry` owns the `OpenAICompatibleAdapter` instance as a normal
@@ -400,7 +410,7 @@ field (alongside `MockModelAdapter`). Adapter selection is driven by matching on
 `ModelAdapterKind` inside the registry — `ModelGateway` delegates to the
 registry as before and is unaware of the concrete adapter type.
 
-`OpenAICompatible` profiles (i.e. `ModelProfile` values whose `adapter` field is
+`OpenAI` profiles (i.e. `ModelProfile` values whose `adapter` field is
 `ModelAdapterKind::OpenAICompatibleAdapter`) are constructed **only in tests**.
 The adapter itself is always constructed by `ModelAdapterRegistry`; nothing
 outside the registry instantiates `OpenAICompatibleAdapter` directly.
@@ -446,7 +456,7 @@ Converts a `ModelRequest` into an `OpenAIChatRequest`:
   `None` if `choices` is empty.
 - `to_model_output` converts the response into a `ModelOutput`:
   - The response text is taken verbatim from `first_assistant_content`.
-  - Tokens are produced by splitting the response on whitespace (`split_whitespace`).
+  - Output chunks are produced by splitting the response on whitespace (`split_whitespace`).
   - If `choices` is empty (no assistant content), `to_model_output` returns
     `Err(ModelError::AdapterFailure)`.
 
@@ -491,7 +501,7 @@ appending so the path is never doubled (e.g. `https://api.openai.com/v1/chat/com
 
 The default application flow is unchanged: every real run still routes to
 `MockModelAdapter` (`provider=mock model=mock-model adapter=MockModelAdapter`).
-`OpenAICompatible` profiles are constructed only in tests.
+`OpenAI` profiles are constructed only in tests.
 
 > **This is configuration boundary preparation only — NOT a real API integration.**
 > No environment variable is read, no API key is loaded, no HTTP client exists,
@@ -547,8 +557,8 @@ key value is never loaded or resolved at this stage.
 
 | Key | Values / Default | Notes |
 |-----|-----------------|-------|
-| `CARAVAN_MODEL_PROVIDER` | `mock` \| `openai-compatible`, default `mock` | Selects the active model adapter |
-| `CARAVAN_MODEL` | default `mock-model` (mock) / `openai-compatible-model` (openai-compatible) | Model name passed to the adapter |
+| `CARAVAN_MODEL_PROVIDER` | `mock` \| `openai`, default `mock` | Selects the active model adapter |
+| `CARAVAN_MODEL` | default `mock-model` (mock) / `openai-model` (openai) | Model name passed to the adapter |
 | `CARAVAN_OPENAI_BASE_URL` | default `https://api.openai.com/v1` | Base URL for OpenAI-compatible endpoints |
 | `CARAVAN_OPENAI_API_KEY_ENV` | default `OPENAI_API_KEY` | Name of the env var that holds the API key — the key value itself is never read here |
 | `CARAVAN_OPENAI_TIMEOUT_SECS` | default `30` | Request timeout in seconds; `0` or a non-numeric value is an error |
@@ -601,7 +611,7 @@ at startup — still without performing any real API call.
 
 | Key | Effect |
 |-----|--------|
-| `CARAVAN_MODEL_PROVIDER` | Selects the active model provider (`mock` or `openai-compatible`); defaults to `mock` |
+| `CARAVAN_MODEL_PROVIDER` | Selects the active model provider (`mock` or `openai`); defaults to `mock` |
 | `CARAVAN_MODEL` | Model name passed to the selected adapter; provider-specific default applied if absent |
 | `CARAVAN_OPENAI_BASE_URL` | Base URL for OpenAI-compatible endpoints; defaults to `https://api.openai.com/v1` |
 | `CARAVAN_OPENAI_API_KEY_ENV` | Holds the **name** of the env var that would contain the API key (e.g. `OPENAI_API_KEY`) — the actual key value is never read in this POC |
@@ -631,19 +641,27 @@ error kind and the invalid value, such as `kind=unknown_provider message="unknow
 ### Usage Example
 
 ```sh
-CARAVAN_MODEL_PROVIDER=openai-compatible cargo run
+CARAVAN_MODEL_PROVIDER=openai cargo run
 ```
 
 The app starts normally. A user message reaches the skeleton `ModelError`/`RunFail` flow
 inside `OpenAICompatibleAdapter` with no network call made; no API key value is read.
+The `ModelRoute` event detail for this path is:
+
+```
+provider=openai model=openai-model adapter=OpenAICompatibleAdapter
+```
+
+(`provider=openai` is the user-selected vendor name; `adapter=OpenAICompatibleAdapter` is
+the internal protocol implementation — it identifies the wire protocol, not the vendor.)
 
 > **This is config bootstrap only — NOT a real API integration.**
 > `from_process_env()` reads only the six `CARAVAN_*` keys; no API key value is ever read
 > or resolved at bootstrap time. On the default App path (`CARAVAN_OPENAI_HTTP_CLIENT=stub`
 > or absent), Caravan wires the stub HTTP client; the real blocking HTTP client is not constructed, and no network call of any kind is made.
-> Real network calls are possible **only** when both `CARAVAN_MODEL_PROVIDER=openai-compatible`
+> Real network calls are possible **only** when both `CARAVAN_MODEL_PROVIDER=openai`
 > and `CARAVAN_OPENAI_HTTP_CLIENT=blocking` are set explicitly; setting
-> `CARAVAN_MODEL_PROVIDER=openai-compatible` alone (without `CARAVAN_OPENAI_HTTP_CLIENT=blocking`)
+> `CARAVAN_MODEL_PROVIDER=openai` alone (without `CARAVAN_OPENAI_HTTP_CLIENT=blocking`)
 > still fails with the skeleton error from `StubOpenAIHttpClient`.
 
 ### Blocking HTTP Client Opt-In
@@ -652,7 +670,7 @@ To route requests through the real reqwest-based HTTP client, set **both** of th
 environment variables before starting the app:
 
 ```sh
-CARAVAN_MODEL_PROVIDER=openai-compatible
+CARAVAN_MODEL_PROVIDER=openai
 CARAVAN_OPENAI_HTTP_CLIENT=blocking
 ```
 
@@ -728,14 +746,14 @@ failure (`RequestFailure`), non-2xx HTTP status (`HttpStatus`), and JSON decode 
 
 `BlockingOpenAIHttpClient` is **not wired into the default App path**:
 `OpenAICompatibleAdapter::new/default` and the runtime-config path still inject
-`StubOpenAIHttpClient`. As a result, `CARAVAN_MODEL_PROVIDER=openai-compatible` still
+`StubOpenAIHttpClient`. As a result, `CARAVAN_MODEL_PROVIDER=openai` still
 returns the exact skeleton error:
 
 ```
 OpenAI-compatible HTTP client is a skeleton in this POC
 ```
 
-emitted as `ModelError::AdapterFailure` / `RunFail`, with no `ModelToken` or `RunComplete`
+emitted as `ModelError::AdapterFailure` / `RunFail`, with no `ModelOutputChunk` or `RunComplete`
 event. The default mock flow is byte-identical.
 
 ## OpenAI HTTP Client Injection Boundary
@@ -844,11 +862,11 @@ token-count concept and the default flow is unchanged.
 ### Runner Event Emission
 
 The runner in `crates/kernel/src/runner.rs` emits a `ModelUsage` event only when
-`response.usage` is `Some`. The event is appended **after** the last `ModelToken` event
+`response.usage` is `Some`. The event is appended **after** the last `ModelOutputChunk` event
 and **immediately before** `RunComplete`:
 
 ```
-… ModelToken (×N) → ModelUsage → RunComplete
+… ModelOutputChunk (×N) → ModelUsage → RunComplete
 ```
 
 The detail string uses the exact format:
@@ -858,8 +876,8 @@ prompt_tokens=10 completion_tokens=5 total_tokens=15
 ```
 
 When `usage` is `None` (the default mock flow), no `ModelUsage` event is emitted and the
-sequence remains `… ModelToken (×N) → RunComplete` — byte-identical to the pre-T-3
-behavior. Error paths (`ModelError` / `RunFail`) emit neither `ModelToken`, `ModelUsage`,
+sequence remains `… ModelOutputChunk (×N) → RunComplete` — byte-identical to the pre-T-3
+behavior. Error paths (`ModelError` / `RunFail`) emit neither `ModelOutputChunk`, `ModelUsage`,
 nor `RunComplete`.
 
 ### Forward-Compatibility with Stored Events
@@ -934,7 +952,7 @@ The following checks must be confirmed interactively before the POC is considere
 - [ ] Submitting plain text (no leading `/`) shows `User: <text>` and
       `Assistant: Mock response for: <text>` lines in the Main panel, and appends
       the full Run/Turn event sequence (`UserMessage`, `RunCreate`, `RunStart`,
-      `TurnStart`, `PromptCompile`, `ModelRoute`, `ModelToken` × N, `RunComplete`) to the Event Log.
+      `TurnStart`, `PromptCompile`, `ModelRoute`, `ModelOutputChunk` × N, `RunComplete`) to the Event Log.
 - [ ] `/help` appends the command list to the Log only; Main panel is unchanged.
 - [ ] `/clear` empties the Log panel; the Event Log retains all previous entries.
 - [ ] An unknown command (e.g. `/foo`) appends an `Unknown command:` line to the Log.
