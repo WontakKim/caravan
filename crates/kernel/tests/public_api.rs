@@ -1,10 +1,11 @@
 use kernel::{
-    AppEvent, BlockingOpenAIHttpClient, Command, EventKind, EventLog, EventSeq, EventStore,
-    MockRunOutput, ModelAdapter, ModelAdapterContext, ModelAdapterKind, ModelConfig,
-    ModelConfigError, ModelError, ModelGateway, ModelOutput, ModelProfile, ModelProvider,
-    ModelRequest, ModelResponse, ModelResult, ModelRoute, ModelRuntimeConfig, ModelUsage,
-    OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError, OpenAIHttpResult, ParsedInput, RunId,
-    StubOpenAIHttpClient, TurnId, run_mock_turn,
+    AppEvent, BlockingOpenAIHttpClient, Command, ConversationTranscript, EventKind, EventLog,
+    EventSeq, EventStore, MockRunOutput, ModelAdapter, ModelAdapterContext, ModelAdapterKind,
+    ModelConfig, ModelConfigError, ModelError, ModelGateway, ModelOutput, ModelProfile,
+    ModelProvider, ModelRequest, ModelResponse, ModelResult, ModelRoute, ModelRuntimeConfig,
+    ModelUsage, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError, OpenAIHttpResult,
+    ParsedInput, RunId, StubOpenAIHttpClient, TranscriptMessage, TranscriptRole, TurnId,
+    run_mock_turn,
 };
 
 #[test]
@@ -101,9 +102,28 @@ fn importability_checks() {
     let _: Option<RunId> = None;
     let _: Option<StubOpenAIHttpClient> = None;
     let _: Option<TurnId> = None;
+    let _: Option<ConversationTranscript> = None;
+    let _: Option<TranscriptMessage> = None;
+    let _: Option<TranscriptRole> = None;
 
     fn _assert_adapter<T: ModelAdapter>() {}
     fn _assert_http_client<T: OpenAIHttpClient>() {}
+}
+
+#[test]
+fn conversation_transcript_from_event_log_via_root_exports() {
+    let mut log = EventLog::new();
+    log.append(EventKind::UserMessage, "hello caravan");
+    log.append(EventKind::ModelOutputChunk, "partial chunk");
+    log.append(EventKind::AssistantMessage, "hi there");
+
+    let transcript = ConversationTranscript::from_event_log(&log);
+
+    assert_eq!(transcript.messages.len(), 2);
+    assert_eq!(transcript.messages[0].role, TranscriptRole::User);
+    assert_eq!(transcript.messages[0].content, "hello caravan");
+    assert_eq!(transcript.messages[1].role, TranscriptRole::Assistant);
+    assert_eq!(transcript.messages[1].content, "hi there");
 }
 
 #[test]
