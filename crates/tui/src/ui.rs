@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use unicode_width::UnicodeWidthStr;
 
@@ -116,8 +116,10 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
 
     // Inspector — render selected event detail, or fallback
     let text = inspector_text(app.selected_event.and_then(|i| app.event_log.get(i)));
-    let inspector =
-        Paragraph::new(text).block(Block::default().borders(Borders::ALL).title("Inspector"));
+    let inspector = Paragraph::new(text)
+        .block(Block::default().borders(Borders::ALL).title("Inspector"))
+        .wrap(Wrap { trim: false })
+        .scroll((app.inspector_scroll, 0));
     frame.render_widget(inspector, inspector_area);
 
     // Log — render the EventLog, tailing newest events but scrolling up to keep
