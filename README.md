@@ -204,25 +204,32 @@ running terminal.
 ## Prompt Compiler POC
 
 Plain-text user input is compiled into a structured prompt before being passed
-to the mock model. The prompt compiler produces a fixed four-section template:
+to the model. The prompt compiler produces a fixed five-section template:
 
 ```
 System:
-You are Caravan's local mock assistant.
+You are Caravan's local assistant.
 
-User:
+Conversation:
+No prior conversation context.
+
+Current User:
 <message>
 
 Context:
-No external context is available in this POC.
+No external tool context is available in this POC.
 
 Output:
-Respond with a deterministic mock response.
+Respond to the current user message.
 ```
 
-The result is stored in the `PromptCompile` event `detail` field as the compiled
-prompt preview. When you select a `PromptCompile` event in the **Inspector**
-panel, the panel displays this full System / User / Context / Output preview,
+`compile_prompt(message)` renders the empty-history case shown above. It
+delegates to `compile_prompt_with_context(message, history)`, which fills the
+`Conversation:` section from recent transcript messages — see
+[Prompt Context Window](#prompt-context-window). The result is stored in the
+`PromptCompile` event `detail` field as the compiled prompt preview. When you
+select a `PromptCompile` event in the **Inspector** panel, the panel displays
+this full System / Conversation / Current User / Context / Output preview,
 letting you inspect exactly what was compiled for that turn.
 
 ## ModelAdapter Boundary
@@ -944,12 +951,46 @@ User/Assistant conversation from the event log.
 - It does **not** write to or truncate `.caravan/events.jsonl`.
 - It does **not** trigger any side effect in the storage layer.
 
-### NOT yet wired into prompt compilation
+### Wired into prompt compilation
 
-`ConversationTranscript` is **NOT yet wired into prompt compilation**. The prompt compiler
-(`PromptCompile` event) currently uses only the current user message and a fixed template.
-Feeding the transcript into the compiled prompt as conversation history is explicitly deferred
-to a future task.
+`ConversationTranscript` is now wired into prompt compilation through the
+[Prompt Context Window](#prompt-context-window): the runner projects the
+transcript and feeds recent `User`/`Assistant` messages into the compiled
+prompt as conversation history. The projection remains a pure read — wiring it
+into the prompt does not mutate the event log or `.caravan/events.jsonl`.
+
+## Prompt Context Window
+
+The Prompt Context Window is the minimal first step of putting conversation
+history into the compiled prompt. Before each turn, the runner projects the
+`ConversationTranscript` from the event log, drops the current user message
+(which the TUI appends before the runner runs), and renders the remaining
+recent messages into the prompt's `Conversation:` section. The current message
+appears only under `Current User:` and is never duplicated into `Conversation:`.
+
+### What it does
+
+- **Source:** only `UserMessage` and `AssistantMessage` events — slash commands
+  and trace events (`ModelRoute`, `ModelOutputChunk`, `ModelUsage`, …) are never
+  included.
+- **Window:** capped at the last `DEFAULT_PROMPT_HISTORY_MESSAGES` (6) messages.
+  When there is no prior history, the section reads `No prior conversation
+  context.`.
+- **Helper:** `compile_prompt_with_context(current_user_message, history)` owns
+  both the formatting and the window cap; `compile_prompt(message)` is its
+  empty-history case.
+- **`/clear`:** clears only the on-screen log, not the event log, so it is
+  **not** a conversation boundary — history from before a `/clear` still appears
+  in later prompts.
+- **OpenAI opt-in:** on the OpenAI-compatible path the compiled, context-bearing
+  prompt is exactly what is sent to the model. No API key value is ever written
+  to the event log, logs, or this README.
+
+### What it is NOT
+
+This is **not** long-term memory. There is no vector search, retrieval,
+embedding, summarization, conversation compression, token counting, or
+model-specific context-window math — only a fixed, recent, in-session window.
 
 ## Event Persistence
 
