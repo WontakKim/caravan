@@ -1039,6 +1039,41 @@ Manual steps to confirm persistence is working:
 > rm -rf .caravan
 > ```
 
+## Read-only Tool Harness Skeleton
+
+`crates/kernel/src/tools.rs` contains a minimal tool harness for read-only
+workspace inspection. The harness is **kernel-only** and is intentionally
+**not wired** to the model, runner, TUI slash commands, or the EventLog in
+this POC — it records no events and produces no observable side effects during
+a normal run.
+
+### ToolRegistry
+
+`ToolRegistry::new_readonly()` constructs a registry pre-populated with the
+two read-only tools below. All tools share a single workspace root, and every
+path operation is confined to that root before the tool logic runs.
+
+### Registered Tools
+
+| Tool | Behaviour |
+|------|-----------|
+| `list_files` | Lists the immediate children of a directory (non-recursive), returned in sorted order. |
+| `read_file` | Reads a file as UTF-8 text; capped at 64 KiB. Returns an error if the file exceeds the limit or is not valid UTF-8. |
+
+### Workspace-Root Path Confinement
+
+Every path supplied to a tool is validated against the workspace root before
+any filesystem operation is attempted. The following path forms are rejected:
+
+- **Absolute paths** — only paths relative to the workspace root are accepted.
+- **Parent-directory traversals** (`../`) — any path that would escape the root
+  via `..` components is rejected.
+- **Symlink escapes** — resolved symlinks that point outside the workspace root
+  are rejected.
+
+Rejection returns an error to the caller; no filesystem operation is performed
+on the offending path.
+
 ## Manual Verification
 
 The following checks must be confirmed interactively before the POC is considered done:
