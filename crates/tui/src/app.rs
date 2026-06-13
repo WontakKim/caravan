@@ -797,4 +797,37 @@ mod tests {
             model_error_event.detail
         );
     }
+
+    #[test]
+    fn prompt_context_survives_clear() {
+        // /clear is a screen-only command: it clears the visible log but not the
+        // event log, so prior conversation must still appear in a later turn's
+        // compiled prompt. This locks /clear as NOT a prompt-context boundary.
+        let mut app = App::new();
+
+        app.input = "first".to_string();
+        app.submit();
+
+        app.input = "/clear".to_string();
+        app.submit();
+
+        app.input = "second".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        let second_pc = events
+            .iter()
+            .filter(|e| e.kind == EventKind::PromptCompile)
+            .nth(1)
+            .expect("second PromptCompile event should exist");
+
+        assert!(second_pc.detail.contains("User: first"));
+        assert!(
+            second_pc
+                .detail
+                .contains("Assistant: Mock response for: first")
+        );
+        assert!(second_pc.detail.contains("Current User:\nsecond"));
+        assert!(!second_pc.detail.contains("No prior conversation context."));
+    }
 }
