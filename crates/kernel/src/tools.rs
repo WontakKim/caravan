@@ -26,19 +26,17 @@ pub struct ToolExecutionContext {
 }
 
 /// Inputs accepted by the tool harness.
-///
-/// `ReadFile` variant is added in T-3 alongside the `read_file` implementation.
 #[derive(Debug, PartialEq)]
 pub enum ToolRequest {
     ListFiles { path: String },
+    ReadFile { path: String },
 }
 
 /// Outputs produced by the tool harness.
-///
-/// `FileContent` variant is added in T-3 alongside the `read_file` implementation.
 #[derive(Debug, PartialEq)]
 pub enum ToolOutput {
     FileList { path: String, entries: Vec<String> },
+    FileContent { path: String, content: String },
 }
 
 /// Structured error taxonomy for tool execution failures.
@@ -154,6 +152,7 @@ impl ToolRegistry {
     ) -> Result<ToolOutput, ToolError> {
         match request {
             ToolRequest::ListFiles { path } => self.list_files(context, &path),
+            ToolRequest::ReadFile { path } => self.read_file(context, &path),
         }
     }
 
@@ -192,6 +191,54 @@ impl ToolRegistry {
         Ok(ToolOutput::FileList {
             path: requested.to_string(),
             entries,
+        })
+    }
+
+    /// Reads a file's UTF-8 contents, capping at [`MAX_READ_FILE_BYTES`].
+    ///
+    /// The size cap is checked from file metadata **before** reading any bytes
+    /// into memory. UTF-8 is validated strictly with `String::from_utf8`; lossy
+    /// conversion is never used.
+    fn read_file(
+        &self,
+        context: &ToolExecutionContext,
+        requested: &str,
+    ) -> Result<ToolOutput, ToolError> {
+        let canonical = resolve_in_workspace(context, requested)?;
+
+        // Use Path::is_file() (not fs::metadata) for the not-a-file guard so
+        // the only fs::metadata call in this module is the size check below.
+        if !canonical.is_file() {
+            return Err(ToolError::NotAFile {
+                path: requested.to_string(),
+            });
+        }
+
+        // Size cap: check metadata BEFORE reading bytes into memory.
+        let len = fs::metadata(&canonical)
+            .map_err(|e| ToolError::Io {
+                message: e.to_string(),
+            })?
+            .len();
+
+        if len > MAX_READ_FILE_BYTES {
+            return Err(ToolError::TooLarge {
+                path: requested.to_string(),
+                max_bytes: MAX_READ_FILE_BYTES,
+            });
+        }
+
+        let bytes = fs::read(&canonical).map_err(|e| ToolError::Io {
+            message: e.to_string(),
+        })?;
+
+        let content = String::from_utf8(bytes).map_err(|_| ToolError::NonUtf8 {
+            path: requested.to_string(),
+        })?;
+
+        Ok(ToolOutput::FileContent {
+            path: requested.to_string(),
+            content,
         })
     }
 }
@@ -266,7 +313,9 @@ mod tests {
             },
         );
 
-        let ToolOutput::FileList { entries, .. } = output.expect("should succeed");
+        let ToolOutput::FileList { entries, .. } = output.expect("should succeed") else {
+            panic!("expected FileList");
+        };
         assert_eq!(
             entries,
             vec!["alpha.txt", "beta.txt", "gamma.txt", "subdir"]
@@ -304,7 +353,9 @@ mod tests {
             },
         );
 
-        let ToolOutput::FileList { path, entries } = output.expect("should succeed");
+        let ToolOutput::FileList { path, entries } = output.expect("should succeed") else {
+            panic!("expected FileList");
+        };
         assert_eq!(path, ".");
         assert!(entries.contains(&"hello.txt".to_string()));
     }
@@ -358,5 +409,88 @@ mod tests {
         );
 
         assert!(matches!(result, Err(ToolError::WorkspaceViolation { .. })));
+    }
+
+    #[test]
+    fn read_file_returns_utf8_content() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("hello.txt"), "hello, world!").expect("write file");
+
+        let registry = ToolRegistry::new_readonly();
+        let ctx = make_context(dir.path());
+        let result = registry.execute(
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "hello.txt".to_string(),
+            },
+        );
+
+        let output = result.expect("should succeed");
+        assert!(matches!(
+            output,
+            ToolOutput::FileContent {
+                ref path,
+                ref content
+            } if path == "hello.txt" && content == "hello, world!"
+        ));
+    }
+
+    #[test]
+    fn read_file_on_directory_returns_not_a_file() {
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
+
+        let registry = ToolRegistry::new_readonly();
+        let ctx = make_context(dir.path());
+        let result = registry.execute(
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "subdir".to_string(),
+            },
+        );
+
+        assert!(matches!(result, Err(ToolError::NotAFile { .. })));
+    }
+
+    #[test]
+    fn read_file_oversized_returns_too_large() {
+        let dir = TempDir::new();
+        let oversized = vec![b'x'; (MAX_READ_FILE_BYTES + 1) as usize];
+        std::fs::write(dir.path().join("big.bin"), &oversized).expect("write oversized file");
+
+        let registry = ToolRegistry::new_readonly();
+        let ctx = make_context(dir.path());
+        let result = registry.execute(
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "big.bin".to_string(),
+            },
+        );
+
+        assert!(matches!(
+            result,
+            Err(ToolError::TooLarge {
+                max_bytes: MAX_READ_FILE_BYTES,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn read_file_non_utf8_returns_non_utf8() {
+        let dir = TempDir::new();
+        let invalid_utf8: &[u8] = &[0xFF, 0xFE, 0xFF];
+        std::fs::write(dir.path().join("bad.bin"), invalid_utf8).expect("write non-utf8 file");
+
+        let registry = ToolRegistry::new_readonly();
+        let ctx = make_context(dir.path());
+        let result = registry.execute(
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "bad.bin".to_string(),
+            },
+        );
+
+        assert!(matches!(result, Err(ToolError::NonUtf8 { .. })));
     }
 }
