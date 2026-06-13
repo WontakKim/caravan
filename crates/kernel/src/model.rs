@@ -9,7 +9,7 @@ pub struct ModelUsage {
 
 pub struct ModelOutput {
     pub response: String,
-    pub tokens: Vec<String>,
+    pub chunks: Vec<String>,
     pub usage: Option<ModelUsage>,
 }
 
@@ -42,10 +42,10 @@ impl ModelAdapter for MockModelAdapter {
         request: &ModelRequest,
     ) -> ModelResult<ModelOutput> {
         let response = format!("Mock response for: {}", request.user_message);
-        let tokens = response.split_whitespace().map(str::to_string).collect();
+        let chunks = response.split_whitespace().map(str::to_string).collect();
         Ok(ModelOutput {
             response,
-            tokens,
+            chunks,
             usage: None,
         })
     }
@@ -110,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn mock_adapter_response_and_tokens_multi_word() {
+    fn mock_adapter_response_and_chunks_multi_word() {
         let request = ModelRequest {
             prompt: "any prompt".into(),
             user_message: "hello caravan".into(),
@@ -127,13 +127,13 @@ mod tests {
             .unwrap();
         assert_eq!(output.response, "Mock response for: hello caravan");
         assert_eq!(
-            output.tokens,
+            output.chunks,
             vec!["Mock", "response", "for:", "hello", "caravan"]
         );
     }
 
     #[test]
-    fn mock_adapter_token_count_matches_response_whitespace_split() {
+    fn mock_adapter_chunk_count_matches_response_whitespace_split() {
         let request = ModelRequest {
             prompt: "any prompt".into(),
             user_message: "hello".into(),
@@ -149,7 +149,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            output.tokens.len(),
+            output.chunks.len(),
             output.response.split_whitespace().count()
         );
     }
@@ -216,7 +216,7 @@ mod tests {
             .unwrap();
         assert_eq!(output.usage, None);
         assert_eq!(output.response, "Mock response for: hello");
-        assert_eq!(output.tokens, vec!["Mock", "response", "for:", "hello"]);
+        assert_eq!(output.chunks, vec!["Mock", "response", "for:", "hello"]);
     }
 
     #[test]

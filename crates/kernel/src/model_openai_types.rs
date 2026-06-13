@@ -54,7 +54,7 @@ impl OpenAIChatResponse {
         });
         Ok(ModelOutput {
             response: text.to_string(),
-            tokens: text.split_whitespace().map(str::to_string).collect(),
+            chunks: text.split_whitespace().map(str::to_string).collect(),
             usage,
         })
     }
@@ -188,7 +188,7 @@ mod tests {
     }
 
     #[test]
-    fn to_model_output_maps_response_and_tokens() {
+    fn to_model_output_maps_response_and_chunks() {
         let response = OpenAIChatResponse {
             choices: vec![OpenAIChatChoice {
                 message: OpenAIChatMessage {
@@ -201,7 +201,7 @@ mod tests {
         let output = response.to_model_output().unwrap();
         assert_eq!(output.response, "Mock response for: hello caravan");
         assert_eq!(
-            output.tokens,
+            output.chunks,
             vec!["Mock", "response", "for:", "hello", "caravan"]
         );
     }

@@ -196,7 +196,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_with_fake_client_tokens_equal_split_whitespace() {
+    fn complete_with_fake_client_chunks_equal_split_whitespace() {
         let adapter = OpenAICompatibleAdapter::with_http_client(
             OpenAICompatibleConfig::default(),
             Box::new(FakeSuccessClient),
@@ -204,6 +204,6 @@ mod tests {
         let output = adapter
             .complete(&fake_success_context(), &fake_success_request())
             .unwrap();
-        assert_eq!(output.tokens, vec!["Hello", "from", "fake", "OpenAI"]);
+        assert_eq!(output.chunks, vec!["Hello", "from", "fake", "OpenAI"]);
     }
 }

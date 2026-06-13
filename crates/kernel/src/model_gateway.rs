@@ -105,7 +105,7 @@ impl ModelGateway {
                     adapter: profile.adapter,
                 },
                 assistant_response: output.response,
-                tokens: output.tokens,
+                tokens: output.chunks,
                 usage: output.usage,
             }),
             Err(e) => Err(e),

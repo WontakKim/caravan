@@ -114,7 +114,7 @@ mod tests {
         let output = registry.complete(&profile, &request).unwrap();
         assert_eq!(output.response, "Mock response for: hello caravan");
         assert_eq!(
-            output.tokens,
+            output.chunks,
             vec!["Mock", "response", "for:", "hello", "caravan"]
         );
     }
