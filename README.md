@@ -108,6 +108,7 @@ Log. Navigation is pure UI state — it does not append any event to the log.
 | `PromptCompile`              | When the prompt compiler assembles the structured prompt; `detail` holds the compiled prompt preview |
 | `ModelRoute`                 | After `PromptCompile`, before the first `ModelOutputChunk`; carries mock provider/model/adapter route metadata selected by `ModelGateway` |
 | `ModelOutputChunk`           | Each incremental model-output chunk (not a tokenizer token; chunks are whitespace-split output fragments or future streaming deltas) |
+| `AssistantMessage`           | The final assistant response trace appended on a successful run, after all `ModelOutputChunk` events and before `RunComplete`; not emitted on the error path |
 | `RunComplete`                | When the Run finishes successfully                       |
 | `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelOutputChunk` or `RunComplete` is appended |
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
@@ -132,7 +133,19 @@ When `hello world` is entered, the following events are appended in order:
 6. `ModelRoute` — `ModelGateway` selects the provider/model/adapter route; the
    event `detail` carries the route metadata (mock provider, model, and adapter).
 7. `ModelOutputChunk` × N — one event per word in `Mock response for: <text>`.
-8. `RunComplete` — the Run finishes successfully.
+8. `AssistantMessage` — the full assembled assistant response is recorded as a trace event.
+9. `RunComplete` — the Run finishes successfully.
+
+When a real (or test-injected) adapter returns token-usage metadata, a `ModelUsage` event is
+inserted between `AssistantMessage` and `RunComplete`:
+
+```
+… ModelOutputChunk × N → AssistantMessage → ModelUsage → RunComplete
+```
+
+On the **error path** (`ModelError` / `RunFail`), no `AssistantMessage` event is emitted —
+the sequence ends at `ModelError → RunFail` with no `ModelOutputChunk`, `AssistantMessage`,
+or `RunComplete`.
 
 ### Main panel output
 
@@ -142,6 +155,11 @@ After submitting plain text, the Main panel shows:
 User: <text>
 Assistant: Mock response for: <text>
 ```
+
+> **Invariant:** The default mock Main panel output (`User: <text>` /
+> `Assistant: Mock response for: <text>`) is unchanged by the addition of the
+> `AssistantMessage` event — this event is a kernel-level trace and does not affect
+> what the TUI renders.
 
 ### Persistence
 
@@ -169,7 +187,7 @@ Run/Turn event assembly to `crates/kernel/src/runner.rs`.
 
 `runner::run_mock_turn(event_log, message, gateway)` owns the full Run/Turn lifecycle.
 It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
-ModelRoute → ModelOutputChunk* → RunComplete` to the event log (but **not**
+ModelRoute → ModelOutputChunk* → AssistantMessage → RunComplete` to the event log (but **not**
 `UserMessage`, which `App::submit()` has already recorded). It returns a `MockRunOutput` value that
 the App uses to render the `User:` / `Assistant:` lines in the Main panel.
 
@@ -211,7 +229,7 @@ letting you inspect exactly what was compiled for that turn.
 
 `runner::run_mock_turn` owns the Run/Turn lifecycle and event append — it
 appends `RunCreate → RunStart → TurnStart → PromptCompile → ModelRoute →
-ModelOutputChunk* → RunComplete` — but it no longer contains inline response or token generation
+ModelOutputChunk* → AssistantMessage → RunComplete` — but it no longer contains inline response or token generation
 logic. Those responsibilities are delegated to a `ModelAdapter`.
 
 The `ModelAdapter` trait (defined in `crates/kernel/src/model.rs`) exposes a single method:
@@ -862,11 +880,10 @@ token-count concept and the default flow is unchanged.
 ### Runner Event Emission
 
 The runner in `crates/kernel/src/runner.rs` emits a `ModelUsage` event only when
-`response.usage` is `Some`. The event is appended **after** the last `ModelOutputChunk` event
-and **immediately before** `RunComplete`:
+`response.usage` is `Some`. The event is appended **after** `AssistantMessage` and **immediately before** `RunComplete`:
 
 ```
-… ModelOutputChunk (×N) → ModelUsage → RunComplete
+… ModelOutputChunk (×N) → AssistantMessage → ModelUsage → RunComplete
 ```
 
 The detail string uses the exact format:
@@ -876,8 +893,8 @@ prompt_tokens=10 completion_tokens=5 total_tokens=15
 ```
 
 When `usage` is `None` (the default mock flow), no `ModelUsage` event is emitted and the
-sequence remains `… ModelOutputChunk (×N) → RunComplete` — byte-identical to the pre-T-3
-behavior. Error paths (`ModelError` / `RunFail`) emit neither `ModelOutputChunk`, `ModelUsage`,
+sequence remains `… ModelOutputChunk (×N) → AssistantMessage → RunComplete`. Error paths
+(`ModelError` / `RunFail`) emit neither `ModelOutputChunk`, `AssistantMessage`, `ModelUsage`,
 nor `RunComplete`.
 
 ### Forward-Compatibility with Stored Events
@@ -904,6 +921,35 @@ This boundary explicitly does not include:
 > are surfaced in the event log for observability during development. No pricing data is
 > computed, no usage is reported to any external service, and no new runtime dependencies
 > are introduced.
+
+## ConversationTranscript Projection
+
+`ConversationTranscript` is a read-only, kernel-only projection that reconstructs the
+User/Assistant conversation from the event log.
+
+### How it works
+
+- **Source events:** Only `UserMessage` and `AssistantMessage` events are used. All other
+  event kinds (`RunCreate`, `ModelOutputChunk`, `RunComplete`, etc.) are ignored.
+- **Ordering:** Events are traversed in ascending `seq` order, preserving the original
+  submission order.
+- **Output shape:** Each entry in the transcript carries a role (`User` or `Assistant`) and
+  the message text extracted from the event `detail` field.
+
+### Read-only contract
+
+`ConversationTranscript` is a pure read projection — it performs **no mutation**:
+
+- It does **not** append, modify, or remove any event from the in-memory `EventLog`.
+- It does **not** write to or truncate `.caravan/events.jsonl`.
+- It does **not** trigger any side effect in the storage layer.
+
+### NOT yet wired into prompt compilation
+
+`ConversationTranscript` is **NOT yet wired into prompt compilation**. The prompt compiler
+(`PromptCompile` event) currently uses only the current user message and a fixed template.
+Feeding the transcript into the compiled prompt as conversation history is explicitly deferred
+to a future task.
 
 ## Event Persistence
 
@@ -952,7 +998,7 @@ The following checks must be confirmed interactively before the POC is considere
 - [ ] Submitting plain text (no leading `/`) shows `User: <text>` and
       `Assistant: Mock response for: <text>` lines in the Main panel, and appends
       the full Run/Turn event sequence (`UserMessage`, `RunCreate`, `RunStart`,
-      `TurnStart`, `PromptCompile`, `ModelRoute`, `ModelOutputChunk` × N, `RunComplete`) to the Event Log.
+      `TurnStart`, `PromptCompile`, `ModelRoute`, `ModelOutputChunk` × N, `AssistantMessage`, `RunComplete`) to the Event Log.
 - [ ] `/help` appends the command list to the Log only; Main panel is unchanged.
 - [ ] `/clear` empties the Log panel; the Event Log retains all previous entries.
 - [ ] An unknown command (e.g. `/foo`) appends an `Unknown command:` line to the Log.
