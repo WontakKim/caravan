@@ -18,27 +18,37 @@ fn input_display_width(input: &str) -> u16 {
 
 /// Returns the Inspector panel text for the given selected event.
 ///
-/// For `None`, returns a placeholder. For `PromptCompile` events, renders the
-/// compiled prompt on its own lines under a `Prompt preview:` label so section
-/// headers (`System:`, `User:`, etc.) are clearly visible. Every other event
-/// kind uses the standard `seq:`/`kind:`/`message:` format.
+/// For `None`, returns a placeholder. For known event kinds
+/// (`PromptCompile`, `AssistantMessage`, `ModelError`, `ModelUsage`,
+/// `ModelOutputChunk`), renders the detail under a readable label.
+/// Every other event kind uses the standard `seq:`/`kind:`/`message:` format.
 fn inspector_text(selected: Option<&AppEvent>) -> String {
     match selected {
         None => "No event selected".to_string(),
-        Some(ev) => match ev.kind {
-            EventKind::PromptCompile => format!(
-                "seq: {}\nkind: {}\nPrompt preview:\n{}",
-                ev.seq,
-                ev.kind.name(),
-                ev.detail
-            ),
-            _ => format!(
-                "seq: {}\nkind: {}\nmessage: {}",
-                ev.seq,
-                ev.kind.name(),
-                ev.detail
-            ),
-        },
+        Some(ev) => {
+            let labeled = |label: &str| {
+                format!(
+                    "seq: {}\nkind: {}\n\n{}:\n{}",
+                    ev.seq,
+                    ev.kind.name(),
+                    label,
+                    ev.detail
+                )
+            };
+            match ev.kind {
+                EventKind::PromptCompile => labeled("Prompt preview"),
+                EventKind::AssistantMessage => labeled("Assistant Message"),
+                EventKind::ModelError => labeled("Error"),
+                EventKind::ModelUsage => labeled("Usage"),
+                EventKind::ModelOutputChunk => labeled("Chunk"),
+                _ => format!(
+                    "seq: {}\nkind: {}\nmessage: {}",
+                    ev.seq,
+                    ev.kind.name(),
+                    ev.detail
+                ),
+            }
+        }
     }
 }
 
@@ -241,5 +251,65 @@ mod tests {
         );
         assert!(result.contains("seq:"), "should include seq:");
         assert!(result.contains("kind:"), "should include kind:");
+    }
+
+    #[test]
+    fn inspector_text_assistant_message_uses_assistant_message_label() {
+        let ev = AppEvent {
+            seq: EventSeq(10),
+            kind: EventKind::AssistantMessage,
+            detail: "Sure, I can help with that.".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Assistant Message:"),
+            "AssistantMessage events should use 'Assistant Message:' label"
+        );
+        assert!(
+            result.contains("Sure, I can help with that."),
+            "result should contain raw detail"
+        );
+    }
+
+    #[test]
+    fn inspector_text_model_error_uses_error_label() {
+        let ev = AppEvent {
+            seq: EventSeq(7),
+            kind: EventKind::ModelError,
+            detail: "Rate limit exceeded.".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Error:"),
+            "ModelError events should use 'Error:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_model_usage_uses_usage_label() {
+        let ev = AppEvent {
+            seq: EventSeq(8),
+            kind: EventKind::ModelUsage,
+            detail: "input=100 output=50".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Usage:"),
+            "ModelUsage events should use 'Usage:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_model_output_chunk_uses_chunk_label() {
+        let ev = AppEvent {
+            seq: EventSeq(9),
+            kind: EventKind::ModelOutputChunk,
+            detail: "Hello, ".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Chunk:"),
+            "ModelOutputChunk events should use 'Chunk:' label"
+        );
     }
 }
