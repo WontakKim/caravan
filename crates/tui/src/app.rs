@@ -2,6 +2,8 @@ use kernel::events::{EventKind, EventLog};
 use kernel::model_gateway::ModelGateway;
 use kernel::storage::EventStore;
 
+const INSPECTOR_SCROLL_STEP: u16 = 3;
+
 pub struct App {
     pub log: Vec<String>,
     pub input: String,
@@ -132,6 +134,7 @@ impl App {
             }
         };
         self.selected_event = Some(new_idx);
+        self.inspector_scroll = 0;
     }
 
     pub fn select_prev(&mut self) {
@@ -149,6 +152,15 @@ impl App {
             }
         };
         self.selected_event = Some(new_idx);
+        self.inspector_scroll = 0;
+    }
+
+    pub fn scroll_inspector_down(&mut self) {
+        self.inspector_scroll = self.inspector_scroll.saturating_add(INSPECTOR_SCROLL_STEP);
+    }
+
+    pub fn scroll_inspector_up(&mut self) {
+        self.inspector_scroll = self.inspector_scroll.saturating_sub(INSPECTOR_SCROLL_STEP);
     }
 
     pub fn help_lines() -> Vec<String> {
@@ -813,6 +825,52 @@ mod tests {
         let store = EventStore::new(dir.path());
         let app = App::with_store(store);
         assert_eq!(app.inspector_scroll, 0);
+    }
+
+    #[test]
+    fn scroll_inspector_down_then_up_changes_scroll_without_side_effects() {
+        let mut app = App::new();
+        let initial_log_len = app.event_log.len();
+        let initial_selected = app.selected_event;
+
+        app.scroll_inspector_down();
+        assert_eq!(app.inspector_scroll, 3);
+        assert_eq!(app.event_log.len(), initial_log_len);
+        assert_eq!(app.selected_event, initial_selected);
+
+        app.scroll_inspector_up();
+        assert_eq!(app.inspector_scroll, 0);
+        assert_eq!(app.event_log.len(), initial_log_len);
+        assert_eq!(app.selected_event, initial_selected);
+    }
+
+    #[test]
+    fn scroll_inspector_up_saturates_at_zero() {
+        let mut app = App::new();
+        app.inspector_scroll = 1; // below INSPECTOR_SCROLL_STEP (3)
+        app.scroll_inspector_up();
+        assert_eq!(app.inspector_scroll, 0);
+    }
+
+    #[test]
+    fn selection_change_resets_inspector_scroll() {
+        let mut app = App::new();
+        app.inspector_scroll = 9;
+        // select_next from None moves to Some(0) — an actual selection change.
+        app.select_next();
+        assert_eq!(app.inspector_scroll, 0);
+    }
+
+    #[test]
+    fn noop_selection_preserves_inspector_scroll() {
+        let mut app = App::new();
+        // Navigate to Some(0) first.
+        app.select_next();
+        app.inspector_scroll = 6;
+        // select_prev from Some(0) is a no-op — scroll must not reset.
+        app.select_prev();
+        assert_eq!(app.inspector_scroll, 6);
+        assert_eq!(app.selected_event, Some(0));
     }
 
     #[test]
