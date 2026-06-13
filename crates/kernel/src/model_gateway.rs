@@ -28,7 +28,7 @@ impl ModelRoute {
 pub struct ModelResponse {
     pub route: ModelRoute,
     pub assistant_response: String,
-    pub tokens: Vec<String>,
+    pub chunks: Vec<String>,
     pub usage: Option<ModelUsage>,
 }
 
@@ -105,7 +105,7 @@ impl ModelGateway {
                     adapter: profile.adapter,
                 },
                 assistant_response: output.response,
-                tokens: output.chunks,
+                chunks: output.chunks,
                 usage: output.usage,
             }),
             Err(e) => Err(e),
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn complete_returns_expected_response_and_tokens() {
+    fn complete_returns_expected_response_and_chunks() {
         let response = ModelGateway::default()
             .complete(ModelRequest {
                 prompt: "any".into(),
@@ -166,7 +166,7 @@ mod tests {
             "Mock response for: hello caravan"
         );
         assert_eq!(
-            response.tokens,
+            response.chunks,
             vec!["Mock", "response", "for:", "hello", "caravan"]
         );
     }
@@ -253,7 +253,7 @@ mod tests {
             "Mock response for: hello caravan"
         );
         assert_eq!(
-            response.tokens,
+            response.chunks,
             vec!["Mock", "response", "for:", "hello", "caravan"]
         );
     }

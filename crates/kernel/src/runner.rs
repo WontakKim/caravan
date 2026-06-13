@@ -34,10 +34,10 @@ pub fn run_mock_turn(
     match gateway.complete(request) {
         Ok(response) => {
             event_log.append(EventKind::ModelRoute, response.route.detail());
-            for word in &response.tokens {
+            for chunk in &response.chunks {
                 event_log.append(
                     EventKind::ModelToken,
-                    format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, word),
+                    format!("run_id={} turn_id={} text=\"{}\"", run_id, turn_id, chunk),
                 );
             }
             if let Some(usage) = response.usage {
@@ -213,7 +213,7 @@ mod tests {
                 user_message: "hello".to_string(),
             })
             .unwrap()
-            .tokens
+            .chunks
             .len();
         assert_eq!(token_events, expected);
     }
