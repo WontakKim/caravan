@@ -42,11 +42,13 @@ cargo test --workspace
 
 ## Available Commands
 
-| Command          | Description                                              |
-|------------------|----------------------------------------------------------|
-| `/help`          | Show the list of available commands                      |
-| `/clear`         | Clear the log panel                                      |
-| `/exit`          | Exit the application                                     |
+| Command              | Description                                              |
+|----------------------|----------------------------------------------------------|
+| `/help`              | Show the list of available commands                      |
+| `/clear`             | Clear the log panel                                      |
+| `/exit`              | Exit the application                                     |
+| `/tool list [path]`  | List files under the workspace root (or a sub-path)      |
+| `/tool read <path>`  | Read a UTF-8 text file under the workspace root          |
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
@@ -1096,6 +1098,77 @@ size regardless of the files being read.
 > causes a tool call, and no TUI panel renders tool results. The `ToolCall`,
 > `ToolResult`, and `ToolError` events are appended to the `EventLog` only when
 > `ToolEventRunner` is exercised directly (e.g. in unit tests).
+
+## Manual Tool Commands
+
+Two read-only slash commands expose the workspace tool harness directly from the
+TUI input bar. Both commands are safe by design — they never write, delete, move,
+or execute files.
+
+### `/tool list [path]`
+
+```
+/tool list [path]
+```
+
+Lists the **immediate children** of a directory inside the workspace. `path` is
+optional; when omitted the listing starts at the workspace root. Results are
+returned in sorted order and are non-recursive (sub-directories appear as entries
+but are not expanded).
+
+**Example:**
+
+```
+/tool list src
+```
+
+### `/tool read <path>`
+
+```
+/tool read <path>
+```
+
+Reads a **UTF-8 text file** inside the workspace and displays its content.
+`path` is required. Files larger than 64 KiB or containing invalid UTF-8 are
+rejected with an error.
+
+**Example:**
+
+```
+/tool read README.md
+```
+
+### Path Resolution and Safety
+
+Both commands resolve `path` relative to the **workspace root**. The following
+path forms are always rejected before any filesystem operation is attempted:
+
+- **Absolute paths** — only workspace-relative paths are accepted.
+- **Parent-directory traversals** (`../`) — any path that would escape the root
+  via `..` components is rejected.
+- **Symlink escapes** — resolved symlinks that point outside the workspace root
+  are rejected.
+
+Rejected paths return an error to the command bar; no filesystem operation is
+performed.
+
+### Events Emitted
+
+Each `/tool` command appends three event kinds to the Event Log, in order:
+
+| Event | When recorded |
+|-------|--------------|
+| `ToolCall` | Immediately before the tool executes; carries the tool name and input arguments |
+| `ToolResult` | After a successful execution; carries a **summary only** — the entry count for `/tool list` or the byte count for `/tool read`, never the full file content |
+| `ToolError` | After a failed execution (path rejected, file not found, size exceeded, etc.); carries the tool name and error detail |
+
+`ToolResult` is deliberately summary-only: it records the number of directory
+entries returned by `/tool list` or the number of bytes read by `/tool read`.
+Full file content is never written to the event log, so event-log detail strings
+remain bounded in size regardless of the file being read.
+
+> **No write, shell, delete, or network tools exist in this stage.** Only the
+> two read-only tools (`/tool list` and `/tool read`) are available.
 
 ## Manual Verification
 
