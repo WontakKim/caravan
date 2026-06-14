@@ -5,11 +5,18 @@ pub enum ToolCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ContextCommand {
+    AttachLastTool,
+    Clear,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
     Clear,
     Exit,
     Tool(ToolCommand),
+    Context(ContextCommand),
     Unknown(String),
 }
 
@@ -30,6 +37,8 @@ pub fn parse_input(input: &str) -> ParsedInput {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
             "/exit" => Command::Exit,
+            "/context attach-last-tool" => Command::Context(ContextCommand::AttachLastTool),
+            "/context clear" => Command::Context(ContextCommand::Clear),
             t if t.starts_with("/tool ") => {
                 let after_tool = t["/tool ".len()..].trim();
                 let (subcommand, path) = match after_tool.split_once(char::is_whitespace) {
@@ -245,6 +254,40 @@ mod tests {
     fn regression_ask_hello_is_unknown() {
         assert!(matches!(
             parse_input("/ask hello"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    // --- /context command parsing tests ---
+
+    #[test]
+    fn context_attach_last_tool_parses_correctly() {
+        assert_eq!(
+            parse_input("/context attach-last-tool"),
+            ParsedInput::SlashCommand(Command::Context(ContextCommand::AttachLastTool))
+        );
+    }
+
+    #[test]
+    fn context_clear_parses_correctly() {
+        assert_eq!(
+            parse_input("/context clear"),
+            ParsedInput::SlashCommand(Command::Context(ContextCommand::Clear))
+        );
+    }
+
+    #[test]
+    fn context_unknown_subcommand_is_unknown() {
+        assert!(matches!(
+            parse_input("/context unknown"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn context_bare_is_unknown() {
+        assert!(matches!(
+            parse_input("/context"),
             ParsedInput::SlashCommand(Command::Unknown(_))
         ));
     }

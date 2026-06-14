@@ -1,12 +1,15 @@
 use std::path::PathBuf;
 
 use kernel::events::{EventKind, EventLog};
+use kernel::manual_context::ManualToolContext;
 use kernel::model_gateway::ModelGateway;
 use kernel::storage::EventStore;
 
 const INSPECTOR_SCROLL_STEP: u16 = 3;
 const TOOL_LIST_PREVIEW_ENTRIES: usize = 50;
 const TOOL_READ_PREVIEW_BYTES: usize = 4 * 1024;
+const NO_TOOL_OUTPUT_NOTICE: &str =
+    "No recent tool output to attach. Run /tool read or /tool list first.";
 
 pub struct App {
     pub log: Vec<String>,
@@ -17,6 +20,8 @@ pub struct App {
     pub model_gateway: ModelGateway,
     pub inspector_scroll: u16,
     pub workspace_root: PathBuf,
+    pub last_tool_output_candidate: Option<ManualToolContext>,
+    pub pending_manual_tool_context: Option<ManualToolContext>,
 }
 
 impl App {
@@ -32,6 +37,8 @@ impl App {
             model_gateway: ModelGateway::default(),
             inspector_scroll: 0,
             workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            last_tool_output_candidate: None,
+            pending_manual_tool_context: None,
         }
     }
 
@@ -69,6 +76,8 @@ impl App {
             model_gateway: gateway,
             inspector_scroll: 0,
             workspace_root,
+            last_tool_output_candidate: None,
+            pending_manual_tool_context: None,
         }
     }
 
@@ -89,7 +98,7 @@ impl App {
     }
 
     pub fn submit(&mut self) {
-        use kernel::commands::{Command, ParsedInput, ToolCommand, parse_input};
+        use kernel::commands::{Command, ContextCommand, ParsedInput, ToolCommand, parse_input};
 
         let raw = self.input.clone();
         match parse_input(&raw) {
@@ -135,9 +144,15 @@ impl App {
                             request,
                         ) {
                             Ok(ToolOutput::FileList { entries, .. }) => {
+                                self.last_tool_output_candidate = Some(
+                                    ManualToolContext::from_list_files(&display_path, &entries),
+                                );
                                 self.push_tool_list_output(&display_path, entries);
                             }
                             Ok(ToolOutput::FileContent { content, .. }) => {
+                                self.last_tool_output_candidate = Some(
+                                    ManualToolContext::from_read_file(&display_path, &content),
+                                );
                                 self.push_tool_read_output(&display_path, &content);
                             }
                             Err(error) => {
@@ -145,6 +160,25 @@ impl App {
                             }
                         }
                     }
+                    Command::Context(cc) => match cc {
+                        ContextCommand::AttachLastTool => {
+                            if let Some(candidate) = self.last_tool_output_candidate.clone() {
+                                let summary = candidate.attach_summary();
+                                self.pending_manual_tool_context = Some(candidate);
+                                self.event_log
+                                    .append(EventKind::ToolContextAttach, &summary);
+                                self.log.push(format!("Tool context attached: {summary}"));
+                            } else {
+                                self.log.push(NO_TOOL_OUTPUT_NOTICE.to_string());
+                            }
+                        }
+                        ContextCommand::Clear => {
+                            self.pending_manual_tool_context = None;
+                            self.event_log
+                                .append(EventKind::ToolContextClear, "Tool context cleared");
+                            self.log.push("Tool context cleared.".to_string());
+                        }
+                    },
                     Command::Unknown(c) => {
                         self.event_log
                             .append(EventKind::UnknownSlashCommand, c.clone());
@@ -154,11 +188,12 @@ impl App {
             }
             ParsedInput::UserMessage(message) => {
                 self.event_log.append(EventKind::UserMessage, &message);
+                let pending_context = self.pending_manual_tool_context.take();
                 let output = kernel::runner::run_mock_turn(
                     &mut self.event_log,
                     &message,
                     &self.model_gateway,
-                    None,
+                    pending_context.as_ref(),
                 );
                 self.log.push(format!("User: {}", output.user_message));
                 if !output.assistant_response.is_empty() {
@@ -225,6 +260,8 @@ impl App {
             "  /exit  - exit Caravan".to_string(),
             "  /tool list [path] - list files under the workspace".to_string(),
             "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
+            "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
+            "  /context clear - clear pending manual tool context".to_string(),
         ]
     }
 
@@ -573,6 +610,8 @@ mod tests {
             "  /exit  - exit Caravan".to_string(),
             "  /tool list [path] - list files under the workspace".to_string(),
             "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
+            "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
+            "  /context clear - clear pending manual tool context".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
@@ -1249,6 +1288,451 @@ mod tests {
         assert_eq!(
             model_route.detail,
             "provider=mock model=mock-model adapter=MockModelAdapter"
+        );
+    }
+
+    // --- /context command tests ---
+
+    #[test]
+    fn tool_read_success_stores_last_tool_output_candidate() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        std::fs::write(workspace_dir.path().join("file.txt"), "hello world").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        assert!(app.last_tool_output_candidate.is_none());
+        app.input = "/tool read file.txt".to_string();
+        app.submit();
+
+        assert!(
+            app.last_tool_output_candidate.is_some(),
+            "last_tool_output_candidate should be set after /tool read success"
+        );
+    }
+
+    #[test]
+    fn tool_list_success_stores_last_tool_output_candidate() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        std::fs::write(workspace_dir.path().join("alpha.txt"), "a").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        assert!(app.last_tool_output_candidate.is_none());
+        app.input = "/tool list .".to_string();
+        app.submit();
+
+        assert!(
+            app.last_tool_output_candidate.is_some(),
+            "last_tool_output_candidate should be set after /tool list success"
+        );
+    }
+
+    #[test]
+    fn tool_read_failure_does_not_update_candidate() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Try to read a file that does not exist — this is an error path.
+        app.input = "/tool read nonexistent.txt".to_string();
+        app.submit();
+
+        assert!(
+            app.last_tool_output_candidate.is_none(),
+            "last_tool_output_candidate must remain None after a failed /tool"
+        );
+    }
+
+    #[test]
+    fn context_attach_with_candidate_appends_tool_context_attach_and_no_run() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("data.txt"), "some content").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Populate the candidate by reading a file.
+        app.input = "/tool read data.txt".to_string();
+        app.submit();
+
+        let event_len_before = app.event_log.len();
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == EventKind::ToolContextAttach),
+            "ToolContextAttach event should be present"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "/context attach-last-tool must not start a model run"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunComplete),
+            "/context attach-last-tool must not complete a model run"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::AssistantMessage),
+            "/context attach-last-tool must not produce AssistantMessage"
+        );
+        // SlashCommand + ToolContextAttach = 2 events appended.
+        assert_eq!(app.event_log.len(), event_len_before + 2);
+        assert!(app.pending_manual_tool_context.is_some());
+    }
+
+    #[test]
+    fn context_attach_without_candidate_appends_no_tool_context_attach_and_no_run() {
+        let mut app = App::new();
+        assert!(app.last_tool_output_candidate.is_none());
+
+        let event_len_before = app.event_log.len();
+        app.input = "/context attach-last-tool".to_string();
+        app.submit(); // must not panic
+
+        let events = app.event_log.events();
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.kind == EventKind::ToolContextAttach),
+            "no ToolContextAttach should be emitted when there is no candidate"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "/context attach-last-tool with no candidate must not start a run"
+        );
+        // SlashCommand only (no ToolContextAttach).
+        assert_eq!(app.event_log.len(), event_len_before + 1);
+        assert!(app.pending_manual_tool_context.is_none());
+    }
+
+    #[test]
+    fn context_clear_appends_tool_context_clear_and_no_run() {
+        let mut app = App::new();
+
+        let event_len_before = app.event_log.len();
+        app.input = "/context clear".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            events.iter().any(|e| e.kind == EventKind::ToolContextClear),
+            "ToolContextClear event should be present"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "/context clear must not start a model run"
+        );
+        // SlashCommand + ToolContextClear = 2 events.
+        assert_eq!(app.event_log.len(), event_len_before + 2);
+        assert!(app.pending_manual_tool_context.is_none());
+    }
+
+    #[test]
+    fn context_clear_when_nothing_pending_does_not_panic() {
+        let mut app = App::new();
+        assert!(app.pending_manual_tool_context.is_none());
+        app.input = "/context clear".to_string();
+        app.submit(); // must not panic
+        assert!(app.pending_manual_tool_context.is_none());
+    }
+
+    #[test]
+    fn after_attach_user_message_prompt_compile_contains_manual_tool_context() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let file_content = "bounded file body";
+        std::fs::write(workspace_dir.path().join("notes.txt"), file_content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read notes.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        // The pending context should be set.
+        assert!(app.pending_manual_tool_context.is_some());
+
+        app.input = "tell me about the file".to_string();
+        app.submit();
+
+        // After the user message, the context should be cleared (one-shot).
+        assert!(app.pending_manual_tool_context.is_none());
+
+        let events = app.event_log.events();
+        let pc = events
+            .iter()
+            .filter(|e| e.kind == EventKind::PromptCompile)
+            .next()
+            .expect("PromptCompile event should exist");
+
+        // The bounded content must appear in the Context section (after "Context:").
+        assert!(
+            pc.detail.contains("Manual Tool Context:"),
+            "PromptCompile must contain Manual Tool Context: section"
+        );
+        assert!(
+            pc.detail.contains(file_content),
+            "PromptCompile must contain bounded file content"
+        );
+
+        // The bounded content must NOT appear in the Conversation section.
+        let conversation_section = pc
+            .detail
+            .split("\n\nCurrent User:")
+            .next()
+            .expect("Conversation section must exist");
+        assert!(
+            !conversation_section.contains(file_content),
+            "bounded content must not appear in the Conversation section"
+        );
+    }
+
+    #[test]
+    fn after_attach_second_user_message_does_not_reuse_context() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let file_content = "unique attached content xyz";
+        std::fs::write(workspace_dir.path().join("unique.txt"), file_content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read unique.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        // First user message consumes the context.
+        app.input = "first message".to_string();
+        app.submit();
+
+        // Second user message must NOT have the context.
+        app.input = "second message".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        let second_pc = events
+            .iter()
+            .filter(|e| e.kind == EventKind::PromptCompile)
+            .nth(1)
+            .expect("second PromptCompile event should exist");
+
+        assert!(
+            !second_pc.detail.contains("Manual Tool Context:"),
+            "second PromptCompile must NOT contain Manual Tool Context"
+        );
+        assert!(
+            !second_pc.detail.contains(file_content),
+            "second PromptCompile must NOT contain bounded content (one-shot consumed)"
+        );
+    }
+
+    #[test]
+    fn one_shot_auto_clear_emits_no_tool_context_clear_event() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("sample.txt"), "data").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read sample.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        // Verify ToolContextClear is NOT in the log yet.
+        assert!(
+            !app.event_log
+                .events()
+                .iter()
+                .any(|e| e.kind == EventKind::ToolContextClear),
+            "no ToolContextClear before user message"
+        );
+
+        // Consuming user message — triggers one-shot clear internally.
+        app.input = "consume the context".to_string();
+        app.submit();
+
+        // ToolContextClear must still NOT appear (auto-clear emits no event).
+        assert!(
+            !app.event_log
+                .events()
+                .iter()
+                .any(|e| e.kind == EventKind::ToolContextClear),
+            "one-shot auto-clear must NOT emit ToolContextClear event"
+        );
+    }
+
+    #[test]
+    fn attached_content_does_not_appear_in_assistant_message_or_transcript() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let file_content = "super_secret_content_xyz_12345";
+        std::fs::write(workspace_dir.path().join("secret.txt"), file_content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read secret.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        app.input = "what is in the file".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+
+        // AssistantMessage detail must not contain the raw file content.
+        for ev in events
+            .iter()
+            .filter(|e| e.kind == EventKind::AssistantMessage)
+        {
+            assert!(
+                !ev.detail.contains(file_content),
+                "AssistantMessage must not contain raw file content: {}",
+                ev.detail
+            );
+        }
+
+        // ConversationTranscript projection must not contain the raw file content.
+        let transcript = kernel::transcript::ConversationTranscript::from_event_log(&app.event_log);
+        for msg in &transcript.messages {
+            assert!(
+                !msg.content.contains(file_content),
+                "ConversationTranscript must not contain raw file content: {}",
+                msg.content
+            );
+        }
+    }
+
+    #[test]
+    fn tool_context_attach_event_detail_does_not_contain_full_file_content() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let file_content = "very_unique_raw_content_do_not_expose_9999";
+        std::fs::write(workspace_dir.path().join("expose.txt"), file_content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read expose.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        let attach_ev = events
+            .iter()
+            .find(|e| e.kind == EventKind::ToolContextAttach)
+            .expect("ToolContextAttach event should exist");
+
+        assert!(
+            !attach_ev.detail.contains(file_content),
+            "ToolContextAttach detail must not contain raw file content: {}",
+            attach_ev.detail
+        );
+        assert!(
+            attach_ev.detail.contains("bytes="),
+            "ToolContextAttach detail should contain bytes="
+        );
+    }
+
+    #[test]
+    fn hello_caravan_mock_flow_yields_expected_response_and_model_route() {
+        let mut app = App::new();
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        assert!(
+            app.log
+                .contains(&"Assistant: Mock response for: hello caravan".to_string()),
+            "log should contain expected mock response"
+        );
+
+        let events = app.event_log.events();
+        let model_route = events
+            .iter()
+            .find(|e| e.kind == EventKind::ModelRoute)
+            .expect("ModelRoute event should exist");
+        assert_eq!(
+            model_route.detail,
+            "provider=mock model=mock-model adapter=MockModelAdapter"
+        );
+    }
+
+    #[test]
+    fn context_unknown_produces_unknown_slash_command() {
+        let mut app = App::new();
+        app.input = "/context unknown".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.kind == EventKind::UnknownSlashCommand),
+            "/context unknown must produce UnknownSlashCommand event"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "/context unknown must not start a run"
         );
     }
 
