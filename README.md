@@ -47,8 +47,10 @@ cargo test --workspace
 | `/help`              | Show the list of available commands                      |
 | `/clear`             | Clear the log panel                                      |
 | `/exit`              | Exit the application                                     |
-| `/tool list [path]`  | List files under the workspace root (or a sub-path)      |
-| `/tool read <path>`  | Read a UTF-8 text file under the workspace root          |
+| `/tool list [path]`           | List files under the workspace root (or a sub-path)                      |
+| `/tool read <path>`           | Read a UTF-8 text file under the workspace root                          |
+| `/context attach-last-tool`   | Attach the latest read-only tool output to the next prompt (one-shot)    |
+| `/context clear`              | Clear pending manual tool context                                         |
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
@@ -123,6 +125,8 @@ not persisted to `.caravan/events.jsonl`.
 | `RunComplete`                | When the Run finishes successfully                       |
 | `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelOutputChunk` or `RunComplete` is appended |
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
+| `ToolContextAttach`          | When `/context attach-last-tool` is processed; the latest tool output is staged as pending context for the next prompt |
+| `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
 
 ## Mock Run/Turn Flow
 
@@ -1171,6 +1175,34 @@ remain bounded in size regardless of the file being read.
 
 > **No write, shell, delete, or network tools exist in this stage.** Only the
 > two read-only tools (`/tool list` and `/tool read`) are available.
+
+## Manual Tool Context
+
+Manual tool context lets you attach the output of a read-only tool call to the
+next prompt you send to the model. The attach is **one-shot**: the context is
+automatically cleared after the run completes, so it never leaks into subsequent
+turns.
+
+### One-shot attach flow
+
+1. Run `/tool read <path>` or `/tool list [path]` to execute a read-only tool.
+2. Run `/context attach-last-tool` to stage the output as pending context.
+   A `ToolContextAttach` event is appended to the Event Log.
+3. Submit your next plain-text message. The pending tool output is injected into
+   the `Context:` section of the compiled prompt for that turn.
+4. After the run completes, the pending context is automatically cleared — it is
+   not carried forward into future turns.
+
+To discard staged context before it is used, run `/context clear`. A
+`ToolContextClear` event is appended and the pending context is removed.
+
+### Sensitive-data warning
+
+> **Warning:** `/context attach-last-tool` includes the content of the
+> user-chosen file directly in the prompt sent to the model. Do **not** read and
+> attach sensitive files — such as private keys, credentials, `.env` files, or
+> any file containing secrets — as their content will be forwarded to the model
+> layer verbatim. Review the file content in the Inspector panel before attaching.
 
 ## Manual Verification
 
