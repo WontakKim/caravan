@@ -40,7 +40,10 @@ impl ToolEventRunner {
 
         match self.registry.execute(context, request) {
             Ok(output) => {
-                event_log.append(EventKind::ToolResult, format_tool_result_detail(&output));
+                event_log.append(
+                    EventKind::ToolResult,
+                    format_tool_result_detail(tool_name, &tool_path, &output),
+                );
                 Ok(output)
             }
             Err(error) => {
@@ -58,13 +61,18 @@ fn format_tool_call_detail(tool_name: &str, path: &str) -> String {
     format!("tool={} path={:?} risk=read_only", tool_name, path)
 }
 
-fn format_tool_result_detail(output: &ToolOutput) -> String {
+fn format_tool_result_detail(tool_name: &str, path: &str, output: &ToolOutput) -> String {
     match output {
-        ToolOutput::FileList { path, entries } => {
-            format!("tool=list_files path={:?} entries={}", path, entries.len())
+        ToolOutput::FileList { entries, .. } => {
+            format!(
+                "tool={} path={:?} entries={}",
+                tool_name,
+                path,
+                entries.len()
+            )
         }
-        ToolOutput::FileContent { path, content } => {
-            format!("tool=read_file path={:?} bytes={}", path, content.len())
+        ToolOutput::FileContent { content, .. } => {
+            format!("tool={} path={:?} bytes={}", tool_name, path, content.len())
         }
     }
 }
@@ -184,7 +192,7 @@ mod tests {
             path: ".".to_string(),
             entries: vec!["a".to_string(), "b".to_string()],
         };
-        let detail = format_tool_result_detail(&output);
+        let detail = format_tool_result_detail("list_files", ".", &output);
         assert_eq!(detail, r#"tool=list_files path="." entries=2"#);
     }
 
@@ -194,7 +202,7 @@ mod tests {
             path: "readme.md".to_string(),
             content: "hello".to_string(),
         };
-        let detail = format_tool_result_detail(&output);
+        let detail = format_tool_result_detail("read_file", "readme.md", &output);
         assert_eq!(detail, r#"tool=read_file path="readme.md" bytes=5"#);
     }
 
