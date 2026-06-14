@@ -41,6 +41,9 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ModelError => labeled("Error"),
                 EventKind::ModelUsage => labeled("Usage"),
                 EventKind::ModelOutputChunk => labeled("Chunk"),
+                EventKind::ToolCall => labeled("Tool Call"),
+                EventKind::ToolResult => labeled("Tool Result"),
+                EventKind::ToolError => labeled("Tool Error"),
                 _ => format!(
                     "seq: {}\nkind: {}\nmessage: {}",
                     ev.seq,
@@ -312,6 +315,66 @@ mod tests {
         assert!(
             result.contains("Chunk:"),
             "ModelOutputChunk events should use 'Chunk:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_tool_call_uses_tool_call_label() {
+        let ev = AppEvent {
+            seq: EventSeq(11),
+            kind: EventKind::ToolCall,
+            detail: "tool=read_file path=\"secret.txt\"".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Tool Call:"),
+            "ToolCall events should use 'Tool Call:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_tool_result_uses_tool_result_label() {
+        let ev = AppEvent {
+            seq: EventSeq(12),
+            kind: EventKind::ToolResult,
+            detail: "tool=read_file entries=3 bytes=512".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Tool Result:"),
+            "ToolResult events should use 'Tool Result:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_tool_error_uses_tool_error_label() {
+        let ev = AppEvent {
+            seq: EventSeq(13),
+            kind: EventKind::ToolError,
+            detail: "tool=read_file error=permission denied".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Tool Error:"),
+            "ToolError events should use 'Tool Error:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_tool_result_does_not_expose_full_file_content() {
+        let ev = AppEvent {
+            seq: EventSeq(14),
+            kind: EventKind::ToolResult,
+            detail: "tool=read_file path=\"secret.txt\" bytes=1234".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("bytes=1234"),
+            "rendered output should contain the summary substring from ev.detail"
+        );
+        assert!(
+            !result.contains("TOP SECRET FILE BODY"),
+            "rendered output must not contain full file content sentinel"
         );
     }
 }
