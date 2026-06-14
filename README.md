@@ -51,6 +51,17 @@ cargo test --workspace
 | `/tool read <path>`           | Read a UTF-8 text file under the workspace root                          |
 | `/context attach-last-tool`   | Attach the latest read-only tool output to the next prompt (one-shot)    |
 | `/context clear`              | Clear pending manual tool context                                         |
+| `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
+
+### Header Context Indicator
+
+The TUI header includes a context indicator segment: it shows `| Context: pending`
+when manual tool context has been staged and will be attached to the next prompt,
+and `| Context: none` when no manual context is staged. Note that merely having a
+last tool-output candidate available (i.e. a `/tool read` result that has not yet
+been explicitly attached via `/context attach-last-tool`) does **not** set the
+indicator to `pending`; only context that has actually been attached and is waiting
+to be sent causes the header to display `| Context: pending`.
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
