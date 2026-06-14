@@ -8,6 +8,7 @@ pub enum ToolCommand {
 pub enum ContextCommand {
     AttachLastTool,
     Clear,
+    Status,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +40,7 @@ pub fn parse_input(input: &str) -> ParsedInput {
             "/exit" => Command::Exit,
             "/context attach-last-tool" => Command::Context(ContextCommand::AttachLastTool),
             "/context clear" => Command::Context(ContextCommand::Clear),
+            "/context status" => Command::Context(ContextCommand::Status),
             t if t.starts_with("/tool ") => {
                 let after_tool = t["/tool ".len()..].trim();
                 let (subcommand, path) = match after_tool.split_once(char::is_whitespace) {
@@ -273,6 +275,14 @@ mod tests {
         assert_eq!(
             parse_input("/context clear"),
             ParsedInput::SlashCommand(Command::Context(ContextCommand::Clear))
+        );
+    }
+
+    #[test]
+    fn context_status_parses_correctly() {
+        assert_eq!(
+            parse_input("/context status"),
+            ParsedInput::SlashCommand(Command::Context(ContextCommand::Status))
         );
     }
 

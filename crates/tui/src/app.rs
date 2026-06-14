@@ -178,6 +178,22 @@ impl App {
                                 .append(EventKind::ToolContextClear, "Tool context cleared");
                             self.log.push("Tool context cleared.".to_string());
                         }
+                        ContextCommand::Status => {
+                            let pending_summary = self
+                                .pending_manual_tool_context
+                                .as_ref()
+                                .map(|ctx| ctx.attach_summary())
+                                .unwrap_or_else(|| "none".to_string());
+                            let candidate_summary = self
+                                .last_tool_output_candidate
+                                .as_ref()
+                                .map(|ctx| ctx.attach_summary())
+                                .unwrap_or_else(|| "none".to_string());
+                            self.log.push("Context status:".to_string());
+                            self.log.push(format!("- pending: {}", pending_summary));
+                            self.log
+                                .push(format!("- last tool output: {}", candidate_summary));
+                        }
                     },
                     Command::Unknown(c) => {
                         self.event_log
@@ -1734,6 +1750,291 @@ mod tests {
             !events.iter().any(|e| e.kind == EventKind::RunCreate),
             "/context unknown must not start a run"
         );
+    }
+
+    // --- /context status tests ---
+
+    #[test]
+    fn context_status_appends_only_slash_command_and_no_run() {
+        let mut app = App::new();
+        let before = app.event_log.len();
+        app.input = "/context status".to_string();
+        app.submit();
+
+        assert_eq!(
+            app.event_log.len(),
+            before + 1,
+            "only one SlashCommand event should be appended"
+        );
+
+        let events = app.event_log.events();
+        let last = &events[events.len() - 1];
+        assert_eq!(last.kind, EventKind::SlashCommand);
+
+        assert!(!events.iter().any(|e| e.kind == EventKind::RunCreate));
+        assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete));
+        assert!(!events.iter().any(|e| e.kind == EventKind::AssistantMessage));
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.kind == EventKind::ToolContextAttach)
+        );
+        assert!(!events.iter().any(|e| e.kind == EventKind::ToolContextClear));
+    }
+
+    #[test]
+    fn context_status_no_context_shows_none() {
+        let mut app = App::new();
+        app.input = "/context status".to_string();
+        app.submit();
+
+        assert!(
+            app.log.contains(&"- pending: none".to_string()),
+            "log should contain '- pending: none'"
+        );
+        assert!(
+            app.log.contains(&"- last tool output: none".to_string()),
+            "log should contain '- last tool output: none'"
+        );
+    }
+
+    #[test]
+    fn context_status_candidate_only_shows_pending_none() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("file.txt"), "some content").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Populate last_tool_output_candidate but do NOT attach.
+        app.input = "/tool read file.txt".to_string();
+        app.submit();
+
+        app.input = "/context status".to_string();
+        app.submit();
+
+        assert!(
+            app.log.contains(&"- pending: none".to_string()),
+            "pending should be none when nothing is attached"
+        );
+        assert!(
+            app.log
+                .iter()
+                .any(|l| l.starts_with("- last tool output: source=")),
+            "last tool output line should start with 'source='"
+        );
+    }
+
+    #[test]
+    fn context_status_pending_shows_pending_summary() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("data.txt"), "hello world").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read data.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        app.input = "/context status".to_string();
+        app.submit();
+
+        assert!(
+            app.log.iter().any(|l| l.starts_with("- pending: source=")),
+            "pending line should start with 'source=' after attach"
+        );
+    }
+
+    #[test]
+    fn context_status_pending_and_candidate_both_present() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        // fileA and fileB have distinct paths and contents so their summaries differ.
+        std::fs::write(workspace_dir.path().join("fileA.txt"), "content of file A").unwrap();
+        std::fs::write(
+            workspace_dir.path().join("fileB.txt"),
+            "content of file B different",
+        )
+        .unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Read fileA and attach it (pending = fileA's summary).
+        app.input = "/tool read fileA.txt".to_string();
+        app.submit();
+        let file_a_summary = app
+            .last_tool_output_candidate
+            .as_ref()
+            .unwrap()
+            .attach_summary();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        // Read fileB (last candidate = fileB's summary, pending still fileA).
+        app.input = "/tool read fileB.txt".to_string();
+        app.submit();
+        let file_b_summary = app
+            .last_tool_output_candidate
+            .as_ref()
+            .unwrap()
+            .attach_summary();
+
+        assert_ne!(
+            file_a_summary, file_b_summary,
+            "fileA and fileB summaries must differ for this test to be meaningful"
+        );
+
+        app.input = "/context status".to_string();
+        app.submit();
+
+        // Find the "Context status:" line in the log.
+        let status_pos = app
+            .log
+            .iter()
+            .rposition(|l| l == "Context status:")
+            .expect("'Context status:' line must be present");
+
+        assert_eq!(app.log[status_pos], "Context status:");
+        assert_eq!(
+            app.log[status_pos + 1],
+            format!("- pending: {}", file_a_summary),
+            "pending line must contain fileA summary"
+        );
+        assert_eq!(
+            app.log[status_pos + 2],
+            format!("- last tool output: {}", file_b_summary),
+            "last tool output line must contain fileB summary"
+        );
+    }
+
+    #[test]
+    fn context_status_does_not_mutate_context_state() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("note.txt"), "important data").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Stage both pending and candidate.
+        app.input = "/tool read note.txt".to_string();
+        app.submit();
+
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+
+        assert!(app.pending_manual_tool_context.is_some());
+        assert!(app.last_tool_output_candidate.is_some());
+
+        let pending_summary_before = app
+            .pending_manual_tool_context
+            .as_ref()
+            .unwrap()
+            .attach_summary();
+        let candidate_summary_before = app
+            .last_tool_output_candidate
+            .as_ref()
+            .unwrap()
+            .attach_summary();
+
+        // Run /context status — must not mutate either field.
+        app.input = "/context status".to_string();
+        app.submit();
+
+        assert!(
+            app.pending_manual_tool_context.is_some(),
+            "pending_manual_tool_context must remain Some after /context status"
+        );
+        assert!(
+            app.last_tool_output_candidate.is_some(),
+            "last_tool_output_candidate must remain Some after /context status"
+        );
+        assert_eq!(
+            app.pending_manual_tool_context
+                .as_ref()
+                .unwrap()
+                .attach_summary(),
+            pending_summary_before,
+            "pending context must be unchanged"
+        );
+        assert_eq!(
+            app.last_tool_output_candidate
+                .as_ref()
+                .unwrap()
+                .attach_summary(),
+            candidate_summary_before,
+            "last tool output candidate must be unchanged"
+        );
+
+        // A subsequent user message should still consume the pending context.
+        app.input = "use the context".to_string();
+        app.submit();
+
+        assert!(
+            app.pending_manual_tool_context.is_none(),
+            "pending context must be consumed (None) after the user message"
+        );
+    }
+
+    #[test]
+    fn context_status_output_excludes_raw_content() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let raw_content = "raw_secret_xyz_do_not_expose_in_status_98765";
+        std::fs::write(workspace_dir.path().join("secret.txt"), raw_content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool read secret.txt".to_string();
+        app.submit();
+
+        app.input = "/context status".to_string();
+        app.submit();
+
+        // Find the three status lines in the log.
+        let status_pos = app
+            .log
+            .iter()
+            .rposition(|l| l == "Context status:")
+            .expect("'Context status:' line must be present");
+
+        for i in 0..3 {
+            assert!(
+                !app.log[status_pos + i].contains(raw_content),
+                "status line {} must not contain raw file content: {}",
+                i,
+                app.log[status_pos + i]
+            );
+        }
     }
 
     #[test]
