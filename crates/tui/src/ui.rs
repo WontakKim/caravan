@@ -44,6 +44,8 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ToolCall => labeled("Tool Call"),
                 EventKind::ToolResult => labeled("Tool Result"),
                 EventKind::ToolError => labeled("Tool Error"),
+                EventKind::ToolContextAttach => labeled("Tool Context Attach"),
+                EventKind::ToolContextClear => labeled("Tool Context Clear"),
                 _ => format!(
                     "seq: {}\nkind: {}\nmessage: {}",
                     ev.seq,
@@ -188,8 +190,8 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
 mod tests {
     use kernel::events::{AppEvent, EventKind, EventSeq};
 
-    use crate::app::App;
     use super::{header_text, input_display_width, inspector_text, log_skip};
+    use crate::app::App;
 
     #[test]
     fn ascii_width_equals_char_count() {
@@ -378,6 +380,42 @@ mod tests {
     }
 
     #[test]
+    fn inspector_text_tool_context_attach_uses_label() {
+        let ev = AppEvent {
+            seq: EventSeq(15),
+            kind: EventKind::ToolContextAttach,
+            detail: "source=tool=read_file path=\"README.md\" bytes=42 truncated=false".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Tool Context Attach:"),
+            "ToolContextAttach events should use 'Tool Context Attach:' label"
+        );
+        assert!(
+            result.contains("source="),
+            "result should contain the attach summary"
+        );
+        assert!(
+            !result.contains("raw file body"),
+            "result must not expose raw file body content"
+        );
+    }
+
+    #[test]
+    fn inspector_text_tool_context_clear_uses_label() {
+        let ev = AppEvent {
+            seq: EventSeq(16),
+            kind: EventKind::ToolContextClear,
+            detail: "Tool context cleared".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Tool Context Clear:"),
+            "ToolContextClear events should use 'Tool Context Clear:' label"
+        );
+    }
+
+    #[test]
     fn inspector_text_tool_result_does_not_expose_full_file_content() {
         let ev = AppEvent {
             seq: EventSeq(14),
@@ -407,8 +445,9 @@ mod tests {
     #[test]
     fn header_text_with_pending_shows_pending() {
         let mut app = App::new();
-        app.pending_manual_tool_context =
-            Some(kernel::manual_context::ManualToolContext::from_read_file("f.txt", "x"));
+        app.pending_manual_tool_context = Some(
+            kernel::manual_context::ManualToolContext::from_read_file("f.txt", "x"),
+        );
         assert_eq!(
             header_text(&app),
             "Caravan | TUI Shell | Status: Ready | Context: pending"
@@ -418,8 +457,9 @@ mod tests {
     #[test]
     fn header_text_last_candidate_only_stays_none() {
         let mut app = App::new();
-        app.last_tool_output_candidate =
-            Some(kernel::manual_context::ManualToolContext::from_read_file("f.txt", "x"));
+        app.last_tool_output_candidate = Some(
+            kernel::manual_context::ManualToolContext::from_read_file("f.txt", "x"),
+        );
         // pending_manual_tool_context is still None, so header must show "none"
         let result = header_text(&app);
         assert_eq!(
