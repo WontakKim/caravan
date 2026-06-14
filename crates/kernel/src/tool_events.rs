@@ -100,6 +100,7 @@ mod tests {
 
     use super::*;
     use crate::events::{EventKind, EventLog};
+    use crate::storage::EventStore;
     use crate::tools::ToolExecutionContext;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -241,5 +242,272 @@ mod tests {
             detail,
             r#"tool=read_file path="file.txt" error=io message="permission denied""#
         );
+    }
+
+    // --- Success-ordering tests (Step 1) ---
+
+    #[test]
+    fn read_file_success_appends_tool_call_and_result() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("hello.txt"), "hello, world!").expect("write file");
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        let result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "hello.txt".to_string(),
+            },
+        );
+
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolResult);
+    }
+
+    // --- Failure-ordering tests (Step 2) ---
+
+    #[test]
+    fn list_files_on_file_appends_tool_call_and_error() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("a_file.txt"), "content").expect("write file");
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        let result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ListFiles {
+                path: "a_file.txt".to_string(),
+            },
+        );
+
+        assert!(
+            matches!(result, Err(ToolError::NotADirectory { .. })),
+            "expected NotADirectory, got {:?}",
+            result
+        );
+        assert_eq!(log.len(), 2);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolError);
+    }
+
+    // --- Detail-content tests (Step 3) ---
+
+    #[test]
+    fn list_files_result_detail_contains_entries() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        runner
+            .run(
+                &mut log,
+                &ctx,
+                ToolRequest::ListFiles {
+                    path: ".".to_string(),
+                },
+            )
+            .ok();
+
+        let detail = &log.get(1).unwrap().detail;
+        assert!(
+            detail.contains("entries="),
+            "expected entries= in detail: {detail}"
+        );
+    }
+
+    #[test]
+    fn read_file_result_detail_contains_bytes_not_content() {
+        let dir = TempDir::new();
+        let secret = "this is the secret content";
+        std::fs::write(dir.path().join("secret.txt"), secret).expect("write file");
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        runner
+            .run(
+                &mut log,
+                &ctx,
+                ToolRequest::ReadFile {
+                    path: "secret.txt".to_string(),
+                },
+            )
+            .ok();
+
+        let detail = &log.get(1).unwrap().detail;
+        assert!(
+            detail.contains("bytes="),
+            "expected bytes= in detail: {detail}"
+        );
+        assert!(
+            !detail.contains(secret),
+            "detail must not contain file content: {detail}"
+        );
+    }
+
+    #[test]
+    fn read_file_escape_error_detail_contains_workspace_violation() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        runner
+            .run(
+                &mut log,
+                &ctx,
+                ToolRequest::ReadFile {
+                    path: "../escape".to_string(),
+                },
+            )
+            .ok();
+
+        let detail = &log.get(1).unwrap().detail;
+        assert!(
+            detail.contains("error=workspace_violation"),
+            "expected error=workspace_violation in detail: {detail}"
+        );
+    }
+
+    #[test]
+    fn io_error_detail_contains_error_io_token_and_message() {
+        let error = ToolError::Io {
+            message: "permission denied".to_string(),
+        };
+        let detail = format_tool_error_detail("read_file", "file.txt", &error);
+        assert!(detail.contains("error=io"));
+        assert!(detail.contains("message="));
+    }
+
+    // --- Return-parity tests (Step 4) ---
+
+    #[test]
+    fn run_success_return_value_matches_registry() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("parity.txt"), "parity content").expect("write file");
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let registry = ToolRegistry::new_readonly();
+        let mut log = EventLog::new();
+
+        let runner_result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "parity.txt".to_string(),
+            },
+        );
+        let registry_result = registry.execute(
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "parity.txt".to_string(),
+            },
+        );
+
+        assert_eq!(runner_result, registry_result);
+    }
+
+    #[test]
+    fn run_failure_return_value_matches_registry() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let registry = ToolRegistry::new_readonly();
+        let mut log = EventLog::new();
+
+        let runner_result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "../escape".to_string(),
+            },
+        );
+        let registry_result = registry.execute(
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "../escape".to_string(),
+            },
+        );
+
+        assert_eq!(runner_result, registry_result);
+    }
+
+    // --- Persistence round-trip test (Step 5) ---
+
+    #[test]
+    fn persistence_round_trip_restores_events() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("sample.txt"), "some content")
+            .expect("write file");
+        let ctx = make_context(workspace_dir.path());
+        let runner = ToolEventRunner::new_readonly();
+
+        // Run one success and one failure, then drop the log to flush.
+        {
+            let store = EventStore::new(store_dir.path());
+            let mut log = EventLog::load_from(store);
+            runner
+                .run(
+                    &mut log,
+                    &ctx,
+                    ToolRequest::ListFiles {
+                        path: ".".to_string(),
+                    },
+                )
+                .ok();
+            runner
+                .run(
+                    &mut log,
+                    &ctx,
+                    ToolRequest::ReadFile {
+                        path: "../escape".to_string(),
+                    },
+                )
+                .ok();
+        }
+
+        // Reload from the same store dir and verify all four events restored.
+        let store2 = EventStore::new(store_dir.path());
+        let log2 = EventLog::load_from(store2);
+
+        assert_eq!(log2.len(), 4);
+        assert_eq!(log2.get(0).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log2.get(1).unwrap().kind, EventKind::ToolResult);
+        assert_eq!(log2.get(2).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log2.get(3).unwrap().kind, EventKind::ToolError);
+        assert!(!log2.get(0).unwrap().detail.is_empty());
+        assert!(!log2.get(1).unwrap().detail.is_empty());
+        assert!(!log2.get(2).unwrap().detail.is_empty());
+        assert!(!log2.get(3).unwrap().detail.is_empty());
+    }
+
+    // --- Never-panic test (Step 6) ---
+
+    #[test]
+    fn run_does_not_panic_for_path_with_quote_character() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        // Path contains a `"` character — must not panic regardless of outcome.
+        let _ = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: r#"file"name.txt"#.to_string(),
+            },
+        );
+
+        let detail = &log.get(0).unwrap().detail;
+        assert!(!detail.is_empty(), "ToolCall detail must be non-empty");
     }
 }
