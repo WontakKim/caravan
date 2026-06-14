@@ -40,6 +40,8 @@ pub enum EventKind {
     ToolCall,
     ToolResult,
     ToolError,
+    ToolContextAttach,
+    ToolContextClear,
 }
 
 impl EventKind {
@@ -67,6 +69,8 @@ impl EventKind {
             EventKind::ToolCall => "ToolCall",
             EventKind::ToolResult => "ToolResult",
             EventKind::ToolError => "ToolError",
+            EventKind::ToolContextAttach => "ToolContextAttach",
+            EventKind::ToolContextClear => "ToolContextClear",
         }
     }
 }
@@ -485,6 +489,42 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("parsing to Value should succeed");
         assert_eq!(v["kind"], "ToolError");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn tool_context_attach_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::ToolContextAttach.name(), "ToolContextAttach");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ToolContextAttach,
+            detail: "tool_use_id=abc123".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ToolContextAttach");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn tool_context_clear_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::ToolContextClear.name(), "ToolContextClear");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ToolContextClear,
+            detail: String::new(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ToolContextClear");
         let restored: AppEvent =
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert_eq!(event, restored);
