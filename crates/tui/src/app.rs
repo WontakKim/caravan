@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use kernel::events::{EventKind, EventLog};
 use kernel::model_gateway::ModelGateway;
 use kernel::storage::EventStore;
@@ -12,6 +14,7 @@ pub struct App {
     pub selected_event: Option<usize>,
     pub model_gateway: ModelGateway,
     pub inspector_scroll: u16,
+    pub workspace_root: PathBuf,
 }
 
 impl App {
@@ -26,6 +29,7 @@ impl App {
             selected_event: None,
             model_gateway: ModelGateway::default(),
             inspector_scroll: 0,
+            workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         }
     }
 
@@ -40,6 +44,18 @@ impl App {
     /// from `store`, appends `AppStart`, and returns a fresh app whose screen log
     /// starts with only "Caravan started.".
     pub fn with_store_and_gateway(store: EventStore, gateway: ModelGateway) -> App {
+        let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        Self::with_store_gateway_and_workspace_root(store, gateway, workspace_root)
+    }
+
+    /// Constructs a store-backed app with an injected `workspace_root`: loads
+    /// existing events from `store`, appends `AppStart`, and stores the given
+    /// `workspace_root` for scoping file-system tool access.
+    pub fn with_store_gateway_and_workspace_root(
+        store: EventStore,
+        gateway: ModelGateway,
+        workspace_root: PathBuf,
+    ) -> App {
         let mut event_log = EventLog::load_from(store);
         event_log.append(EventKind::AppStart, "Caravan started.");
         App {
@@ -50,6 +66,7 @@ impl App {
             selected_event: None,
             model_gateway: gateway,
             inspector_scroll: 0,
+            workspace_root,
         }
     }
 
@@ -871,6 +888,20 @@ mod tests {
         app.select_prev();
         assert_eq!(app.inspector_scroll, 6);
         assert_eq!(app.selected_event, Some(0));
+    }
+
+    #[test]
+    fn with_workspace_root_constructor_sets_root() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let store = EventStore::new(store_dir.path());
+        let workspace_root = workspace_dir.path().to_path_buf();
+        let app = App::with_store_gateway_and_workspace_root(
+            store,
+            ModelGateway::default(),
+            workspace_root.clone(),
+        );
+        assert_eq!(app.workspace_root, workspace_root);
     }
 
     #[test]
