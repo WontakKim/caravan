@@ -125,7 +125,7 @@ not persisted to `.caravan/events.jsonl`.
 | `RunComplete`                | When the Run finishes successfully                       |
 | `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelOutputChunk` or `RunComplete` is appended |
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
-| `ToolContextAttach`          | When `/context attach-last-tool` is processed; the latest tool output is staged as pending context for the next prompt |
+| `ToolContextAttach`          | When `/context attach-last-tool` successfully stages a recent tool output as pending context; detail is summary-only (no raw tool output). Not emitted when there is no recent tool output to attach |
 | `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
 
 ## Mock Run/Turn Flow
@@ -1181,28 +1181,35 @@ remain bounded in size regardless of the file being read.
 Manual tool context lets you attach the output of a read-only tool call to the
 next prompt you send to the model. The attach is **one-shot**: the context is
 automatically cleared after the run completes, so it never leaks into subsequent
-turns.
+turns. The attached output is **bounded to 4096 bytes** (including any truncation
+marker); larger tool outputs are truncated before being inserted into the prompt.
 
 ### One-shot attach flow
 
 1. Run `/tool read <path>` or `/tool list [path]` to execute a read-only tool.
-2. Run `/context attach-last-tool` to stage the output as pending context.
-   A `ToolContextAttach` event is appended to the Event Log.
+2. Run `/context attach-last-tool` to stage that output as pending context. If a
+   recent successful `/tool read` or `/tool list` result exists, a
+   `ToolContextAttach` event is appended (with a summary-only detail). If no tool
+   output is available, a notice is shown and no `ToolContextAttach` event is
+   emitted.
 3. Submit your next plain-text message. The pending tool output is injected into
    the `Context:` section of the compiled prompt for that turn.
 4. After the run completes, the pending context is automatically cleared — it is
-   not carried forward into future turns.
+   not carried forward into future turns (this auto-clear emits no event).
 
 To discard staged context before it is used, run `/context clear`. A
 `ToolContextClear` event is appended and the pending context is removed.
 
 ### Sensitive-data warning
 
-> **Warning:** `/context attach-last-tool` includes the content of the
-> user-chosen file directly in the prompt sent to the model. Do **not** read and
-> attach sensitive files — such as private keys, credentials, `.env` files, or
-> any file containing secrets — as their content will be forwarded to the model
-> layer verbatim. Review the file content in the Inspector panel before attaching.
+> **Warning:** `/context attach-last-tool` includes the bounded output of the
+> user-chosen read-only tool call directly in the prompt sent to the model. For
+> `/tool read` this may include (possibly truncated) file content; for
+> `/tool list` this includes directory listing output. Do **not** read and attach
+> sensitive files or directories — such as private keys, credentials, `.env`
+> files, or any path containing secrets — because the attached output will be
+> forwarded to the model layer. Review the tool output in the Inspector panel
+> before attaching.
 
 ## Manual Verification
 
