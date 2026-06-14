@@ -1,3 +1,4 @@
+use crate::manual_context::ManualToolContext;
 use crate::transcript::{TranscriptMessage, TranscriptRole};
 
 /// Number of most-recent transcript messages rendered in the prompt's
@@ -16,6 +17,7 @@ pub const DEFAULT_PROMPT_HISTORY_MESSAGES: usize = 6;
 pub fn compile_prompt_with_context(
     current_user_message: &str,
     history: &[TranscriptMessage],
+    manual_tool_context: Option<&ManualToolContext>,
 ) -> String {
     let window_start = history
         .len()
@@ -38,9 +40,17 @@ pub fn compile_prompt_with_context(
             .join("\n")
     };
 
+    let context = match manual_tool_context {
+        Some(ctx) => format!(
+            "Manual Tool Context:\nSource: {}\nContent:\n{}",
+            ctx.source, ctx.content
+        ),
+        None => "No external tool context is available in this POC.".to_string(),
+    };
+
     format!(
-        "System:\nYou are Caravan's local assistant.\n\nConversation:\n{}\n\nCurrent User:\n{}\n\nContext:\nNo external tool context is available in this POC.\n\nOutput:\nRespond to the current user message.",
-        conversation, current_user_message
+        "System:\nYou are Caravan's local assistant.\n\nConversation:\n{}\n\nCurrent User:\n{}\n\nContext:\n{}\n\nOutput:\nRespond to the current user message.",
+        conversation, current_user_message, context
     )
 }
 
@@ -49,7 +59,7 @@ pub fn compile_prompt_with_context(
 /// This is the empty-history case of `compile_prompt_with_context`, delegating
 /// to it so there is one prompt-template source of truth.
 pub fn compile_prompt(message: &str) -> String {
-    compile_prompt_with_context(message, &[])
+    compile_prompt_with_context(message, &[], None)
 }
 
 #[cfg(test)]
@@ -88,13 +98,13 @@ mod tests {
     fn compile_prompt_delegates_to_empty_history() {
         assert_eq!(
             compile_prompt("hello"),
-            compile_prompt_with_context("hello", &[])
+            compile_prompt_with_context("hello", &[], None)
         );
     }
 
     #[test]
     fn compile_prompt_with_context_empty_history_has_no_prior_marker() {
-        let result = compile_prompt_with_context("hi", &[]);
+        let result = compile_prompt_with_context("hi", &[], None);
         assert!(result.contains("Conversation:"));
         assert!(result.contains("No prior conversation context."));
     }
@@ -105,7 +115,7 @@ mod tests {
             msg(TranscriptRole::User, "hi", 1),
             msg(TranscriptRole::Assistant, "hello back", 2),
         ];
-        let result = compile_prompt_with_context("next", &history);
+        let result = compile_prompt_with_context("next", &history, None);
         assert!(result.contains("User: hi"));
         assert!(result.contains("Assistant: hello back"));
     }
@@ -119,7 +129,7 @@ mod tests {
             msg(TranscriptRole::User, "earlier", 1),
             msg(TranscriptRole::Assistant, "earlier reply", 2),
         ];
-        let result = compile_prompt_with_context("current", &history);
+        let result = compile_prompt_with_context("current", &history, None);
         assert!(result.contains("Current User:\ncurrent"));
 
         let conversation = result
@@ -143,11 +153,63 @@ mod tests {
                 msg(role, &format!("m{i}"), i + 1)
             })
             .collect();
-        let result = compile_prompt_with_context("now", &history);
+        let result = compile_prompt_with_context("now", &history, None);
         // Only the last 6 (m2..m7) are rendered; the oldest two are dropped.
         assert!(!result.contains("m0"));
         assert!(!result.contains("m1"));
         assert!(result.contains("m2"));
         assert!(result.contains("m7"));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_some_manual_tool_context_renders_in_context_section() {
+        use crate::manual_context::ManualToolContext;
+
+        let ctx = ManualToolContext::from_read_file("notes.txt", "file body content");
+        let result = compile_prompt_with_context("tell me about it", &[], Some(&ctx));
+
+        // The output must contain all required labels.
+        assert!(result.contains("Manual Tool Context:"));
+        assert!(result.contains("Source:"));
+        assert!(result.contains("file body content"));
+
+        // All of the above must appear after the Context: marker.
+        let context_pos = result.find("Context:").expect("Context: section must exist");
+        let manual_pos = result
+            .find("Manual Tool Context:")
+            .expect("Manual Tool Context: must be present");
+        let source_pos = result.find("Source:").expect("Source: must be present");
+        let content_pos = result
+            .find("file body content")
+            .expect("bounded content must be present");
+        assert!(
+            manual_pos > context_pos,
+            "Manual Tool Context: must appear after Context:"
+        );
+        assert!(
+            source_pos > context_pos,
+            "Source: must appear after Context:"
+        );
+        assert!(
+            content_pos > context_pos,
+            "bounded content must appear after Context:"
+        );
+
+        // The bounded content must NOT appear in the Conversation section.
+        let conversation_section = result
+            .split("\n\nCurrent User:")
+            .next()
+            .expect("Conversation section must exist");
+        assert!(
+            !conversation_section.contains("file body content"),
+            "bounded content must not appear in the Conversation section"
+        );
+    }
+
+    #[test]
+    fn compile_prompt_with_context_none_manual_tool_context_uses_fallback_literal() {
+        let result = compile_prompt_with_context("hello", &[], None);
+        assert!(result.contains("No external tool context is available in this POC."));
+        assert!(!result.contains("Manual Tool Context:"));
     }
 }
