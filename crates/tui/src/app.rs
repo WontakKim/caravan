@@ -278,6 +278,7 @@ impl App {
             "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
             "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
             "  /context clear - clear pending manual tool context".to_string(),
+            "  /context status - show pending manual tool context and last tool output".to_string(),
         ]
     }
 
@@ -628,6 +629,7 @@ mod tests {
             "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
             "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
             "  /context clear - clear pending manual tool context".to_string(),
+            "  /context status - show pending manual tool context and last tool output".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
