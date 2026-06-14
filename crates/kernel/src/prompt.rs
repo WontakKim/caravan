@@ -174,7 +174,9 @@ mod tests {
         assert!(result.contains("file body content"));
 
         // All of the above must appear after the Context: marker.
-        let context_pos = result.find("Context:").expect("Context: section must exist");
+        let context_pos = result
+            .find("Context:")
+            .expect("Context: section must exist");
         let manual_pos = result
             .find("Manual Tool Context:")
             .expect("Manual Tool Context: must be present");
