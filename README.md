@@ -1043,11 +1043,13 @@ Manual steps to confirm persistence is working:
 
 ## Read-only Tool Harness Skeleton
 
-`crates/kernel/src/tools.rs` contains a minimal tool harness for read-only
-workspace inspection. The harness is **kernel-only** and is intentionally
-**not wired** to the model, runner, TUI slash commands, or the EventLog in
-this POC — it records no events and produces no observable side effects during
-a normal run.
+`crates/kernel/src/tools.rs` provides the kernel `ToolRegistry` with
+**read-only** workspace inspection tools. All paths are confined to the
+workspace root before any filesystem operation is attempted. The tools are
+surfaced to the user via the `/tool list` and `/tool read` slash commands, and
+every execution is traced into the EventLog by `ToolEventRunner`.
+Tool results are not yet injected into the model prompt.
+There is no model-driven tool calling yet.
 
 ### ToolRegistry
 
@@ -1092,12 +1094,12 @@ file-listing count or a byte-length notice), never the raw file content returned
 by `read_file` or `list_files`. This keeps event-log detail strings bounded in
 size regardless of the files being read.
 
-> **This boundary is intentionally not wired to the model, runner, or TUI slash
-> commands in this POC.** `ToolEventRunner` exists solely as a kernel-level
-> tracing boundary. No slash command triggers tool execution, no model output
-> causes a tool call, and no TUI panel renders tool results. The `ToolCall`,
-> `ToolResult`, and `ToolError` events are appended to the `EventLog` only when
-> `ToolEventRunner` is exercised directly (e.g. in unit tests).
+> `ToolEventRunner` is invoked by the `/tool list` and `/tool read` slash
+> commands (via `App::submit()`). It appends `ToolCall`, `ToolResult`, and
+> `ToolError` events to the EventLog; those events render in the Inspector under
+> the `Tool Call`, `Tool Result`, and `Tool Error` labels. No model output
+> triggers a tool call — tool results are not yet injected into the model
+> prompt, and there is no model-driven tool calling yet.
 
 ## Manual Tool Commands
 
