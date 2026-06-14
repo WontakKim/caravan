@@ -50,31 +50,46 @@ impl ManualToolContext {
 
     /// Builds a context from a `list_files` tool result.
     ///
-    /// Entries are appended as `"- <entry>\n"` lines until the next line
-    /// would exceed the budget (`MANUAL_TOOL_CONTEXT_MAX_BYTES - marker.len()`).
-    /// When not all entries fit the truncation marker is appended instead.
+    /// When the full rendered list fits within [`MANUAL_TOOL_CONTEXT_MAX_BYTES`]
+    /// it is returned untruncated. Otherwise entries are appended as
+    /// `"- <entry>\n"` lines until the next line would exceed the
+    /// marker-reserved budget, then the truncation marker is appended. In both
+    /// branches the stored `content` is at most
+    /// [`MANUAL_TOOL_CONTEXT_MAX_BYTES`] bytes.
     pub fn from_list_files(path: &str, entries: &[String]) -> Self {
         let source = format!("tool=list_files path=\"{path}\"");
         let marker = "... [truncated]";
+
+        // Each rendered line is "- <entry>\n" = 3 bytes ("- " + "\n") + entry.
+        let total_len: usize = entries.iter().map(|entry| 3 + entry.len()).sum();
+        if total_len <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
+            let mut content = String::new();
+            for entry in entries {
+                content.push_str(&format!("- {}\n", entry));
+            }
+            return Self {
+                source,
+                content,
+                truncated: false,
+            };
+        }
+
+        // Truncation is required: reserve marker bytes, then fill up to budget.
         let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - marker.len();
-
         let mut content = String::new();
-        let mut truncated = false;
-
         for entry in entries {
             let line = format!("- {}\n", entry);
             if content.len() + line.len() > budget {
-                content.push_str(marker);
-                truncated = true;
                 break;
             }
             content.push_str(&line);
         }
+        content.push_str(marker);
 
         Self {
             source,
             content,
-            truncated,
+            truncated: true,
         }
     }
 
@@ -137,6 +152,29 @@ mod tests {
         assert!(ctx.content.contains("- b.txt\n"));
     }
 
+    // (g) Regression: a list whose full rendered length exceeds the
+    // marker-reserved budget but still fits within the inclusive cap must NOT
+    // be truncated.
+    #[test]
+    fn list_files_fits_within_cap_above_budget_is_untruncated() {
+        let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - "... [truncated]".len();
+        // Each "- e000000\n" line is 10 bytes (3 + 7).
+        let entries: Vec<String> = (0..409).map(|i| format!("e{:06}", i)).collect();
+        let total_len: usize = entries.iter().map(|e| 3 + e.len()).sum();
+        assert!(
+            total_len > budget && total_len <= MANUAL_TOOL_CONTEXT_MAX_BYTES,
+            "test setup: total_len={total_len} must be in (budget={budget}, cap={MANUAL_TOOL_CONTEXT_MAX_BYTES}]"
+        );
+        let ctx = ManualToolContext::from_list_files("/dir", &entries);
+        assert!(
+            !ctx.truncated,
+            "list fitting within cap must not be truncated"
+        );
+        assert_eq!(ctx.content.len(), total_len);
+        assert!(ctx.content.contains("- e000000\n"));
+        assert!(ctx.content.contains("- e000408\n"));
+    }
+
     // (d) Source strings match expected formats.
     #[test]
     fn source_strings_match_expected_format() {
@@ -154,7 +192,10 @@ mod tests {
         let ctx = ManualToolContext::from_read_file("secret.txt", raw);
         let summary = ctx.attach_summary();
         assert!(summary.contains("bytes="), "missing bytes= in: {summary}");
-        assert!(summary.contains("truncated="), "missing truncated= in: {summary}");
+        assert!(
+            summary.contains("truncated="),
+            "missing truncated= in: {summary}"
+        );
         assert!(
             !summary.contains(raw),
             "summary must not contain raw content: {summary}"
