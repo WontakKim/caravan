@@ -1,4 +1,5 @@
 use crate::events::{EventKind, EventLog, RunId, TurnId};
+use crate::manual_context::ManualToolContext;
 use crate::model::ModelRequest;
 use crate::model_gateway::ModelGateway;
 
@@ -13,6 +14,7 @@ pub fn run_mock_turn(
     event_log: &mut EventLog,
     message: &str,
     gateway: &ModelGateway,
+    manual_tool_context: Option<&ManualToolContext>,
 ) -> MockRunOutput {
     let run_id = RunId(format!("run-{}", event_log.next_seq_value()));
     event_log.append(
@@ -31,7 +33,7 @@ pub fn run_mock_turn(
     // survives the subsequent PromptCompile append.
     let transcript = crate::transcript::ConversationTranscript::from_event_log(event_log);
     let history = transcript.without_trailing_user_message();
-    let prompt = crate::prompt::compile_prompt_with_context(message, history, None);
+    let prompt = crate::prompt::compile_prompt_with_context(message, history, manual_tool_context);
     event_log.append(EventKind::PromptCompile, prompt.clone());
     let request = ModelRequest {
         prompt,
@@ -104,7 +106,7 @@ mod tests {
     fn run_mock_turn_appends_correct_event_sequence() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        let output = run_mock_turn(&mut event_log, "hello", &gateway);
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
         let n_tokens = "Mock response for: hello".split_whitespace().count();
@@ -138,7 +140,7 @@ mod tests {
     fn run_mock_turn_returns_correct_output_fields() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        let output = run_mock_turn(&mut event_log, "hello", &gateway);
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         assert_eq!(output.user_message, "hello");
         assert_eq!(output.assistant_response, "Mock response for: hello");
@@ -148,7 +150,7 @@ mod tests {
     fn run_mock_turn_prompt_compile_detail_matches() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        run_mock_turn(&mut event_log, "hello", &gateway);
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
         let pc = events
@@ -166,7 +168,7 @@ mod tests {
     fn run_mock_turn_first_message_prompt_has_no_prior_context() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        run_mock_turn(&mut event_log, "hello", &gateway);
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let pc = event_log
             .events()
@@ -183,10 +185,10 @@ mod tests {
 
         // The app appends the UserMessage before the runner runs; mirror that.
         event_log.append(EventKind::UserMessage, "first");
-        run_mock_turn(&mut event_log, "first", &gateway);
+        run_mock_turn(&mut event_log, "first", &gateway, None);
 
         event_log.append(EventKind::UserMessage, "second");
-        run_mock_turn(&mut event_log, "second", &gateway);
+        run_mock_turn(&mut event_log, "second", &gateway, None);
 
         let events = event_log.events();
         let second_pc = events
@@ -212,12 +214,12 @@ mod tests {
         let gateway = ModelGateway::default();
 
         event_log.append(EventKind::UserMessage, "first");
-        run_mock_turn(&mut event_log, "first", &gateway);
+        run_mock_turn(&mut event_log, "first", &gateway, None);
 
         // A slash command and other trace events must never enter the context.
         event_log.append(EventKind::SlashCommand, "/help");
         event_log.append(EventKind::UserMessage, "second");
-        run_mock_turn(&mut event_log, "second", &gateway);
+        run_mock_turn(&mut event_log, "second", &gateway, None);
 
         let events = event_log.events();
         let second_pc = events
@@ -236,7 +238,7 @@ mod tests {
     fn run_mock_turn_ids_match_event_seq_details() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        let output = run_mock_turn(&mut event_log, "hello", &gateway);
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
 
@@ -284,7 +286,7 @@ mod tests {
     fn run_mock_turn_chunk_count_matches_model_output() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        run_mock_turn(&mut event_log, "hello", &gateway);
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let token_events = event_log
             .events()
@@ -306,7 +308,7 @@ mod tests {
     fn run_mock_turn_response_matches_model_output() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        let output = run_mock_turn(&mut event_log, "hello", &gateway);
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         assert_eq!(
             output.assistant_response,
@@ -324,7 +326,7 @@ mod tests {
     fn run_mock_turn_model_route_event_has_correct_detail() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        run_mock_turn(&mut event_log, "hello", &gateway);
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
 
@@ -385,7 +387,7 @@ mod tests {
         let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
             message: "injected failure".into(),
         });
-        let output = run_mock_turn(&mut event_log, "hello", &gateway);
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
 
@@ -461,7 +463,7 @@ mod tests {
         let gateway =
             ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeUsageOpenAIClient));
         let mut event_log = EventLog::new();
-        let _output = run_mock_turn(&mut event_log, "hello", &gateway);
+        let _output = run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
 
@@ -527,7 +529,7 @@ mod tests {
         let gateway =
             ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeUsageOpenAIClient));
         let mut event_log = EventLog::new();
-        run_mock_turn(&mut event_log, "hello", &gateway);
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
         let usage_event = events
@@ -545,7 +547,7 @@ mod tests {
     fn run_mock_turn_with_usage_none_emits_no_model_usage_event() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        run_mock_turn(&mut event_log, "hello", &gateway);
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
 
         let events = event_log.events();
 
@@ -583,7 +585,7 @@ mod tests {
     fn run_mock_turn_assistant_message_detail_and_position_for_hello_caravan() {
         let mut event_log = EventLog::new();
         let gateway = ModelGateway::default();
-        run_mock_turn(&mut event_log, "hello caravan", &gateway);
+        run_mock_turn(&mut event_log, "hello caravan", &gateway, None);
 
         let events = event_log.events();
 

@@ -68,7 +68,7 @@ fn input_routing_through_root_types() {
 #[test]
 fn run_mock_turn_event_sequence() {
     let mut log = EventLog::new();
-    run_mock_turn(&mut log, "hello caravan", &ModelGateway::default());
+    run_mock_turn(&mut log, "hello caravan", &ModelGateway::default(), None);
     let events = log.events();
     assert!(matches!(events.first().unwrap().kind, EventKind::RunCreate));
     assert!(matches!(

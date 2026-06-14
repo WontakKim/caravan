@@ -158,6 +158,7 @@ impl App {
                     &mut self.event_log,
                     &message,
                     &self.model_gateway,
+                    None,
                 );
                 self.log.push(format!("User: {}", output.user_message));
                 if !output.assistant_response.is_empty() {
