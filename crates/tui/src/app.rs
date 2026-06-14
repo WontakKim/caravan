@@ -5,6 +5,8 @@ use kernel::model_gateway::ModelGateway;
 use kernel::storage::EventStore;
 
 const INSPECTOR_SCROLL_STEP: u16 = 3;
+const TOOL_LIST_PREVIEW_ENTRIES: usize = 50;
+const TOOL_READ_PREVIEW_BYTES: usize = 4 * 1024;
 
 pub struct App {
     pub log: Vec<String>,
@@ -87,7 +89,7 @@ impl App {
     }
 
     pub fn submit(&mut self) {
-        use kernel::commands::{Command, ParsedInput, parse_input};
+        use kernel::commands::{Command, ParsedInput, ToolCommand, parse_input};
 
         let raw = self.input.clone();
         match parse_input(&raw) {
@@ -109,6 +111,39 @@ impl App {
                         self.event_log
                             .append(EventKind::ExitRequest, "Exit requested");
                         self.should_exit = true;
+                    }
+                    Command::Tool(tc) => {
+                        use kernel::{
+                            ToolEventRunner, ToolExecutionContext, ToolOutput, ToolRequest,
+                        };
+                        let ctx = ToolExecutionContext {
+                            workspace_root: self.workspace_root.clone(),
+                        };
+                        let (request, display_path) = match tc {
+                            ToolCommand::List { path } => {
+                                let dp = path.clone();
+                                (ToolRequest::ListFiles { path }, dp)
+                            }
+                            ToolCommand::Read { path } => {
+                                let dp = path.clone();
+                                (ToolRequest::ReadFile { path }, dp)
+                            }
+                        };
+                        match ToolEventRunner::new_readonly().run(
+                            &mut self.event_log,
+                            &ctx,
+                            request,
+                        ) {
+                            Ok(ToolOutput::FileList { entries, .. }) => {
+                                self.push_tool_list_output(&display_path, entries);
+                            }
+                            Ok(ToolOutput::FileContent { content, .. }) => {
+                                self.push_tool_read_output(&display_path, &content);
+                            }
+                            Err(error) => {
+                                self.push_tool_error_output(error);
+                            }
+                        }
                     }
                     Command::Unknown(c) => {
                         self.event_log
@@ -188,6 +223,67 @@ impl App {
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
         ]
+    }
+
+    /// Pushes a sorted directory listing to the screen log, capped at
+    /// [`TOOL_LIST_PREVIEW_ENTRIES`] lines plus an overflow trailer.
+    fn push_tool_list_output(&mut self, display_path: &str, mut entries: Vec<String>) {
+        entries.sort();
+        self.log.push(format!("Tool list {}:", display_path));
+        let total = entries.len();
+        for entry in entries.iter().take(TOOL_LIST_PREVIEW_ENTRIES) {
+            self.log.push(format!("- {}", entry));
+        }
+        if total > TOOL_LIST_PREVIEW_ENTRIES {
+            self.log.push(format!(
+                "... and {} more",
+                total - TOOL_LIST_PREVIEW_ENTRIES
+            ));
+        }
+    }
+
+    /// Pushes a UTF-8 content preview to the screen log, truncated to at most
+    /// [`TOOL_READ_PREVIEW_BYTES`] bytes on a valid char boundary using a
+    /// backward scan with [`str::is_char_boundary`].
+    fn push_tool_read_output(&mut self, display_path: &str, content: &str) {
+        self.log.push(format!("Tool read {}:", display_path));
+        let mut limit = TOOL_READ_PREVIEW_BYTES.min(content.len());
+        while limit > 0 && !content.is_char_boundary(limit) {
+            limit -= 1;
+        }
+        let preview = &content[..limit];
+        self.log.push(preview.to_string());
+        if content.len() > limit {
+            self.log.push("... [truncated]".to_string());
+        }
+    }
+
+    /// Pushes a single human-readable error line derived from a [`kernel::ToolError`].
+    fn push_tool_error_output(&mut self, error: kernel::ToolError) {
+        let msg = match error {
+            kernel::ToolError::WorkspaceViolation { path } => {
+                format!("Tool error: path '{}' is outside the workspace", path)
+            }
+            kernel::ToolError::NotFound { path } => {
+                format!("Tool error: '{}' not found", path)
+            }
+            kernel::ToolError::NotAFile { path } => {
+                format!("Tool error: '{}' is not a file", path)
+            }
+            kernel::ToolError::NotADirectory { path } => {
+                format!("Tool error: '{}' is not a directory", path)
+            }
+            kernel::ToolError::NonUtf8 { path } => {
+                format!("Tool error: '{}' is not valid UTF-8", path)
+            }
+            kernel::ToolError::TooLarge { path, max_bytes } => {
+                format!("Tool error: '{}' exceeds {} byte limit", path, max_bytes)
+            }
+            kernel::ToolError::Io { message } => {
+                format!("Tool error: I/O error: {}", message)
+            }
+        };
+        self.log.push(msg);
     }
 }
 
@@ -902,6 +998,253 @@ mod tests {
             workspace_root.clone(),
         );
         assert_eq!(app.workspace_root, workspace_root);
+    }
+
+    #[test]
+    fn tool_list_success_appends_slash_tool_call_result_events() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        std::fs::write(workspace_dir.path().join("alpha.txt"), "a").unwrap();
+        std::fs::write(workspace_dir.path().join("beta.txt"), "b").unwrap();
+        std::fs::write(workspace_dir.path().join("gamma.txt"), "g").unwrap();
+        let entry_count = 3;
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        let event_len_before = app.event_log.len();
+        app.input = "/tool list .".to_string();
+        app.submit();
+
+        assert_eq!(app.event_log.len(), event_len_before + 3);
+        let events = app.event_log.events();
+        let n = events.len();
+        assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+        assert_eq!(events[n - 1].kind, EventKind::ToolResult);
+
+        assert!(app.log.iter().any(|l| l == "Tool list .:"));
+        assert!(
+            events[n - 1]
+                .detail
+                .contains(&format!("entries={}", entry_count))
+        );
+    }
+
+    #[test]
+    fn tool_read_success_appends_slash_tool_call_result_events() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        let content = "hello, world!";
+        std::fs::write(workspace_dir.path().join("greeting.txt"), content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        let event_len_before = app.event_log.len();
+        app.input = "/tool read greeting.txt".to_string();
+        app.submit();
+
+        assert_eq!(app.event_log.len(), event_len_before + 3);
+        let events = app.event_log.events();
+        let n = events.len();
+        assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+        assert_eq!(events[n - 1].kind, EventKind::ToolResult);
+
+        assert!(app.log.iter().any(|l| l == "Tool read greeting.txt:"));
+        assert!(
+            events[n - 1]
+                .detail
+                .contains(&format!("bytes={}", content.len()))
+        );
+
+        // No event in the event_log may contain the raw file content.
+        assert!(!events.iter().any(|e| e.detail.contains(content)));
+    }
+
+    #[test]
+    fn tool_read_workspace_violation_appends_slash_tool_call_error_events() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        let log_len_before = app.log.len();
+        let event_len_before = app.event_log.len();
+        app.input = "/tool read ../secret.txt".to_string();
+        app.submit();
+
+        assert_eq!(app.event_log.len(), event_len_before + 3);
+        let events = app.event_log.events();
+        let n = events.len();
+        assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+        assert_eq!(events[n - 1].kind, EventKind::ToolError);
+
+        // Screen log gained a readable error line.
+        assert!(app.log.len() > log_len_before);
+        assert!(app.log.iter().any(|l| l.contains("Tool error:")));
+    }
+
+    #[test]
+    fn tool_malformed_commands_produce_only_slash_and_unknown_events() {
+        for input in &["/tool", "/tool read", "/tool write some-file"] {
+            let mut app = App::new();
+            let event_len_before = app.event_log.len();
+            app.input = input.to_string();
+            app.submit();
+
+            assert_eq!(
+                app.event_log.len(),
+                event_len_before + 2,
+                "expected +2 events for input: {input}"
+            );
+
+            let events = app.event_log.events();
+            let n = events.len();
+            assert_eq!(
+                events[n - 2].kind,
+                EventKind::SlashCommand,
+                "expected SlashCommand for: {input}"
+            );
+            assert_eq!(
+                events[n - 1].kind,
+                EventKind::UnknownSlashCommand,
+                "expected UnknownSlashCommand for: {input}"
+            );
+            assert_ne!(events[n - 2].kind, EventKind::ToolCall);
+            assert_ne!(events[n - 1].kind, EventKind::ToolCall);
+        }
+    }
+
+    #[test]
+    fn tool_list_bounded_output_shows_preview_and_trailer() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        let total = 53usize;
+        for i in 0..total {
+            std::fs::write(workspace_dir.path().join(format!("file_{:02}.txt", i)), "").unwrap();
+        }
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.input = "/tool list .".to_string();
+        app.submit();
+
+        let entry_lines: Vec<_> = app.log.iter().filter(|l| l.starts_with("- ")).collect();
+        assert_eq!(
+            entry_lines.len(),
+            TOOL_LIST_PREVIEW_ENTRIES,
+            "expected exactly {} entry lines",
+            TOOL_LIST_PREVIEW_ENTRIES
+        );
+
+        let expected_trailer = format!("... and {} more", total - TOOL_LIST_PREVIEW_ENTRIES);
+        assert!(
+            app.log.iter().any(|l| l == &expected_trailer),
+            "expected trailer '{}' in log",
+            expected_trailer
+        );
+    }
+
+    #[test]
+    fn tool_read_bounded_utf8_boundary_does_not_split_multibyte_char() {
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        // 4095 'a's + 'é' (2 bytes: 0xC3 0xA9) + 'Z' = 4098 bytes total.
+        // At byte offset 4096 we are inside 'é', so the backward scan must
+        // retreat to 4095 (the start of 'é'), which is a valid char boundary.
+        let content = format!("{}\u{00e9}Z", "a".repeat(4095));
+        assert_eq!(content.len(), 4098);
+
+        std::fs::write(workspace_dir.path().join("boundary.txt"), &content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Must not panic.
+        app.input = "/tool read boundary.txt".to_string();
+        app.submit();
+
+        // Find the preview line immediately after the header.
+        let header_pos = app
+            .log
+            .iter()
+            .position(|l| l == "Tool read boundary.txt:")
+            .expect("header line must be present");
+        let preview_line = &app.log[header_pos + 1];
+
+        // Preview stops at byte 4095 — the 'é' must not be split.
+        assert_eq!(preview_line.len(), 4095, "preview must stop before 'é'");
+        assert!(
+            !preview_line.contains('\u{00e9}'),
+            "preview must not contain 'é'"
+        );
+
+        // Truncation marker must be present.
+        assert!(
+            app.log.iter().any(|l| l == "... [truncated]"),
+            "log must contain '... [truncated]'"
+        );
+    }
+
+    #[test]
+    fn plain_text_produces_no_tool_events_and_correct_model_route() {
+        let mut app = App::new();
+
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "plain text must not produce ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "plain text must not produce ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "plain text must not produce ToolError events"
+        );
+
+        let model_route = events
+            .iter()
+            .find(|e| e.kind == EventKind::ModelRoute)
+            .expect("ModelRoute event should exist");
+        assert_eq!(
+            model_route.detail,
+            "provider=mock model=mock-model adapter=MockModelAdapter"
+        );
     }
 
     #[test]

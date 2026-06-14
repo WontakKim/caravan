@@ -1,12 +1,19 @@
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCommand {
+    List { path: String },
+    Read { path: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
     Clear,
     Exit,
+    Tool(ToolCommand),
     Unknown(String),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParsedInput {
     Empty,
     UserMessage(String),
@@ -23,6 +30,26 @@ pub fn parse_input(input: &str) -> ParsedInput {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
             "/exit" => Command::Exit,
+            t if t.starts_with("/tool ") => {
+                let after_tool = t["/tool ".len()..].trim();
+                let (subcommand, path) = match after_tool.split_once(char::is_whitespace) {
+                    Some((sub, rest)) => (sub, rest.trim()),
+                    None => (after_tool, ""),
+                };
+                match subcommand {
+                    "list" => {
+                        let effective = if path.is_empty() { "." } else { path };
+                        Command::Tool(ToolCommand::List {
+                            path: effective.to_string(),
+                        })
+                    }
+                    "read" if !path.is_empty() => Command::Tool(ToolCommand::Read {
+                        path: path.to_string(),
+                    }),
+                    // Any other subcommand, or "read" with empty path
+                    _ => Command::Unknown(input.to_string()),
+                }
+            }
             // Carry the raw (untrimmed) input so the recorded event detail is
             // exactly what the user typed.
             _ => Command::Unknown(input.to_string()),
@@ -126,6 +153,96 @@ mod tests {
 
     #[test]
     fn ask_parses_as_unknown() {
+        assert!(matches!(
+            parse_input("/ask hello"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    // --- /tool command parsing tests ---
+
+    #[test]
+    fn tool_list_bare_defaults_to_dot() {
+        assert_eq!(
+            parse_input("/tool list"),
+            ParsedInput::SlashCommand(Command::Tool(ToolCommand::List {
+                path: ".".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn tool_list_explicit_dot_stays_dot() {
+        assert_eq!(
+            parse_input("/tool list ."),
+            ParsedInput::SlashCommand(Command::Tool(ToolCommand::List {
+                path: ".".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn tool_list_with_path() {
+        assert_eq!(
+            parse_input("/tool list crates/kernel"),
+            ParsedInput::SlashCommand(Command::Tool(ToolCommand::List {
+                path: "crates/kernel".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn tool_read_with_file() {
+        assert_eq!(
+            parse_input("/tool read README.md"),
+            ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+                path: "README.md".to_string()
+            }))
+        );
+    }
+
+    #[test]
+    fn tool_read_bare_is_unknown() {
+        assert!(matches!(
+            parse_input("/tool read"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn tool_bare_is_unknown() {
+        assert!(matches!(
+            parse_input("/tool"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn tool_bogus_subcommand_is_unknown() {
+        assert!(matches!(
+            parse_input("/tool bogus"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn tool_write_is_unknown() {
+        assert!(matches!(
+            parse_input("/tool write some-file"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn regression_quit_is_unknown() {
+        assert!(matches!(
+            parse_input("/quit"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn regression_ask_hello_is_unknown() {
         assert!(matches!(
             parse_input("/ask hello"),
             ParsedInput::SlashCommand(Command::Unknown(_))
