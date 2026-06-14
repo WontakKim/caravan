@@ -55,6 +55,22 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
     }
 }
 
+/// Returns the header text, appending `| Context: pending` when
+/// `app.pending_manual_tool_context` is `Some` and `| Context: none` otherwise.
+/// The indicator reflects ONLY `pending_manual_tool_context`; `last_tool_output_candidate`
+/// alone (with pending still `None`) yields `| Context: none`.
+fn header_text(app: &crate::app::App) -> String {
+    let context_label = if app.pending_manual_tool_context.is_some() {
+        "pending"
+    } else {
+        "none"
+    };
+    format!(
+        "Caravan | TUI Shell | Status: Ready | Context: {}",
+        context_label
+    )
+}
+
 /// Compute how many leading events the Log panel should skip: tail the newest
 /// events by default, but scroll up to keep the selected event visible when it
 /// is older than the tail window.
@@ -100,7 +116,7 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
     let inspector_area = horizontal[2];
 
     // Header
-    let header = Paragraph::new("Caravan | TUI Shell | Status: Ready")
+    let header = Paragraph::new(header_text(app))
         .block(Block::default().borders(Borders::ALL).title("Header"));
     frame.render_widget(header, header_area);
 
@@ -172,7 +188,8 @@ pub fn draw(frame: &mut ratatui::Frame, app: &crate::app::App) {
 mod tests {
     use kernel::events::{AppEvent, EventKind, EventSeq};
 
-    use super::{input_display_width, inspector_text, log_skip};
+    use crate::app::App;
+    use super::{header_text, input_display_width, inspector_text, log_skip};
 
     #[test]
     fn ascii_width_equals_char_count() {
@@ -375,6 +392,43 @@ mod tests {
         assert!(
             !result.contains("TOP SECRET FILE BODY"),
             "rendered output must not contain full file content sentinel"
+        );
+    }
+
+    #[test]
+    fn header_text_no_pending_shows_none() {
+        let app = App::new();
+        assert_eq!(
+            header_text(&app),
+            "Caravan | TUI Shell | Status: Ready | Context: none"
+        );
+    }
+
+    #[test]
+    fn header_text_with_pending_shows_pending() {
+        let mut app = App::new();
+        app.pending_manual_tool_context =
+            Some(kernel::manual_context::ManualToolContext::from_read_file("f.txt", "x"));
+        assert_eq!(
+            header_text(&app),
+            "Caravan | TUI Shell | Status: Ready | Context: pending"
+        );
+    }
+
+    #[test]
+    fn header_text_last_candidate_only_stays_none() {
+        let mut app = App::new();
+        app.last_tool_output_candidate =
+            Some(kernel::manual_context::ManualToolContext::from_read_file("f.txt", "x"));
+        // pending_manual_tool_context is still None, so header must show "none"
+        let result = header_text(&app);
+        assert_eq!(
+            result,
+            "Caravan | TUI Shell | Status: Ready | Context: none"
+        );
+        assert!(
+            !result.contains("Context: pending"),
+            "result must not contain 'Context: pending' when only last_tool_output_candidate is set"
         );
     }
 }
