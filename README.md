@@ -1074,6 +1074,29 @@ any filesystem operation is attempted. The following path forms are rejected:
 Rejection returns an error to the caller; no filesystem operation is performed
 on the offending path.
 
+### ToolEventRunner — Tracing Boundary (kernel-only)
+
+`ToolEventRunner` wraps `ToolRegistry` and traces each read-only tool execution
+into the `EventLog` as a sequence of typed events:
+
+| Event | When it is recorded |
+|-------|---------------------|
+| `ToolCall` | Immediately before the tool executes; carries the tool name and input arguments |
+| `ToolResult` | After a successful execution; carries a **summary only** — never the full file content |
+| `ToolError` | After a failed execution; carries the tool name and error detail |
+
+`ToolResult` stores only a short human-readable summary of the outcome (e.g. a
+file-listing count or a byte-length notice), never the raw file content returned
+by `read_file` or `list_files`. This keeps event-log detail strings bounded in
+size regardless of the files being read.
+
+> **This boundary is intentionally not wired to the model, runner, or TUI slash
+> commands in this POC.** `ToolEventRunner` exists solely as a kernel-level
+> tracing boundary. No slash command triggers tool execution, no model output
+> causes a tool call, and no TUI panel renders tool results. The `ToolCall`,
+> `ToolResult`, and `ToolError` events are appended to the `EventLog` only when
+> `ToolEventRunner` is exercised directly (e.g. in unit tests).
+
 ## Manual Verification
 
 The following checks must be confirmed interactively before the POC is considered done:
