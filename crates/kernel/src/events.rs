@@ -37,6 +37,9 @@ pub enum EventKind {
     RunComplete,
     RunFail,
     ModelError,
+    ToolCall,
+    ToolResult,
+    ToolError,
 }
 
 impl EventKind {
@@ -61,6 +64,9 @@ impl EventKind {
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
             EventKind::ModelError => "ModelError",
+            EventKind::ToolCall => "ToolCall",
+            EventKind::ToolResult => "ToolResult",
+            EventKind::ToolError => "ToolError",
         }
     }
 }
@@ -428,6 +434,60 @@ mod tests {
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert_eq!(event, restored);
         assert_eq!(restored.kind, EventKind::ModelError);
+    }
+
+    #[test]
+    fn tool_call_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::ToolCall.name(), "ToolCall");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ToolCall,
+            detail: "tool=read_file".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ToolCall");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn tool_result_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::ToolResult.name(), "ToolResult");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ToolResult,
+            detail: "tool=read_file status=ok".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ToolResult");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn tool_error_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::ToolError.name(), "ToolError");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ToolError,
+            detail: "tool=read_file error=permission denied".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ToolError");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
     }
 
     #[test]
