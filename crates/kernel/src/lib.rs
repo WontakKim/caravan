@@ -2,6 +2,7 @@
 
 pub mod commands;
 pub mod events;
+pub mod manual_context;
 pub mod model;
 pub mod model_config;
 pub mod model_gateway;
@@ -21,6 +22,7 @@ pub mod tools;
 pub mod transcript;
 
 pub use commands::{Command, ParsedInput, ToolCommand};
+pub use manual_context::{ManualToolContext, MANUAL_TOOL_CONTEXT_MAX_BYTES};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
