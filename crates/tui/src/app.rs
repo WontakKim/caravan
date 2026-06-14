@@ -222,6 +222,8 @@ impl App {
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
+            "  /tool list [path] - list files under the workspace".to_string(),
+            "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
         ]
     }
 
@@ -568,6 +570,8 @@ mod tests {
             "  /help  - show this help".to_string(),
             "  /clear - clear the log".to_string(),
             "  /exit  - exit Caravan".to_string(),
+            "  /tool list [path] - list files under the workspace".to_string(),
+            "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
@@ -1104,7 +1108,7 @@ mod tests {
 
     #[test]
     fn tool_malformed_commands_produce_only_slash_and_unknown_events() {
-        for input in &["/tool", "/tool read", "/tool write some-file"] {
+        for input in &["/tool", "/tool read", "/tool foo some-file"] {
             let mut app = App::new();
             let event_len_before = app.event_log.len();
             app.input = input.to_string();
