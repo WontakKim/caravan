@@ -52,6 +52,11 @@ pub fn run_mock_turn(
                 EventKind::AssistantMessage,
                 response.assistant_response.clone(),
             );
+            if let Some(req) = crate::model_tool_request::parse_first_model_tool_request(
+                &response.assistant_response,
+            ) {
+                event_log.append(EventKind::ModelToolRequest, req.detail());
+            }
             if let Some(usage) = response.usage {
                 event_log.append(
                     EventKind::ModelUsage,
@@ -428,6 +433,14 @@ mod tests {
         );
     }
 
+    // FakeUsageOpenAIClient content must NOT contain a CARAVAN_TOOL_REQUEST block.
+    // Changing the `content` field to include such a block would silently invalidate the
+    // pinned event-sequence length assertions in
+    // `run_mock_turn_appends_correct_event_sequence` (which uses the default mock gateway,
+    // not this client) and `run_mock_turn_with_usage_none_emits_no_model_usage_event` tests,
+    // as well as the exact-sequence assertions in
+    // `run_mock_turn_with_usage_some_emits_model_usage_event_in_correct_position`, because
+    // the detection logic would inject an extra `ModelToolRequest` event into the sequence.
     struct FakeUsageOpenAIClient;
 
     impl OpenAIHttpClient for FakeUsageOpenAIClient {
@@ -614,6 +627,256 @@ mod tests {
         assert!(
             assistant_msg_idx < run_complete_idx,
             "AssistantMessage must be before RunComplete"
+        );
+    }
+
+    struct FakeReadFileToolRequestClient;
+
+    impl OpenAIHttpClient for FakeReadFileToolRequestClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string(),
+                    },
+                }],
+                usage: Some(OpenAIUsage {
+                    prompt_tokens: 8,
+                    completion_tokens: 4,
+                    total_tokens: 12,
+                }),
+            })
+        }
+    }
+
+    #[test]
+    fn run_mock_turn_detects_read_file_tool_request() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAI,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway = ModelGateway::with_openai_http_client_for_test(
+            config,
+            Box::new(FakeReadFileToolRequestClient),
+        );
+        let mut event_log = EventLog::new();
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let events = event_log.events();
+
+        let assistant_msg_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::AssistantMessage)
+            .expect("AssistantMessage event should exist");
+        let tool_req_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelToolRequest)
+            .expect("ModelToolRequest event should exist");
+        let model_usage_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelUsage)
+            .expect("ModelUsage event should exist");
+        let run_complete_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::RunComplete)
+            .expect("RunComplete event should exist");
+
+        assert!(
+            tool_req_idx > assistant_msg_idx,
+            "ModelToolRequest must be after AssistantMessage"
+        );
+        assert!(
+            tool_req_idx < model_usage_idx,
+            "ModelToolRequest must be before ModelUsage when usage is present"
+        );
+        assert!(
+            tool_req_idx < run_complete_idx,
+            "ModelToolRequest must be before RunComplete"
+        );
+
+        assert_eq!(
+            events[tool_req_idx].detail,
+            "source=model tool=read_file path=\"README.md\" risk=read_only status=detected"
+        );
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError events"
+        );
+    }
+
+    struct FakeListFilesToolRequestClient;
+
+    impl OpenAIHttpClient for FakeListFilesToolRequestClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "preamble\nCARAVAN_TOOL_REQUEST\ntool=list_files\npath=.\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string(),
+                    },
+                }],
+                usage: None,
+            })
+        }
+    }
+
+    #[test]
+    fn run_mock_turn_detects_list_files_tool_request() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAI,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway = ModelGateway::with_openai_http_client_for_test(
+            config,
+            Box::new(FakeListFilesToolRequestClient),
+        );
+        let mut event_log = EventLog::new();
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let events = event_log.events();
+
+        let tool_req_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelToolRequest)
+            .expect("ModelToolRequest event should exist");
+
+        assert_eq!(
+            events[tool_req_idx].detail,
+            "source=model tool=list_files path=\".\" risk=read_only status=detected"
+        );
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError events"
+        );
+    }
+
+    struct FakeSentinelPathClient;
+
+    impl OpenAIHttpClient for FakeSentinelPathClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: "preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=/definitely/not/a/real/caravan/sentinel/file\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string(),
+                    },
+                }],
+                usage: None,
+            })
+        }
+    }
+
+    #[test]
+    fn run_mock_turn_sentinel_path_does_not_touch_filesystem() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAI,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway = ModelGateway::with_openai_http_client_for_test(
+            config,
+            Box::new(FakeSentinelPathClient),
+        );
+        let mut event_log = EventLog::new();
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let events = event_log.events();
+
+        let tool_req_idx = events
+            .iter()
+            .position(|e| e.kind == EventKind::ModelToolRequest)
+            .expect("ModelToolRequest event should exist");
+
+        assert_eq!(
+            events[tool_req_idx].detail,
+            "source=model tool=read_file path=\"/definitely/not/a/real/caravan/sentinel/file\" risk=read_only status=detected"
+        );
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelError),
+            "must not emit ModelError events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::RunFail),
+            "must not emit RunFail events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError events"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_without_tool_request_block_emits_no_model_tool_request_event() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let events = event_log.events();
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+            "must not emit ModelToolRequest when response has no block"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_error_path_emits_no_model_tool_request_event() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
+            message: "injected failure for tool request test".into(),
+        });
+        run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let events = event_log.events();
+
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+            "error path must not emit ModelToolRequest events"
         );
     }
 }
