@@ -81,6 +81,27 @@ impl ToolCatalog {
              `/context attach-last-tool`.\n",
         );
 
+        out.push_str(
+            "\nModel Tool Request Blocks:\n\
+             You may propose a tool request by emitting a CARAVAN_TOOL_REQUEST block in your \
+             response. Caravan will detect the block and record a ModelToolRequest. The request \
+             is not executed automatically — the user must run the matching /tool command \
+             manually, and tool output enters the prompt only if the user runs \
+             `/context attach-last-tool`.\n\
+             \n\
+             Example (read_file):\n\
+             CARAVAN_TOOL_REQUEST\n\
+             tool=read_file\n\
+             path=README.md\n\
+             END_CARAVAN_TOOL_REQUEST\n\
+             \n\
+             Example (list_files):\n\
+             CARAVAN_TOOL_REQUEST\n\
+             tool=list_files\n\
+             path=.\n\
+             END_CARAVAN_TOOL_REQUEST\n",
+        );
+
         for spec in &self.specs {
             out.push('\n');
 
@@ -172,6 +193,40 @@ mod tests {
         assert!(
             section.contains("/context attach-last-tool"),
             "missing /context attach-last-tool reference"
+        );
+
+        // CARAVAN_TOOL_REQUEST block guidance assertions.
+        assert!(
+            section.contains("CARAVAN_TOOL_REQUEST"),
+            "missing CARAVAN_TOOL_REQUEST marker"
+        );
+        assert!(
+            section.contains("tool=read_file"),
+            "missing read_file example block"
+        );
+        assert!(
+            section.contains("tool=list_files"),
+            "missing list_files example block"
+        );
+        assert!(
+            section.contains("not executed automatically"),
+            "missing 'not executed automatically' phrase"
+        );
+        assert!(
+            section.contains("ModelToolRequest"),
+            "missing ModelToolRequest reference"
+        );
+
+        // Forbidden phrases must NOT appear (built at runtime to avoid grep false-positives).
+        let forbidden_auto_exec = ["Caravan will execute", " this automatically"].concat();
+        assert!(
+            !section.contains(forbidden_auto_exec.as_str()),
+            "forbidden auto-exec phrase found in prompt section"
+        );
+        let forbidden_model_call = ["The model can", " call tools"].concat();
+        assert!(
+            !section.contains(forbidden_model_call.as_str()),
+            "forbidden model-call phrase found in prompt section"
         );
     }
 
