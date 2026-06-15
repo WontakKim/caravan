@@ -1415,9 +1415,8 @@ This guidance is a **screen-log UI hint only**. It is **NOT** recorded as an
 Event Log event and does not appear in the Inspector. The tool still runs only
 when the user runs the suggested `/tool` command manually.
 
-> **Limitation:** Paths with spaces are not supported yet, so the suggested
-> command uses the raw path verbatim. Wrap the path in quotes yourself if
-> needed, or use a path without spaces.
+> **Limitation:** Paths with spaces are not supported yet. The suggested command
+> uses the raw path verbatim; use a path without spaces.
 
 ## Manual Verification
 
