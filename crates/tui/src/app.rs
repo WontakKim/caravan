@@ -1707,8 +1707,14 @@ mod tests {
             attach_ev.detail
         );
         assert!(
+            attach_ev.detail.contains("risk=read_only"),
+            "ToolContextAttach detail should contain risk=read_only: {}",
+            attach_ev.detail
+        );
+        assert!(
             attach_ev.detail.contains("bytes="),
-            "ToolContextAttach detail should contain bytes="
+            "ToolContextAttach detail should contain bytes=: {}",
+            attach_ev.detail
         );
     }
 
@@ -1827,8 +1833,29 @@ mod tests {
         assert!(
             app.log
                 .iter()
-                .any(|l| l.starts_with("- last tool output: source=")),
-            "last tool output line should start with 'source='"
+                .any(|l| l.starts_with("- last tool output: tool=")),
+            "last tool output line should start with 'tool='"
+        );
+        let last_tool_line = app
+            .log
+            .iter()
+            .find(|l| l.starts_with("- last tool output: tool="))
+            .expect("last tool output line must be present");
+        assert!(
+            last_tool_line.contains("risk=read_only"),
+            "last tool output line should contain risk=read_only: {last_tool_line}"
+        );
+        assert!(
+            last_tool_line.contains("bytes="),
+            "last tool output line should contain bytes=: {last_tool_line}"
+        );
+        assert!(
+            last_tool_line.contains("truncated="),
+            "last tool output line should contain truncated=: {last_tool_line}"
+        );
+        assert!(
+            !last_tool_line.contains("some content"),
+            "last tool output line must not contain raw file content: {last_tool_line}"
         );
     }
 
@@ -1855,8 +1882,29 @@ mod tests {
         app.submit();
 
         assert!(
-            app.log.iter().any(|l| l.starts_with("- pending: source=")),
-            "pending line should start with 'source=' after attach"
+            app.log.iter().any(|l| l.starts_with("- pending: tool=")),
+            "pending line should start with 'tool=' after attach"
+        );
+        let pending_line = app
+            .log
+            .iter()
+            .find(|l| l.starts_with("- pending: tool="))
+            .expect("pending line must be present");
+        assert!(
+            pending_line.contains("risk=read_only"),
+            "pending line should contain risk=read_only: {pending_line}"
+        );
+        assert!(
+            pending_line.contains("bytes="),
+            "pending line should contain bytes=: {pending_line}"
+        );
+        assert!(
+            pending_line.contains("truncated="),
+            "pending line should contain truncated=: {pending_line}"
+        );
+        assert!(
+            !pending_line.contains("hello world"),
+            "pending line must not contain raw file content: {pending_line}"
         );
     }
 

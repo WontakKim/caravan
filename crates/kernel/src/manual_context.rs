@@ -97,7 +97,7 @@ impl ManualToolContext {
     /// embed the raw content.
     pub fn attach_summary(&self) -> String {
         format!(
-            "source={} bytes={} truncated={}",
+            "{} risk=read_only bytes={} truncated={}",
             self.source,
             self.content.len(),
             self.truncated
@@ -203,6 +203,14 @@ mod tests {
         let raw = "secret raw content that must not appear in the summary";
         let ctx = ManualToolContext::from_read_file("secret.txt", raw);
         let summary = ctx.attach_summary();
+        assert!(
+            summary.starts_with("tool="),
+            "summary must start with 'tool=': {summary}"
+        );
+        assert!(
+            summary.contains("risk=read_only"),
+            "missing risk=read_only in: {summary}"
+        );
         assert!(summary.contains("bytes="), "missing bytes= in: {summary}");
         assert!(
             summary.contains("truncated="),
@@ -211,6 +219,23 @@ mod tests {
         assert!(
             !summary.contains(raw),
             "summary must not contain raw content: {summary}"
+        );
+    }
+
+    // (e2) attach_summary returns the exact canonical fixed format.
+    #[test]
+    fn attach_summary_exact_fixed_format() {
+        let path = "/tmp/known.txt";
+        let content = "hello";
+        let ctx = ManualToolContext::from_read_file(path, content);
+        let summary = ctx.attach_summary();
+        assert_eq!(
+            summary,
+            format!(
+                "tool=read_file path=\"{}\" risk=read_only bytes={} truncated=false",
+                path,
+                content.len()
+            )
         );
     }
 
