@@ -8,6 +8,7 @@ pub struct MockRunOutput {
     pub assistant_response: String,
     pub run_id: String,
     pub turn_id: String,
+    pub detected_model_tool_request: Option<crate::model_tool_request::ModelToolRequest>,
 }
 
 pub fn run_mock_turn(
@@ -52,9 +53,11 @@ pub fn run_mock_turn(
                 EventKind::AssistantMessage,
                 response.assistant_response.clone(),
             );
-            if let Some(req) = crate::model_tool_request::parse_first_model_tool_request(
-                &response.assistant_response,
-            ) {
+            let detected_model_tool_request =
+                crate::model_tool_request::parse_first_model_tool_request(
+                    &response.assistant_response,
+                );
+            if let Some(req) = &detected_model_tool_request {
                 event_log.append(EventKind::ModelToolRequest, req.detail());
             }
             if let Some(usage) = response.usage {
@@ -75,6 +78,7 @@ pub fn run_mock_turn(
                 assistant_response: response.assistant_response,
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
+                detected_model_tool_request,
             }
         }
         Err(err) => {
@@ -88,6 +92,7 @@ pub fn run_mock_turn(
                 assistant_response: String::new(),
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
+                detected_model_tool_request: None,
             }
         }
     }
@@ -877,6 +882,127 @@ mod tests {
         assert!(
             !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
             "error path must not emit ModelToolRequest events"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_detected_model_tool_request_read_file() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAI,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway = ModelGateway::with_openai_http_client_for_test(
+            config,
+            Box::new(FakeReadFileToolRequestClient),
+        );
+        let mut event_log = EventLog::new();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let detected = output
+            .detected_model_tool_request
+            .expect("expected Some detected_model_tool_request");
+        assert_eq!(
+            detected.kind,
+            crate::model_tool_request::ModelToolRequestKind::ReadFile
+        );
+        assert_eq!(detected.path, "README.md");
+
+        let events = event_log.events();
+        let tool_req_count = events
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelToolRequest)
+            .count();
+        assert_eq!(
+            tool_req_count, 1,
+            "expected exactly one ModelToolRequest event"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError events"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_detected_model_tool_request_list_files() {
+        let config = ModelConfig {
+            active_profile: ModelProfile {
+                provider: ModelProvider::OpenAI,
+                model: "gpt-4o".into(),
+                adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+            },
+        };
+        let gateway = ModelGateway::with_openai_http_client_for_test(
+            config,
+            Box::new(FakeListFilesToolRequestClient),
+        );
+        let mut event_log = EventLog::new();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        let detected = output
+            .detected_model_tool_request
+            .expect("expected Some detected_model_tool_request");
+        assert_eq!(
+            detected.kind,
+            crate::model_tool_request::ModelToolRequestKind::ListFiles
+        );
+
+        let events = event_log.events();
+        let tool_req_count = events
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelToolRequest)
+            .count();
+        assert_eq!(
+            tool_req_count, 1,
+            "expected exactly one ModelToolRequest event"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError events"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_detected_model_tool_request_none_for_default_mock() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::default();
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        assert!(
+            output.detected_model_tool_request.is_none(),
+            "default mock path must return None for detected_model_tool_request"
+        );
+    }
+
+    #[test]
+    fn run_mock_turn_detected_model_tool_request_none_for_error_path() {
+        let mut event_log = EventLog::new();
+        let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
+            message: "injected failure".into(),
+        });
+        let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+
+        assert!(
+            output.detected_model_tool_request.is_none(),
+            "error path must return None for detected_model_tool_request"
         );
     }
 }
