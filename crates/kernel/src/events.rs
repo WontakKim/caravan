@@ -37,6 +37,7 @@ pub enum EventKind {
     RunComplete,
     RunFail,
     ModelError,
+    ModelToolRequest,
     ToolCall,
     ToolResult,
     ToolError,
@@ -66,6 +67,7 @@ impl EventKind {
             EventKind::RunComplete => "RunComplete",
             EventKind::RunFail => "RunFail",
             EventKind::ModelError => "ModelError",
+            EventKind::ModelToolRequest => "ModelToolRequest",
             EventKind::ToolCall => "ToolCall",
             EventKind::ToolResult => "ToolResult",
             EventKind::ToolError => "ToolError",
@@ -438,6 +440,25 @@ mod tests {
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert_eq!(event, restored);
         assert_eq!(restored.kind, EventKind::ModelError);
+    }
+
+    #[test]
+    fn model_tool_request_event_kind_serializes_and_round_trips() {
+        assert_eq!(EventKind::ModelToolRequest.name(), "ModelToolRequest");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ModelToolRequest,
+            detail: "detected CARAVAN_TOOL_REQUEST block".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        assert!(json.contains("ModelToolRequest"));
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ModelToolRequest");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
     }
 
     #[test]
