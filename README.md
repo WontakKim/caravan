@@ -1347,13 +1347,26 @@ automatically.
 
 ### `CARAVAN_TOOL_REQUEST` Block Format
 
-The model may embed a tool request in its response using the following markers:
+The model may embed a tool request in its response using the following format.
+The delimiter lines must appear exactly as bare text — no angle brackets or other
+decoration — and keys use `=` as the separator.
+
+**`read_file` example:**
 
 ```
-<<<CARAVAN_TOOL_REQUEST>>>
-tool: <tool_name>
-input: <input_value>
-<<<END_CARAVAN_TOOL_REQUEST>>>
+CARAVAN_TOOL_REQUEST
+tool=read_file
+path=README.md
+END_CARAVAN_TOOL_REQUEST
+```
+
+**`list_files` example:**
+
+```
+CARAVAN_TOOL_REQUEST
+tool=list_files
+path=.
+END_CARAVAN_TOOL_REQUEST
 ```
 
 When a block matching these markers is present in the assistant response, Caravan
