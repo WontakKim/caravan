@@ -49,9 +49,11 @@ pub fn compile_prompt_with_context(
         None => "No external tool context is available in this POC.".to_string(),
     };
 
+    let tools_section = crate::tool_schema::ToolCatalog::readonly().render_prompt_section();
+
     format!(
-        "System:\nYou are Caravan's local assistant.\n\nConversation:\n{}\n\nCurrent User:\n{}\n\nContext:\n{}\n\nOutput:\nRespond to the current user message.",
-        conversation, current_user_message, context
+        "System:\nYou are Caravan's local assistant.\n\nConversation:\n{}\n\nCurrent User:\n{}\n\nContext:\n{}\n\n{}\n\nOutput:\nRespond to the current user message.",
+        conversation, current_user_message, context, tools_section
     )
 }
 
@@ -78,10 +80,12 @@ mod tests {
 
     #[test]
     fn compile_prompt_exact_template() {
-        assert_eq!(
-            compile_prompt("hello"),
-            "System:\nYou are Caravan's local assistant.\n\nConversation:\nNo prior conversation context.\n\nCurrent User:\nhello\n\nContext:\nNo external tool context is available in this POC.\n\nOutput:\nRespond to the current user message."
+        let tools_section = crate::tool_schema::ToolCatalog::readonly().render_prompt_section();
+        let expected = format!(
+            "System:\nYou are Caravan's local assistant.\n\nConversation:\nNo prior conversation context.\n\nCurrent User:\nhello\n\nContext:\nNo external tool context is available in this POC.\n\n{}\n\nOutput:\nRespond to the current user message.",
+            tools_section
         );
+        assert_eq!(compile_prompt("hello"), expected);
     }
 
     #[test]
@@ -91,8 +95,23 @@ mod tests {
         assert!(result.contains("Conversation:"));
         assert!(result.contains("Current User:"));
         assert!(result.contains("Context:"));
+        assert!(result.contains("Available Tools:"));
         assert!(result.contains("Output:"));
         assert!(result.contains("hello"));
+
+        let context_pos = result.find("Context:").expect("Context: must exist");
+        let tools_pos = result
+            .find("Available Tools:")
+            .expect("Available Tools: must exist");
+        let output_pos = result.find("Output:").expect("Output: must exist");
+        assert!(
+            tools_pos > context_pos,
+            "Available Tools: must appear after Context:"
+        );
+        assert!(
+            tools_pos < output_pos,
+            "Available Tools: must appear before Output:"
+        );
     }
 
     #[test]
@@ -229,5 +248,36 @@ mod tests {
         let result = compile_prompt_with_context("hello", &[], None);
         assert!(result.contains("No external tool context is available in this POC."));
         assert!(!result.contains("Manual Tool Context:"));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_none_has_available_tools_and_fallback() {
+        let result = compile_prompt_with_context("hello", &[], None);
+        assert!(result.contains("Available Tools:"));
+        assert!(result.contains("No external tool context is available in this POC."));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_some_has_both_manual_and_available_tools_sections() {
+        use crate::manual_context::ManualToolContext;
+
+        let ctx = ManualToolContext::from_read_file("notes.txt", "attached file body");
+        let compiled = compile_prompt_with_context("tell me", &[], Some(&ctx));
+
+        assert!(compiled.contains("Manual Tool Context:"));
+        assert!(compiled.contains("Available Tools:"));
+
+        // The Available Tools section slice must NOT contain the attached file content.
+        let tools_start = compiled
+            .find("\n\nAvailable Tools:")
+            .expect("\n\nAvailable Tools: must exist");
+        let tools_end = compiled
+            .find("\n\nOutput:")
+            .expect("\n\nOutput: must exist");
+        let tools_slice = &compiled[tools_start..tools_end];
+        assert!(
+            !tools_slice.contains("attached file body"),
+            "Available Tools section must not contain attached file content"
+        );
     }
 }
