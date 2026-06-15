@@ -35,6 +35,24 @@ impl ModelToolRequest {
             path = self.path,
         )
     }
+
+    /// Returns the exact `/tool` command the user should run next.
+    pub fn suggested_command(&self) -> String {
+        match self.kind {
+            ModelToolRequestKind::ReadFile => format!("/tool read {}", self.path),
+            ModelToolRequestKind::ListFiles => format!("/tool list {}", self.path),
+        }
+    }
+
+    /// Returns a multi-line screen-log message conveying what happened and the next steps.
+    pub fn user_guidance(&self) -> Vec<String> {
+        vec![
+            format!("Model requested read-only tool: {}", self.detail()),
+            "Caravan did not execute it automatically.".to_string(),
+            format!("Run: {}", self.suggested_command()),
+            "Then run: /context attach-last-tool".to_string(),
+        ]
+    }
 }
 
 /// Parses the first valid Caravan tool-request block from `text`.
@@ -264,6 +282,69 @@ mod tests {
         assert_eq!(
             req.detail(),
             "source=model tool=list_files path=\".\" risk=read_only status=detected"
+        );
+    }
+
+    #[test]
+    fn suggested_command_read_file_returns_tool_read_path() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "src/main.rs".to_string(),
+        };
+        assert_eq!(req.suggested_command(), "/tool read src/main.rs");
+    }
+
+    #[test]
+    fn suggested_command_list_files_returns_tool_list_path() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ListFiles,
+            path: "src/".to_string(),
+        };
+        assert_eq!(req.suggested_command(), "/tool list src/");
+    }
+
+    #[test]
+    fn user_guidance_contains_suggested_command_line() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        };
+        let guidance = req.user_guidance();
+        let expected_run_line = format!("Run: {}", req.suggested_command());
+        assert!(
+            guidance.iter().any(|line| line == &expected_run_line),
+            "expected guidance to contain '{}'",
+            expected_run_line
+        );
+    }
+
+    #[test]
+    fn user_guidance_contains_attach_last_tool() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ListFiles,
+            path: ".".to_string(),
+        };
+        let guidance = req.user_guidance();
+        assert!(
+            guidance
+                .iter()
+                .any(|line| line.contains("/context attach-last-tool")),
+            "expected guidance to contain '/context attach-last-tool'"
+        );
+    }
+
+    #[test]
+    fn user_guidance_contains_did_not_execute_automatically() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "Cargo.toml".to_string(),
+        };
+        let guidance = req.user_guidance();
+        assert!(
+            guidance
+                .iter()
+                .any(|line| line.contains("did not execute it automatically")),
+            "expected guidance to contain 'did not execute it automatically'"
         );
     }
 }
