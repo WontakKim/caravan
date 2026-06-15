@@ -1399,6 +1399,26 @@ Without step 2, the `ModelToolRequest` event is recorded but the tool is never
 run and no output enters the prompt. Detection is strictly observe-and-act —
 there is no automatic execution.
 
+### Screen-Log Guidance
+
+When Caravan detects a `CARAVAN_TOOL_REQUEST` block it shows a guidance message
+in the screen log. The guidance consists of:
+
+- **Detected request detail** — the tool name and path extracted from the block.
+- **Explicit notice** that Caravan did **not** execute the request automatically.
+- **Suggested `/tool` command** — `/tool read <path>` for a `read_file` request,
+  or `/tool list <path>` for a `list_files` request.
+- **Next step** — run `/context attach-last-tool` after the tool command
+  completes to stage the output as pending context.
+
+This guidance is a **screen-log UI hint only**. It is **NOT** recorded as an
+Event Log event and does not appear in the Inspector. The tool still runs only
+when the user runs the suggested `/tool` command manually.
+
+> **Limitation:** Paths with spaces are not supported yet, so the suggested
+> command uses the raw path verbatim. Wrap the path in quotes yourself if
+> needed, or use a path without spaces.
+
 ## Manual Verification
 
 The following checks must be confirmed interactively before the POC is considered done:
