@@ -1338,6 +1338,54 @@ Without step 2, the `Available Tools` block names the tools but includes **no to
 output** in the prompt. Automatic or model-driven tool calling is explicitly out of
 scope for this POC.
 
+## Model Tool Request Detection (Detect-Only)
+
+When the assistant response contains a `CARAVAN_TOOL_REQUEST` block, Caravan
+detects it and records a `ModelToolRequest` event in the Event Log. This is a
+**detect-only** mechanism — Caravan does **not** execute the requested tool
+automatically.
+
+### `CARAVAN_TOOL_REQUEST` Block Format
+
+The model may embed a tool request in its response using the following markers:
+
+```
+<<<CARAVAN_TOOL_REQUEST>>>
+tool: <tool_name>
+input: <input_value>
+<<<END_CARAVAN_TOOL_REQUEST>>>
+```
+
+When a block matching these markers is present in the assistant response, Caravan
+records a `ModelToolRequest` event whose detail carries the detected block
+contents.
+
+### What Detection Does NOT Do
+
+Detection does **not**:
+
+- Execute the named tool.
+- Produce a `ToolCall`, `ToolResult`, or `ToolError` event — those events are
+  emitted only when the user explicitly runs a `/tool` command.
+
+The `ModelToolRequest` event is a trace only. No tool runs, no output is
+produced, and the prompt for the next turn is unaffected unless the user
+completes the steps below.
+
+### What You Must Do Manually
+
+1. Observe the `ModelToolRequest` event in the Event Log (and its detail in the
+   Inspector) to see which tool the model requested.
+2. Run the matching slash command yourself — for example `/tool read <path>` or
+   `/tool list [path]`.
+3. Run `/context attach-last-tool` to stage the tool output as pending context.
+4. Submit your next plain-text message — the tool output is injected into the
+   `Context:` section of the compiled prompt for that turn only.
+
+Without step 2, the `ModelToolRequest` event is recorded but the tool is never
+run and no output enters the prompt. Detection is strictly observe-and-act —
+there is no automatic execution.
+
 ## Manual Verification
 
 The following checks must be confirmed interactively before the POC is considered done:
