@@ -1281,6 +1281,63 @@ This fallback is also the text shown for any turn where context was not attached
 > forwarded to the model layer. Review the tool output in the Inspector panel
 > before attaching.
 
+## Model-visible Read-only Tool Schema Skeleton
+
+`crates/kernel/src/tool_schema.rs` defines the static schema types that describe
+available tools in a form the model can read — plain Rust structs with a plain-text
+renderer, **not** JSON Schema, OpenAI function-calling JSON, or MCP tool definitions.
+
+### Kernel Types
+
+| Type | Role |
+|------|------|
+| `ToolCatalog` | Static catalog holding all `ToolSpec` entries; constructed via `ToolCatalog::readonly()` |
+| `ToolSpec` | Describes a single tool: `name`, `description`, `risk` (`ToolRisk`), and `inputs` (`Vec<ToolInputSpec>`) |
+| `ToolInputSpec` | Describes a single input parameter: `name`, `description`, and `required` flag |
+
+### Exposed Read-only Specs
+
+`ToolCatalog::readonly()` populates the catalog with exactly two specs:
+
+| Tool spec | Slash command | `path` input |
+|-----------|---------------|--------------|
+| `list_files` | `/tool list [path]` | optional — defaults to `"."` |
+| `read_file` | `/tool read <path>` | required |
+
+Both specs carry `risk: ToolRisk::ReadOnly`. No write, shell, delete, or network
+tool spec is registered.
+
+### `Available Tools` Prompt Section
+
+`PromptCompile` now includes an `Available Tools` section rendered from the catalog.
+`ToolCatalog::render_prompt_section()` produces a plain-text block that begins with
+an `Available Tools:` header, followed by a guidance paragraph and one entry per
+tool (name, slash command, risk, description, and inputs). This block is appended
+between the `Context:` section and the `Output:` section in every compiled prompt,
+regardless of whether manual tool context has been attached.
+
+The rendered block states explicitly:
+
+> The model cannot call these tools automatically in this POC — tool invocation
+> always requires an explicit user command.
+> Tool output is not included in the prompt unless the user runs
+> `/context attach-last-tool`.
+
+### Informational Only — No Automatic Tool Calling
+
+This section is **descriptive only**. The model receives the tool schema as context
+so it knows which tools exist and what they do, but it cannot invoke them directly.
+All tool execution is manual:
+
+1. Run `/tool list [path]` or `/tool read <path>` to execute a read-only tool.
+2. Run `/context attach-last-tool` to stage the tool output as pending prompt context.
+3. Submit your next plain-text message — the tool output is injected into the
+   `Context:` section of the compiled prompt for that turn only.
+
+Without step 2, the `Available Tools` block names the tools but includes **no tool
+output** in the prompt. Automatic or model-driven tool calling is explicitly out of
+scope for this POC.
+
 ## Manual Verification
 
 The following checks must be confirmed interactively before the POC is considered done:
