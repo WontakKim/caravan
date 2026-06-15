@@ -103,6 +103,18 @@ impl ManualToolContext {
             self.truncated
         )
     }
+
+    /// Returns the canonical source label that includes risk and truncation
+    /// metadata — does NOT embed the raw content.
+    ///
+    /// `risk=read_only` is hardcoded because every `ManualToolContext` is
+    /// constructed from a read-only tool (`read_file` / `list_files`).
+    pub fn source_label(&self) -> String {
+        format!(
+            "{} risk=read_only truncated={}",
+            self.source, self.truncated
+        )
+    }
 }
 
 #[cfg(test)]
@@ -199,6 +211,27 @@ mod tests {
         assert!(
             !summary.contains(raw),
             "summary must not contain raw content: {summary}"
+        );
+    }
+
+    // (h) source_label returns the canonical label with risk and truncated fields.
+    #[test]
+    fn source_label_includes_risk_and_truncated() {
+        let content = "This is the README content.";
+        let ctx = ManualToolContext::from_read_file("README.md", content);
+        assert_eq!(
+            ctx.source_label(),
+            "tool=read_file path=\"README.md\" risk=read_only truncated=false"
+        );
+        // Must not leak raw file content.
+        assert!(
+            !ctx.source_label().contains(content),
+            "source_label must not contain raw file content"
+        );
+        // Must not include bytes= field.
+        assert!(
+            !ctx.source_label().contains("bytes="),
+            "source_label must not contain bytes="
         );
     }
 
