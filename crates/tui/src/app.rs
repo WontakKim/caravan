@@ -216,6 +216,9 @@ impl App {
                     self.log
                         .push(format!("Assistant: {}", output.assistant_response));
                 }
+                if let Some(req) = &output.detected_model_tool_request {
+                    self.log.extend(req.user_guidance());
+                }
             }
         }
 
@@ -2118,5 +2121,87 @@ mod tests {
         );
         assert!(second_pc.detail.contains("Current User:\nsecond"));
         assert!(!second_pc.detail.contains("No prior conversation context."));
+    }
+
+    // --- ModelToolRequest guidance tests ---
+
+    #[test]
+    fn model_tool_request_guidance_shown_in_log_and_invariants_hold() {
+        // The first line of the message is plain text so the mock echo prefix
+        // "Mock response for: " does not land on the same line as the
+        // CARAVAN_TOOL_REQUEST delimiter, allowing the parser to detect it.
+        let mut app = App::new();
+        app.input =
+            "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
+                .to_string();
+        app.submit();
+
+        // (a) Positive case: guidance lines must appear in self.log.
+        assert!(
+            app.log.iter().any(|l| l == "Run: /tool read README.md"),
+            "log must contain the exact line 'Run: /tool read README.md'"
+        );
+        assert!(
+            app.log
+                .iter()
+                .any(|l| l.contains("/context attach-last-tool")),
+            "log must contain a line with '/context attach-last-tool'"
+        );
+        assert!(
+            app.log
+                .iter()
+                .any(|l| l.contains("did not execute it automatically")),
+            "log must contain a line with 'did not execute it automatically'"
+        );
+
+        // (b) Invariants: exactly one ModelToolRequest event (round-trip guard),
+        //     no tool-execution events, context fields untouched.
+        let events = app.event_log.events();
+        let model_tool_req_count = events
+            .iter()
+            .filter(|e| e.kind == EventKind::ModelToolRequest)
+            .count();
+        assert_eq!(
+            model_tool_req_count, 1,
+            "expected exactly one ModelToolRequest event (round-trip guard)"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult events"
+        );
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError events"
+        );
+        assert!(
+            app.last_tool_output_candidate.is_none(),
+            "last_tool_output_candidate must remain None"
+        );
+        assert!(
+            app.pending_manual_tool_context.is_none(),
+            "pending_manual_tool_context must remain None"
+        );
+    }
+
+    #[test]
+    fn plain_message_produces_no_model_tool_request_guidance() {
+        let mut app = App::new();
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        // (c) Negative case: no "Run: /tool" log lines and no ModelToolRequest event.
+        assert!(
+            !app.log.iter().any(|l| l.starts_with("Run: /tool")),
+            "plain message must not produce any 'Run: /tool' log lines"
+        );
+        let events = app.event_log.events();
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+            "plain message must not produce a ModelToolRequest event"
+        );
     }
 }
