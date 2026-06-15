@@ -19,6 +19,15 @@ pub enum ToolRisk {
     ReadOnly,
 }
 
+impl ToolRisk {
+    /// Returns the canonical snake_case string for this risk level.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ToolRisk::ReadOnly => "read_only",
+        }
+    }
+}
+
 /// Per-call execution context passed to every tool invocation.
 #[derive(Debug, PartialEq)]
 pub struct ToolExecutionContext {
@@ -492,5 +501,10 @@ mod tests {
         );
 
         assert!(matches!(result, Err(ToolError::NonUtf8 { .. })));
+    }
+
+    #[test]
+    fn tool_risk_read_only_as_str() {
+        assert_eq!(ToolRisk::ReadOnly.as_str(), "read_only");
     }
 }
