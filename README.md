@@ -1211,6 +1211,65 @@ marker); larger tool outputs are truncated before being inserted into the prompt
 To discard staged context before it is used, run `/context clear`. A
 `ToolContextClear` event is appended and the pending context is removed.
 
+### Source Label and Summary Formats
+
+Every `ManualToolContext` carries a canonical **source label** that identifies
+the tool, path, risk level, and truncation state without embedding any file
+content:
+
+```
+tool=<read_file|list_files> path="<path>" risk=read_only truncated=<bool>
+```
+
+For example, reading `README.md` with no truncation produces:
+
+```
+tool=read_file path="README.md" risk=read_only truncated=false
+```
+
+`risk=read_only` is always present — every `ManualToolContext` is produced by a
+read-only tool, so no other risk level is possible in this POC. `truncated=`
+reflects whether the stored `content` was trimmed to fit the 4096-byte cap.
+
+#### `/context status` and `ToolContextAttach` summary format
+
+`/context status` and the `ToolContextAttach` event `detail` field use an
+**extended summary** that appends a `bytes=<n>` byte-count field:
+
+```
+tool=read_file path="README.md" risk=read_only bytes=<n> truncated=<bool>
+```
+
+This summary is **summary-only** — it never includes the raw file content.
+Full file content appears **only** in the PromptCompile `Context:` section
+(see below), never in `/context status` output or the `ToolContextAttach` event
+detail.
+
+#### PromptCompile `Context:` section
+
+When pending manual tool context is present, the prompt compiler renders a
+structured block inside the `Context:` section:
+
+```
+Context:
+Manual Tool Context:
+Source:
+  tool=read_file path="README.md" risk=read_only truncated=false
+Content:
+<bounded file content, at most 4096 bytes>
+```
+
+When no manual tool context has been staged, the `Context:` section contains
+the fallback literal exactly as written:
+
+```
+Context:
+No external tool context is available in this POC.
+```
+
+This fallback is also the text shown for any turn where context was not attached
+(including after a one-shot context has been auto-cleared following its turn).
+
 ### Sensitive-data warning
 
 > **Warning:** `/context attach-last-tool` includes the bounded output of the
