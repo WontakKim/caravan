@@ -46,6 +46,7 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ToolError => labeled("Tool Error"),
                 EventKind::ToolContextAttach => labeled("Tool Context Attach"),
                 EventKind::ToolContextClear => labeled("Tool Context Clear"),
+                EventKind::ModelToolRequest => labeled("Model Tool Request"),
                 _ => format!(
                     "seq: {}\nkind: {}\nmessage: {}",
                     ev.seq,
@@ -398,6 +399,24 @@ mod tests {
         assert!(
             !result.contains("raw file body"),
             "result must not expose raw file body content"
+        );
+    }
+
+    #[test]
+    fn inspector_text_model_tool_request_uses_model_tool_request_label() {
+        let ev = AppEvent {
+            seq: EventSeq(17),
+            kind: EventKind::ModelToolRequest,
+            detail: "detected CARAVAN_TOOL_REQUEST block".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Model Tool Request:"),
+            "ModelToolRequest events should use 'Model Tool Request:' label"
+        );
+        assert!(
+            result.contains("detected CARAVAN_TOOL_REQUEST block"),
+            "result should contain the event detail"
         );
     }
 
