@@ -42,8 +42,9 @@ pub fn compile_prompt_with_context(
 
     let context = match manual_tool_context {
         Some(ctx) => format!(
-            "Manual Tool Context:\nSource: {}\nContent:\n{}",
-            ctx.source, ctx.content
+            "Manual Tool Context:\nSource:\n  {}\nContent:\n{}",
+            ctx.source_label(),
+            ctx.content
         ),
         None => "No external tool context is available in this POC.".to_string(),
     };
@@ -166,22 +167,26 @@ mod tests {
         use crate::manual_context::ManualToolContext;
 
         let ctx = ManualToolContext::from_read_file("notes.txt", "file body content");
-        let result = compile_prompt_with_context("tell me about it", &[], Some(&ctx));
+        let compiled = compile_prompt_with_context("tell me about it", &[], Some(&ctx));
 
-        // The output must contain all required labels.
-        assert!(result.contains("Manual Tool Context:"));
-        assert!(result.contains("Source:"));
-        assert!(result.contains("file body content"));
+        // Positive assertions: required labels and content are present.
+        assert!(compiled.contains("Manual Tool Context:"));
+        assert!(compiled.contains(
+            "Source:\n  tool=read_file path=\"notes.txt\" risk=read_only truncated=false"
+        ));
+        assert!(compiled.contains("Content:"));
+        assert!(compiled.contains("file body content"));
 
         // All of the above must appear after the Context: marker.
-        let context_pos = result
+        let context_pos = compiled
             .find("Context:")
             .expect("Context: section must exist");
-        let manual_pos = result
+        let manual_pos = compiled
             .find("Manual Tool Context:")
             .expect("Manual Tool Context: must be present");
-        let source_pos = result.find("Source:").expect("Source: must be present");
-        let content_pos = result
+        let source_pos = compiled.find("Source:").expect("Source: must be present");
+        let content_label_pos = compiled.find("Content:").expect("Content: must be present");
+        let content_body_pos = compiled
             .find("file body content")
             .expect("bounded content must be present");
         assert!(
@@ -193,18 +198,29 @@ mod tests {
             "Source: must appear after Context:"
         );
         assert!(
-            content_pos > context_pos,
+            content_label_pos > context_pos,
+            "Content: label must appear after Context:"
+        );
+        assert!(
+            content_body_pos > context_pos,
             "bounded content must appear after Context:"
         );
 
-        // The bounded content must NOT appear in the Conversation section.
-        let conversation_section = result
-            .split("\n\nCurrent User:")
+        // The bounded content must NOT appear in the Conversation or Current User sections.
+        let before_context = compiled
+            .split("\n\nContext:")
             .next()
-            .expect("Conversation section must exist");
+            .expect("Context: section must exist");
         assert!(
-            !conversation_section.contains("file body content"),
-            "bounded content must not appear in the Conversation section"
+            !before_context.contains("file body content"),
+            "bounded content must not appear before the Context: section"
+        );
+
+        // Runtime guard: the rendered prompt must not contain a byte count.
+        let forbidden = format!("{}=", "bytes");
+        assert!(
+            !compiled.contains(&forbidden),
+            "prompt must not contain a byte count (found '{forbidden}')"
         );
     }
 
