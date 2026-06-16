@@ -23,7 +23,7 @@ pub mod tool_schema;
 pub mod tools;
 pub mod transcript;
 
-pub use commands::{Command, ContextCommand, ParsedInput, ToolCommand};
+pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
 pub use model::{

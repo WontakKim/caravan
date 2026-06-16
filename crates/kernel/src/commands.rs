@@ -12,12 +12,19 @@ pub enum ContextCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RequestCommand {
+    Status,
+    Clear,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
     Clear,
     Exit,
     Tool(ToolCommand),
     Context(ContextCommand),
+    Request(RequestCommand),
     Unknown(String),
 }
 
@@ -41,6 +48,8 @@ pub fn parse_input(input: &str) -> ParsedInput {
             "/context attach-last-tool" => Command::Context(ContextCommand::AttachLastTool),
             "/context clear" => Command::Context(ContextCommand::Clear),
             "/context status" => Command::Context(ContextCommand::Status),
+            "/request status" => Command::Request(RequestCommand::Status),
+            "/request clear" => Command::Request(RequestCommand::Clear),
             t if t.starts_with("/tool ") => {
                 let after_tool = t["/tool ".len()..].trim();
                 let (subcommand, path) = match after_tool.split_once(char::is_whitespace) {
@@ -298,6 +307,40 @@ mod tests {
     fn context_bare_is_unknown() {
         assert!(matches!(
             parse_input("/context"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    // --- /request command parsing tests ---
+
+    #[test]
+    fn request_status_parses_correctly() {
+        assert_eq!(
+            parse_input("/request status"),
+            ParsedInput::SlashCommand(Command::Request(RequestCommand::Status))
+        );
+    }
+
+    #[test]
+    fn request_clear_parses_correctly() {
+        assert_eq!(
+            parse_input("/request clear"),
+            ParsedInput::SlashCommand(Command::Request(RequestCommand::Clear))
+        );
+    }
+
+    #[test]
+    fn request_unknown_subcommand_is_unknown() {
+        assert!(matches!(
+            parse_input("/request unknown"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn request_bare_is_unknown() {
+        assert!(matches!(
+            parse_input("/request"),
             ParsedInput::SlashCommand(Command::Unknown(_))
         ));
     }

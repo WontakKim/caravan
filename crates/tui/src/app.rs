@@ -102,7 +102,9 @@ impl App {
     }
 
     pub fn submit(&mut self) {
-        use kernel::commands::{Command, ContextCommand, ParsedInput, ToolCommand, parse_input};
+        use kernel::commands::{
+            Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand, parse_input,
+        };
 
         let raw = self.input.clone();
         match parse_input(&raw) {
@@ -199,6 +201,29 @@ impl App {
                                 .push(format!("- last tool output: {}", candidate_summary));
                         }
                     },
+                    Command::Request(rc) => match rc {
+                        RequestCommand::Status => {
+                            self.log.push("Model tool request status:".to_string());
+                            if let Some(req) = &self.pending_model_tool_request {
+                                self.log.push(format!("- pending: {}", req.detail()));
+                                self.log.push(format!(
+                                    "- suggested command: {}",
+                                    req.suggested_command()
+                                ));
+                                self.log.push(
+                                    "- next: run /context attach-last-tool after the tool succeeds"
+                                        .to_string(),
+                                );
+                            } else {
+                                self.log.push("- pending: none".to_string());
+                            }
+                        }
+                        RequestCommand::Clear => {
+                            self.pending_model_tool_request = None;
+                            self.log
+                                .push("Cleared pending model tool request.".to_string());
+                        }
+                    },
                     Command::Unknown(c) => {
                         self.event_log
                             .append(EventKind::UnknownSlashCommand, c.clone());
@@ -287,6 +312,8 @@ impl App {
             "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
             "  /context clear - clear pending manual tool context".to_string(),
             "  /context status - show pending manual tool context and last tool output".to_string(),
+            "  /request status - show the pending model tool request".to_string(),
+            "  /request clear - clear the pending model tool request".to_string(),
         ]
     }
 
@@ -638,6 +665,8 @@ mod tests {
             "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
             "  /context clear - clear pending manual tool context".to_string(),
             "  /context status - show pending manual tool context and last tool output".to_string(),
+            "  /request status - show the pending model tool request".to_string(),
+            "  /request clear - clear the pending model tool request".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
@@ -2342,6 +2371,208 @@ mod tests {
             app.pending_model_tool_request,
             Some(expected),
             "second detection must replace the existing pending_model_tool_request"
+        );
+    }
+
+    // --- /request command tests ---
+
+    #[test]
+    fn request_status_without_pending_logs_none_and_only_slash_command() {
+        let mut app = App::new();
+        assert!(app.pending_model_tool_request.is_none());
+
+        let log_len_before = app.log.len();
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request status".to_string();
+        app.submit();
+
+        // Exactly two log lines added: header and "none" line.
+        assert_eq!(app.log[log_len_before], "Model tool request status:");
+        assert_eq!(app.log[log_len_before + 1], "- pending: none");
+        assert_eq!(app.log.len(), log_len_before + 2);
+
+        // Exactly one event appended and it is SlashCommand.
+        assert_eq!(app.event_log.len(), event_len_before + 1);
+        let new_event = app.event_log.get(event_len_before).unwrap();
+        assert_eq!(new_event.kind, EventKind::SlashCommand);
+        assert_eq!(new_event.detail, "/request status");
+
+        // No RunCreate event anywhere.
+        assert!(
+            !app.event_log
+                .events()
+                .iter()
+                .any(|e| e.kind == EventKind::RunCreate),
+            "/request status must not start a model run"
+        );
+    }
+
+    #[test]
+    fn request_status_with_pending_logs_suggested_command_and_next_step() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let mut app = App::new();
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        };
+        app.pending_model_tool_request = Some(req.clone());
+
+        let log_len_before = app.log.len();
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request status".to_string();
+        app.submit();
+
+        // Exactly four log lines added.
+        assert_eq!(app.log[log_len_before], "Model tool request status:");
+        assert_eq!(
+            app.log[log_len_before + 1],
+            format!("- pending: {}", req.detail())
+        );
+        assert_eq!(
+            app.log[log_len_before + 2],
+            format!("- suggested command: {}", req.suggested_command())
+        );
+        assert_eq!(
+            app.log[log_len_before + 3],
+            "- next: run /context attach-last-tool after the tool succeeds"
+        );
+        assert_eq!(app.log.len(), log_len_before + 4);
+
+        // Exactly one event appended and it is SlashCommand.
+        assert_eq!(app.event_log.len(), event_len_before + 1);
+        let new_event = app.event_log.get(event_len_before).unwrap();
+        assert_eq!(new_event.kind, EventKind::SlashCommand);
+
+        // Status must NOT clear the pending request.
+        assert_eq!(
+            app.pending_model_tool_request,
+            Some(req),
+            "/request status must not clear pending_model_tool_request"
+        );
+
+        // No RunCreate event.
+        assert!(
+            !app.event_log
+                .events()
+                .iter()
+                .any(|e| e.kind == EventKind::RunCreate),
+            "/request status must not start a model run"
+        );
+    }
+
+    #[test]
+    fn request_clear_clears_pending_and_logs_message() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let mut app = App::new();
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        });
+
+        let log_len_before = app.log.len();
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request clear".to_string();
+        app.submit();
+
+        // pending_model_tool_request must be None after clear.
+        assert!(
+            app.pending_model_tool_request.is_none(),
+            "pending_model_tool_request must be None after /request clear"
+        );
+
+        // Exactly one log line added.
+        assert_eq!(
+            app.log[log_len_before],
+            "Cleared pending model tool request."
+        );
+        assert_eq!(app.log.len(), log_len_before + 1);
+
+        // Exactly one event appended and it is SlashCommand.
+        assert_eq!(app.event_log.len(), event_len_before + 1);
+        let new_event = app.event_log.get(event_len_before).unwrap();
+        assert_eq!(new_event.kind, EventKind::SlashCommand);
+
+        // No RunCreate event.
+        assert!(
+            !app.event_log
+                .events()
+                .iter()
+                .any(|e| e.kind == EventKind::RunCreate),
+            "/request clear must not start a model run"
+        );
+    }
+
+    #[test]
+    fn request_clear_without_pending_does_not_panic() {
+        let mut app = App::new();
+        assert!(app.pending_model_tool_request.is_none());
+
+        let log_len_before = app.log.len();
+        let event_len_before = app.event_log.len();
+
+        // Must not panic.
+        app.input = "/request clear".to_string();
+        app.submit();
+
+        assert!(app.pending_model_tool_request.is_none());
+
+        // Exactly one log line added.
+        assert_eq!(
+            app.log[log_len_before],
+            "Cleared pending model tool request."
+        );
+        assert_eq!(app.log.len(), log_len_before + 1);
+
+        // Exactly one event appended and it is SlashCommand.
+        assert_eq!(app.event_log.len(), event_len_before + 1);
+        let new_event = app.event_log.get(event_len_before).unwrap();
+        assert_eq!(new_event.kind, EventKind::SlashCommand);
+    }
+
+    #[test]
+    fn tool_success_does_not_auto_clear_pending_model_tool_request() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("notes.txt"), "hello").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        // Pre-seed a pending model tool request.
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "notes.txt".to_string(),
+        };
+        app.pending_model_tool_request = Some(req.clone());
+
+        // Run a successful /tool read — must NOT auto-clear pending_model_tool_request.
+        app.input = "/tool read notes.txt".to_string();
+        app.submit();
+
+        assert_eq!(
+            app.pending_model_tool_request,
+            Some(req),
+            "successful /tool read must not clear pending_model_tool_request (only /request clear does)"
+        );
+
+        // Also verify /tool list does not clear it.
+        app.input = "/tool list .".to_string();
+        app.submit();
+
+        assert!(
+            app.pending_model_tool_request.is_some(),
+            "successful /tool list must not clear pending_model_tool_request (only /request clear does)"
         );
     }
 }
