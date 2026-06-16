@@ -52,6 +52,8 @@ cargo test --workspace
 | `/context attach-last-tool`   | Attach the latest read-only tool output to the next prompt (one-shot)    |
 | `/context clear`              | Clear pending manual tool context                                         |
 | `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
+| `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
+| `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
 
 ### Header Context Indicator
 
@@ -62,6 +64,13 @@ last tool-output candidate available (i.e. a `/tool read` result that has not ye
 been explicitly attached via `/context attach-last-tool`) does **not** set the
 indicator to `pending`; only context that has actually been attached and is waiting
 to be sent causes the header to display `| Context: pending`.
+
+The header also includes a separate request indicator segment: it shows
+`| Request: pending` when a `ModelToolRequest` has been detected and stored as a
+pending suggested action that has not yet been cleared, and `| Request: none`
+otherwise. The request indicator reflects only the in-memory pending state set by
+`/request status` and cleared by `/request clear`; it is independent of the context
+indicator.
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
@@ -1417,6 +1426,49 @@ when the user runs the suggested `/tool` command manually.
 
 > **Limitation:** Paths with spaces are not supported yet. The suggested command
 > uses the raw path verbatim; use a path without spaces.
+
+### Pending Model Tool Request UX
+
+When Caravan detects a `CARAVAN_TOOL_REQUEST` block, it stores the detected
+request as a **pending suggested action** in memory — replacing any previously
+stored pending request. The pending state is surfaced through two commands and
+the `| Request:` header segment described above.
+
+#### `/request status`
+
+Shows the currently pending model tool request. The output includes:
+
+- The suggested `/tool` command to run (e.g. `/tool read <path>` or
+  `/tool list <path>`).
+- A reminder to run `/context attach-last-tool` as the next step after the tool
+  command completes.
+
+`/request status` is **read-only** — it does not run the model, does not execute
+any tool, and does not modify the pending state.
+
+#### `/request clear`
+
+Removes the pending model tool request. After `/request clear`, the header shows
+`| Request: none` and `/request status` reports that no request is pending.
+
+`/request clear` is **read-only** — it does not run the model and does not execute
+any tool.
+
+#### Behavior Contract
+
+The following invariants apply to the pending model tool request state:
+
+- A detected `ModelToolRequest` replaces any previously pending request — there
+  is at most one pending request at a time.
+- The pending request is **not** executed automatically; Caravan never runs a
+  tool on behalf of the model.
+- A plain model response (one that contains no `CARAVAN_TOOL_REQUEST` block)
+  does **not** clear the pending request — it remains pending until explicitly
+  cleared via `/request clear`.
+- A successful `/tool` command does **not** auto-clear the pending request — you
+  must run `/request clear` explicitly when you are done with it.
+- The pending state is **in-memory only** — it is not persisted to
+  `.caravan/events.jsonl` and is not restored across restarts.
 
 ## Manual Verification
 
