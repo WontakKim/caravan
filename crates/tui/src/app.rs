@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use kernel::events::{EventKind, EventLog};
 use kernel::manual_context::ManualToolContext;
 use kernel::model_gateway::ModelGateway;
+use kernel::model_tool_request::ModelToolRequest;
 use kernel::storage::EventStore;
 
 const INSPECTOR_SCROLL_STEP: u16 = 3;
@@ -22,6 +23,7 @@ pub struct App {
     pub workspace_root: PathBuf,
     pub last_tool_output_candidate: Option<ManualToolContext>,
     pub pending_manual_tool_context: Option<ManualToolContext>,
+    pub pending_model_tool_request: Option<ModelToolRequest>,
 }
 
 impl App {
@@ -39,6 +41,7 @@ impl App {
             workspace_root: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             last_tool_output_candidate: None,
             pending_manual_tool_context: None,
+            pending_model_tool_request: None,
         }
     }
 
@@ -78,6 +81,7 @@ impl App {
             workspace_root,
             last_tool_output_candidate: None,
             pending_manual_tool_context: None,
+            pending_model_tool_request: None,
         }
     }
 
@@ -218,6 +222,7 @@ impl App {
                 }
                 if let Some(req) = &output.detected_model_tool_request {
                     self.log.extend(req.user_guidance());
+                    self.pending_model_tool_request = Some(req.clone());
                 }
             }
         }
@@ -2202,6 +2207,141 @@ mod tests {
         assert!(
             !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
             "plain message must not produce a ModelToolRequest event"
+        );
+    }
+
+    // --- pending_model_tool_request field tests ---
+
+    #[test]
+    fn model_tool_request_detected_sets_pending_and_keeps_invariants() {
+        // The first line is plain text so the mock echo prefix does not land on
+        // the same line as the CARAVAN_TOOL_REQUEST delimiter, allowing detection.
+        let mut app = App::new();
+        app.input =
+            "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
+                .to_string();
+        app.submit();
+
+        assert!(
+            app.pending_model_tool_request.is_some(),
+            "pending_model_tool_request should be Some after detection"
+        );
+        assert!(
+            app.last_tool_output_candidate.is_none(),
+            "last_tool_output_candidate must remain None"
+        );
+        assert!(
+            app.pending_manual_tool_context.is_none(),
+            "pending_manual_tool_context must remain None"
+        );
+    }
+
+    #[test]
+    fn basic_mock_flow_keeps_pending_model_tool_request_none() {
+        let mut app = App::new();
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        assert!(
+            app.pending_model_tool_request.is_none(),
+            "pending_model_tool_request should remain None on plain mock response"
+        );
+    }
+
+    #[test]
+    fn error_path_does_not_set_pending_model_tool_request() {
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".to_string(), "openai".to_string())]);
+        let runtime_config = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        let gateway = kernel::model_gateway::ModelGateway::from_runtime_config(runtime_config);
+
+        let mut app = App::with_store_and_gateway(store, gateway);
+        app.input = "hello".to_string();
+        app.submit();
+
+        assert!(
+            app.pending_model_tool_request.is_none(),
+            "error path must not set pending_model_tool_request"
+        );
+    }
+
+    #[test]
+    fn none_detection_keeps_existing_pending() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let mut app = App::new();
+        let existing = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        };
+        app.pending_model_tool_request = Some(existing.clone());
+
+        // Plain message — default mock returns no tool request block (detected = None).
+        app.input = "hello caravan".to_string();
+        app.submit();
+
+        assert_eq!(
+            app.pending_model_tool_request,
+            Some(existing),
+            "existing pending must remain unchanged when detection is None"
+        );
+    }
+
+    #[test]
+    fn error_path_keeps_existing_pending() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let dir = TempDir::new();
+        let store = EventStore::new(dir.path());
+
+        let vars = HashMap::from([("CARAVAN_MODEL_PROVIDER".to_string(), "openai".to_string())]);
+        let runtime_config = ModelRuntimeConfig::from_env_map(&vars).unwrap();
+        let gateway = kernel::model_gateway::ModelGateway::from_runtime_config(runtime_config);
+
+        let mut app = App::with_store_and_gateway(store, gateway);
+        let existing = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        };
+        app.pending_model_tool_request = Some(existing.clone());
+
+        app.input = "hello".to_string();
+        app.submit();
+
+        assert_eq!(
+            app.pending_model_tool_request,
+            Some(existing),
+            "error path must not clear existing pending_model_tool_request"
+        );
+    }
+
+    #[test]
+    fn second_detection_replaces_pending() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let mut app = App::new();
+        // Pre-seed with a ListFiles request.
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ListFiles,
+            path: ".".to_string(),
+        });
+
+        // Submit a message that triggers read_file README.md detection via the mock path.
+        app.input =
+            "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
+                .to_string();
+        app.submit();
+
+        let expected = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        };
+        assert_eq!(
+            app.pending_model_tool_request,
+            Some(expected),
+            "second detection must replace the existing pending_model_tool_request"
         );
     }
 }

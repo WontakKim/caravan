@@ -59,18 +59,25 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
 }
 
 /// Returns the header text, appending `| Context: pending` when
-/// `app.pending_manual_tool_context` is `Some` and `| Context: none` otherwise.
-/// The indicator reflects ONLY `pending_manual_tool_context`; `last_tool_output_candidate`
-/// alone (with pending still `None`) yields `| Context: none`.
+/// `app.pending_manual_tool_context` is `Some` and `| Context: none` otherwise,
+/// and appending `| Request: pending` when `app.pending_model_tool_request` is
+/// `Some` and `| Request: none` otherwise.
+/// The `Context` indicator reflects ONLY `pending_manual_tool_context`;
+/// `last_tool_output_candidate` alone (with pending still `None`) yields `| Context: none`.
 fn header_text(app: &crate::app::App) -> String {
     let context_label = if app.pending_manual_tool_context.is_some() {
         "pending"
     } else {
         "none"
     };
+    let request_label = if app.pending_model_tool_request.is_some() {
+        "pending"
+    } else {
+        "none"
+    };
     format!(
-        "Caravan | TUI Shell | Status: Ready | Context: {}",
-        context_label
+        "Caravan | TUI Shell | Status: Ready | Context: {} | Request: {}",
+        context_label, request_label
     )
 }
 
@@ -457,7 +464,7 @@ mod tests {
         let app = App::new();
         assert_eq!(
             header_text(&app),
-            "Caravan | TUI Shell | Status: Ready | Context: none"
+            "Caravan | TUI Shell | Status: Ready | Context: none | Request: none"
         );
     }
 
@@ -469,7 +476,7 @@ mod tests {
         );
         assert_eq!(
             header_text(&app),
-            "Caravan | TUI Shell | Status: Ready | Context: pending"
+            "Caravan | TUI Shell | Status: Ready | Context: pending | Request: none"
         );
     }
 
@@ -483,11 +490,26 @@ mod tests {
         let result = header_text(&app);
         assert_eq!(
             result,
-            "Caravan | TUI Shell | Status: Ready | Context: none"
+            "Caravan | TUI Shell | Status: Ready | Context: none | Request: none"
         );
         assert!(
             !result.contains("Context: pending"),
             "result must not contain 'Context: pending' when only last_tool_output_candidate is set"
+        );
+    }
+
+    #[test]
+    fn header_text_with_model_tool_request_shows_request_pending() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let mut app = App::new();
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "README.md".to_string(),
+        });
+        assert_eq!(
+            header_text(&app),
+            "Caravan | TUI Shell | Status: Ready | Context: none | Request: pending"
         );
     }
 }
