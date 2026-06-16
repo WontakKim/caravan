@@ -68,9 +68,10 @@ to be sent causes the header to display `| Context: pending`.
 The header also includes a separate request indicator segment: it shows
 `| Request: pending` when a `ModelToolRequest` has been detected and stored as a
 pending suggested action that has not yet been cleared, and `| Request: none`
-otherwise. The request indicator reflects only the in-memory pending state set by
-`/request status` and cleared by `/request clear`; it is independent of the context
-indicator.
+otherwise. The request indicator reflects only the in-memory pending state, which is
+set when a `ModelToolRequest` is detected in a model response and is cleared by
+`/request clear`; the read-only `/request status` command displays this state without
+changing it. The request indicator is independent of the context indicator.
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
