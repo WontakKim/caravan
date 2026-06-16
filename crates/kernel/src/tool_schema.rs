@@ -87,7 +87,9 @@ impl ToolCatalog {
              response. Caravan will detect the block and record a ModelToolRequest. The request \
              is not executed automatically — the user must run the matching /tool command \
              manually, and tool output enters the prompt only if the user runs \
-             `/context attach-last-tool`.\n\
+             `/context attach-last-tool`. \
+             To inspect the recorded request run `/request status`; \
+             to discard it run `/request clear`.\n\
              \n\
              Example (read_file):\n\
              CARAVAN_TOOL_REQUEST\n\
@@ -215,6 +217,14 @@ mod tests {
         assert!(
             section.contains("ModelToolRequest"),
             "missing ModelToolRequest reference"
+        );
+        assert!(
+            section.contains("/request status"),
+            "missing /request status reference"
+        );
+        assert!(
+            section.contains("/request clear"),
+            "missing /request clear reference"
         );
 
         // Forbidden phrases must NOT appear (built at runtime to avoid grep false-positives).
