@@ -40,9 +40,9 @@ crates/kernel/src/
 │   ├── mod.rs           # ModelAdapter trait, ModelRequest/Output/Error/Usage
 │   └── openai/          # OpenAI-compatible HTTP adapter
 │       ├── mod.rs
-│       ├── compatible.rs  # OpenAI-compatible provider detection
+│       ├── compatible.rs  # OpenAICompatibleAdapter (ModelAdapter impl)
 │       ├── config.rs      # Provider-specific URL / auth config
-│       ├── http.rs        # Blocking + async HTTP clients, StubOpenAIHttpClient
+│       ├── http.rs        # StubOpenAIHttpClient + BlockingOpenAIHttpClient (synchronous; no async/tokio)
 │       ├── request.rs     # Request serialisation helpers
 │       └── types.rs       # OpenAI wire types (ChatCompletionRequest, etc.)
 │
