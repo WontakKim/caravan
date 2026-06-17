@@ -3,6 +3,8 @@
 //! This module is intentionally free of filesystem access and path-safety
 //! validation; those concerns belong to the `ToolRegistry` execution stage.
 
+use crate::tools::ToolRequest;
+
 const OPEN_DELIMITER: &str = "CARAVAN_TOOL_REQUEST";
 const CLOSE_DELIMITER: &str = "END_CARAVAN_TOOL_REQUEST";
 
@@ -52,6 +54,19 @@ impl ModelToolRequest {
             format!("Run: {}", self.suggested_command()),
             "Then run: /context attach-last-tool".to_string(),
         ]
+    }
+
+    /// Converts this `ModelToolRequest` into a `ToolRequest` suitable for
+    /// passing to `ToolRegistry::execute`.
+    pub fn to_tool_request(&self) -> ToolRequest {
+        match self.kind {
+            ModelToolRequestKind::ReadFile => ToolRequest::ReadFile {
+                path: self.path.clone(),
+            },
+            ModelToolRequestKind::ListFiles => ToolRequest::ListFiles {
+                path: self.path.clone(),
+            },
+        }
     }
 }
 
@@ -345,6 +360,34 @@ mod tests {
                 .iter()
                 .any(|line| line.contains("did not execute it automatically")),
             "expected guidance to contain 'did not execute it automatically'"
+        );
+    }
+
+    #[test]
+    fn model_tool_request_read_file_to_tool_request() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "src/main.rs".to_string(),
+        };
+        assert_eq!(
+            req.to_tool_request(),
+            ToolRequest::ReadFile {
+                path: "src/main.rs".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn model_tool_request_list_files_to_tool_request() {
+        let req = ModelToolRequest {
+            kind: ModelToolRequestKind::ListFiles,
+            path: "src/".to_string(),
+        };
+        assert_eq!(
+            req.to_tool_request(),
+            ToolRequest::ListFiles {
+                path: "src/".to_string(),
+            }
         );
     }
 }
