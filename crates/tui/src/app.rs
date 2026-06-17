@@ -102,7 +102,7 @@ impl App {
     }
 
     pub fn submit(&mut self) {
-        use kernel::commands::{Command, ParsedInput, RequestCommand, parse_input};
+        use kernel::commands::{Command, ParsedInput, parse_input};
 
         let raw = self.input.clone();
         match parse_input(&raw) {
@@ -127,75 +127,7 @@ impl App {
                     }
                     Command::Tool(tc) => self.handle_tool_command(tc),
                     Command::Context(cc) => self.handle_context_command(cc),
-                    Command::Request(rc) => match rc {
-                        RequestCommand::Status => {
-                            self.log.push("Model tool request status:".to_string());
-                            if let Some(req) = &self.pending_model_tool_request {
-                                self.log.push(format!("- pending: {}", req.detail()));
-                                self.log.push(format!(
-                                    "- suggested command: {}",
-                                    req.suggested_command()
-                                ));
-                                self.log.push(
-                                    "- next: run /context attach-last-tool after the tool succeeds"
-                                        .to_string(),
-                                );
-                            } else {
-                                self.log.push("- pending: none".to_string());
-                            }
-                        }
-                        RequestCommand::Clear => {
-                            self.pending_model_tool_request = None;
-                            self.log
-                                .push("Cleared pending model tool request.".to_string());
-                        }
-                        RequestCommand::Run => {
-                            use kernel::{ToolEventRunner, ToolExecutionContext, ToolOutput};
-                            if let Some(req) = self.pending_model_tool_request.clone() {
-                                let ctx = ToolExecutionContext {
-                                    workspace_root: self.workspace_root.clone(),
-                                };
-                                let display_path = req.path.clone();
-                                let tool_request = req.to_tool_request();
-                                match ToolEventRunner::new_readonly().run(
-                                    &mut self.event_log,
-                                    &ctx,
-                                    tool_request,
-                                ) {
-                                    Ok(ToolOutput::FileList { entries, .. }) => {
-                                        self.last_tool_output_candidate =
-                                            Some(ManualToolContext::from_list_files(
-                                                &display_path,
-                                                &entries,
-                                            ));
-                                        self.push_tool_list_output(&display_path, entries);
-                                        self.pending_model_tool_request = None;
-                                        self.log.push(
-                                            "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
-                                        );
-                                    }
-                                    Ok(ToolOutput::FileContent { content, .. }) => {
-                                        self.last_tool_output_candidate =
-                                            Some(ManualToolContext::from_read_file(
-                                                &display_path,
-                                                &content,
-                                            ));
-                                        self.push_tool_read_output(&display_path, &content);
-                                        self.pending_model_tool_request = None;
-                                        self.log.push(
-                                            "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
-                                        );
-                                    }
-                                    Err(error) => {
-                                        self.push_tool_error_output(error);
-                                        // Keep pending_model_tool_request unchanged on failure.
-                                    }
-                                }
-                            } else {
-                                self.log.push("No pending model tool request.".to_string());
-                            }
-                        }
-                    },
+                    Command::Request(rc) => self.handle_request_command(rc),
                     Command::Unknown(c) => {
                         self.event_log
                             .append(EventKind::UnknownSlashCommand, c.clone());
@@ -248,6 +180,7 @@ impl App {
 
 mod context;
 mod logging;
+mod request;
 mod selection;
 mod tools;
 
