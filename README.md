@@ -53,7 +53,7 @@ cargo test --workspace
 | `/context clear`              | Clear pending manual tool context                                         |
 | `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
 | `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
-| `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
+| `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolPolicy` + `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolPolicy` + `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
 | `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
 
 ### Header Context Indicator
@@ -1112,7 +1112,8 @@ into the `EventLog` as a sequence of typed events:
 
 | Event | When it is recorded |
 |-------|---------------------|
-| `ToolCall` | Immediately before the tool executes; carries the tool name and input arguments |
+| `ToolPolicy` | Immediately before `ToolCall`; carries the policy decision for the request (see [Read-only Tool Policy / Approval-lite Boundary](#read-only-tool-policy--approval-lite-boundary)) |
+| `ToolCall` | After the `ToolPolicy` allow decision and immediately before the tool executes; carries the tool name and input arguments |
 | `ToolResult` | After a successful execution; carries a **summary only** — never the full file content |
 | `ToolError` | After a failed execution; carries the tool name and error detail |
 
@@ -1122,9 +1123,10 @@ by `read_file` or `list_files`. This keeps event-log detail strings bounded in
 size regardless of the files being read.
 
 > `ToolEventRunner` is invoked by the `/tool list` and `/tool read` slash
-> commands (via `App::submit()`). It appends `ToolCall`, `ToolResult`, and
-> `ToolError` events to the EventLog; those events render in the Inspector under
-> the `Tool Call`, `Tool Result`, and `Tool Error` labels. No model output
+> commands (via `App::submit()`). It appends a `ToolPolicy` event, then
+> `ToolCall`, then `ToolResult` or `ToolError` to the EventLog; those events
+> render in the Inspector under the `Tool Policy`, `Tool Call`, `Tool Result`,
+> and `Tool Error` labels. No model output
 > triggers a tool call — tool results are not yet injected into the model
 > prompt, and there is no model-driven tool calling yet.
 
