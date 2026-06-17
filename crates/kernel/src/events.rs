@@ -38,6 +38,7 @@ pub enum EventKind {
     RunFail,
     ModelError,
     ModelToolRequest,
+    ToolPolicy,
     ToolCall,
     ToolResult,
     ToolError,
@@ -68,6 +69,7 @@ impl EventKind {
             EventKind::RunFail => "RunFail",
             EventKind::ModelError => "ModelError",
             EventKind::ModelToolRequest => "ModelToolRequest",
+            EventKind::ToolPolicy => "ToolPolicy",
             EventKind::ToolCall => "ToolCall",
             EventKind::ToolResult => "ToolResult",
             EventKind::ToolError => "ToolError",
@@ -474,6 +476,24 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&json).expect("parsing to Value should succeed");
         assert_eq!(v["kind"], "ToolCall");
+        let restored: AppEvent =
+            serde_json::from_str(&json).expect("deserialization should succeed");
+        assert_eq!(event, restored);
+    }
+
+    #[test]
+    fn tool_policy_event_kind_name_and_json_round_trip() {
+        assert_eq!(EventKind::ToolPolicy.name(), "ToolPolicy");
+
+        let event = AppEvent {
+            seq: EventSeq(1),
+            kind: EventKind::ToolPolicy,
+            detail: "policy=allow tool=read_file".into(),
+        };
+        let json = serde_json::to_string(&event).expect("serialization should succeed");
+        let v: serde_json::Value =
+            serde_json::from_str(&json).expect("parsing to Value should succeed");
+        assert_eq!(v["kind"], "ToolPolicy");
         let restored: AppEvent =
             serde_json::from_str(&json).expect("deserialization should succeed");
         assert_eq!(event, restored);
