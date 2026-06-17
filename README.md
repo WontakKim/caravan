@@ -13,6 +13,8 @@ and three crates under `crates/`:
 | `tui` | `crates/tui` | App state, input handling, and rendering (depends on `kernel`) |
 | `cli` | `crates/cli` | Binary entrypoint; produces the `caravan` binary (depends on `kernel` and `tui`) |
 
+See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the internal module layout and refactor criteria.
+
 ## Public API
 
 `kernel` re-exports its frequently used domain, model, and runtime types at the crate root; `tui` re-exports `App`.
