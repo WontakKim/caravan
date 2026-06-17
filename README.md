@@ -53,6 +53,7 @@ cargo test --workspace
 | `/context clear`              | Clear pending manual tool context                                         |
 | `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
 | `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
+| `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
 | `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
 
 ### Header Context Indicator
@@ -1446,6 +1447,41 @@ Shows the currently pending model tool request. The output includes:
 
 `/request status` is **read-only** — it does not run the model, does not execute
 any tool, and does not modify the pending state.
+
+#### `/request run`
+
+Explicitly executes the pending model tool request as a read-only tool. This is
+the **only** way a model-requested tool is ever run — the model response alone
+never causes a tool to execute automatically.
+
+**Success path** — when a pending request exists and the tool executes without
+error:
+
+1. A `SlashCommand` event is recorded for the `/request run` command.
+2. A `ToolCall` event is appended immediately before the tool runs, carrying the
+   tool name and input arguments.
+3. A `ToolResult` event is appended after a successful execution, carrying a
+   summary of the output (never the full file content).
+4. A preview of the tool output is shown in the screen log.
+5. The manual tool output candidate is updated so that a subsequent
+   `/context attach-last-tool` picks up this result.
+6. The pending model tool request is cleared (header returns to
+   `| Request: none`).
+7. A prompt to run `/context attach-last-tool` is shown in the screen log.
+
+**Failure path** — when the tool executes but returns an error:
+
+1. A `SlashCommand` event is recorded.
+2. A `ToolCall` event is appended.
+3. A `ToolError` event is appended, carrying the tool name and error detail.
+4. The pending model tool request is **kept** — the request remains pending so
+   you can correct the problem and retry.
+
+**No-pending path** — when no request is currently pending:
+
+- The message `No pending model tool request.` is shown in the screen log.
+- No tool is run, no model is called, and no event is appended beyond the
+  `SlashCommand` event for `/request run`.
 
 #### `/request clear`
 
