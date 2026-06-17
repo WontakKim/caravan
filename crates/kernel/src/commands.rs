@@ -15,6 +15,7 @@ pub enum ContextCommand {
 pub enum RequestCommand {
     Status,
     Clear,
+    Run,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +51,7 @@ pub fn parse_input(input: &str) -> ParsedInput {
             "/context status" => Command::Context(ContextCommand::Status),
             "/request status" => Command::Request(RequestCommand::Status),
             "/request clear" => Command::Request(RequestCommand::Clear),
+            "/request run" => Command::Request(RequestCommand::Run),
             t if t.starts_with("/tool ") => {
                 let after_tool = t["/tool ".len()..].trim();
                 let (subcommand, path) = match after_tool.split_once(char::is_whitespace) {
@@ -341,6 +343,38 @@ mod tests {
     fn request_bare_is_unknown() {
         assert!(matches!(
             parse_input("/request"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn request_run_parses_correctly() {
+        assert_eq!(
+            parse_input("/request run"),
+            ParsedInput::SlashCommand(Command::Request(RequestCommand::Run))
+        );
+    }
+
+    #[test]
+    fn request_approve_is_unknown() {
+        assert!(matches!(
+            parse_input("/request approve"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn request_execute_is_unknown() {
+        assert!(matches!(
+            parse_input("/request execute"),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ));
+    }
+
+    #[test]
+    fn request_accept_is_unknown() {
+        assert!(matches!(
+            parse_input("/request accept"),
             ParsedInput::SlashCommand(Command::Unknown(_))
         ));
     }

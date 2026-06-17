@@ -223,6 +223,52 @@ impl App {
                             self.log
                                 .push("Cleared pending model tool request.".to_string());
                         }
+                        RequestCommand::Run => {
+                            use kernel::{ToolEventRunner, ToolExecutionContext, ToolOutput};
+                            if let Some(req) = self.pending_model_tool_request.clone() {
+                                let ctx = ToolExecutionContext {
+                                    workspace_root: self.workspace_root.clone(),
+                                };
+                                let display_path = req.path.clone();
+                                let tool_request = req.to_tool_request();
+                                match ToolEventRunner::new_readonly().run(
+                                    &mut self.event_log,
+                                    &ctx,
+                                    tool_request,
+                                ) {
+                                    Ok(ToolOutput::FileList { entries, .. }) => {
+                                        self.last_tool_output_candidate =
+                                            Some(ManualToolContext::from_list_files(
+                                                &display_path,
+                                                &entries,
+                                            ));
+                                        self.push_tool_list_output(&display_path, entries);
+                                        self.pending_model_tool_request = None;
+                                        self.log.push(
+                                            "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
+                                        );
+                                    }
+                                    Ok(ToolOutput::FileContent { content, .. }) => {
+                                        self.last_tool_output_candidate =
+                                            Some(ManualToolContext::from_read_file(
+                                                &display_path,
+                                                &content,
+                                            ));
+                                        self.push_tool_read_output(&display_path, &content);
+                                        self.pending_model_tool_request = None;
+                                        self.log.push(
+                                            "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
+                                        );
+                                    }
+                                    Err(error) => {
+                                        self.push_tool_error_output(error);
+                                        // Keep pending_model_tool_request unchanged on failure.
+                                    }
+                                }
+                            } else {
+                                self.log.push("No pending model tool request.".to_string());
+                            }
+                        }
                     },
                     Command::Unknown(c) => {
                         self.event_log
@@ -314,6 +360,7 @@ impl App {
             "  /context status - show pending manual tool context and last tool output".to_string(),
             "  /request status - show the pending model tool request".to_string(),
             "  /request clear - clear the pending model tool request".to_string(),
+            "  /request run - execute the pending model tool request (read-only)".to_string(),
         ]
     }
 
@@ -667,6 +714,7 @@ mod tests {
             "  /context status - show pending manual tool context and last tool output".to_string(),
             "  /request status - show the pending model tool request".to_string(),
             "  /request clear - clear the pending model tool request".to_string(),
+            "  /request run - execute the pending model tool request (read-only)".to_string(),
         ];
         assert_eq!(App::help_lines(), expected);
     }
@@ -2573,6 +2621,361 @@ mod tests {
         assert!(
             app.pending_model_tool_request.is_some(),
             "successful /tool list must not clear pending_model_tool_request (only /request clear does)"
+        );
+    }
+
+    // --- /request run tests ---
+
+    #[test]
+    fn request_run_without_pending() {
+        let mut app = App::new();
+        assert!(app.pending_model_tool_request.is_none());
+
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let new_events = &app.event_log.events()[event_len_before..];
+
+        // No ToolCall/ToolResult/ToolError events appended.
+        assert!(
+            !new_events.iter().any(|e| e.kind == EventKind::ToolCall),
+            "must not emit ToolCall when no pending request"
+        );
+        assert!(
+            !new_events.iter().any(|e| e.kind == EventKind::ToolResult),
+            "must not emit ToolResult when no pending request"
+        );
+        assert!(
+            !new_events.iter().any(|e| e.kind == EventKind::ToolError),
+            "must not emit ToolError when no pending request"
+        );
+        // No model run events.
+        assert!(
+            !new_events.iter().any(|e| e.kind == EventKind::RunCreate),
+            "must not start a model run"
+        );
+        assert!(
+            !new_events.iter().any(|e| e.kind == EventKind::ModelRoute),
+            "must not emit ModelRoute"
+        );
+        assert!(
+            !new_events
+                .iter()
+                .any(|e| e.kind == EventKind::AssistantMessage),
+            "must not emit AssistantMessage"
+        );
+        // "No pending model tool request." must appear in the log.
+        assert!(
+            app.log
+                .iter()
+                .any(|l| l == "No pending model tool request."),
+            "log must contain 'No pending model tool request.'"
+        );
+        // pending_model_tool_request remains None (header: Request: none).
+        assert!(app.pending_model_tool_request.is_none());
+    }
+
+    #[test]
+    fn request_run_pending_read_file_success() {
+        use kernel::manual_context::ManualToolContext;
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("notes.txt"), "hello world").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "notes.txt".to_string(),
+        });
+
+        // Pre-seed a sentinel pending_manual_tool_context.
+        let sentinel_ctx = ManualToolContext::from_read_file("sentinel.txt", "sentinel content");
+        let sentinel_summary = sentinel_ctx.attach_summary();
+        app.pending_manual_tool_context = Some(sentinel_ctx);
+
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let new_events = &app.event_log.events()[event_len_before..];
+
+        // Events in order: SlashCommand → ToolCall → ToolResult.
+        assert!(
+            new_events.len() >= 3,
+            "expected at least 3 new events, got {}",
+            new_events.len()
+        );
+        assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+        assert_eq!(new_events[1].kind, EventKind::ToolCall);
+        assert_eq!(new_events[2].kind, EventKind::ToolResult);
+
+        // No model run events.
+        assert!(!new_events.iter().any(|e| e.kind == EventKind::RunCreate));
+        assert!(!new_events.iter().any(|e| e.kind == EventKind::ModelRoute));
+        assert!(
+            !new_events
+                .iter()
+                .any(|e| e.kind == EventKind::AssistantMessage)
+        );
+
+        // pending_model_tool_request cleared on success (header: Request: none).
+        assert!(
+            app.pending_model_tool_request.is_none(),
+            "pending_model_tool_request must be None after successful /request run"
+        );
+
+        // last_tool_output_candidate updated.
+        assert!(
+            app.last_tool_output_candidate.is_some(),
+            "last_tool_output_candidate must be Some after successful /request run"
+        );
+
+        // pending_manual_tool_context unchanged.
+        assert_eq!(
+            app.pending_manual_tool_context
+                .as_ref()
+                .map(|c| c.attach_summary()),
+            Some(sentinel_summary),
+            "pending_manual_tool_context must remain unchanged"
+        );
+
+        // Log contains read preview and attach-guidance line.
+        assert!(
+            app.log.iter().any(|l| l.contains("Tool read")),
+            "log must contain read preview"
+        );
+        assert!(
+            app.log.iter().any(|l| {
+                l == "Run /context attach-last-tool to include this tool output in the next prompt."
+            }),
+            "log must contain attach-guidance line"
+        );
+    }
+
+    #[test]
+    fn request_run_pending_list_files_success() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("file_a.txt"), "a").unwrap();
+        std::fs::write(workspace_dir.path().join("file_b.txt"), "b").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ListFiles,
+            path: ".".to_string(),
+        });
+
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let new_events = &app.event_log.events()[event_len_before..];
+
+        // Events in order: SlashCommand → ToolCall → ToolResult.
+        assert!(
+            new_events.len() >= 3,
+            "expected at least 3 new events, got {}",
+            new_events.len()
+        );
+        assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+        assert_eq!(new_events[1].kind, EventKind::ToolCall);
+        assert_eq!(new_events[2].kind, EventKind::ToolResult);
+
+        // No model run events.
+        assert!(!new_events.iter().any(|e| e.kind == EventKind::RunCreate));
+        assert!(!new_events.iter().any(|e| e.kind == EventKind::ModelRoute));
+        assert!(
+            !new_events
+                .iter()
+                .any(|e| e.kind == EventKind::AssistantMessage)
+        );
+
+        // pending cleared (header: Request: none).
+        assert!(
+            app.pending_model_tool_request.is_none(),
+            "pending_model_tool_request must be None after successful /request run"
+        );
+
+        // last_tool_output_candidate updated.
+        assert!(
+            app.last_tool_output_candidate.is_some(),
+            "last_tool_output_candidate must be Some after successful /request run"
+        );
+
+        // Log contains list preview and attach-guidance line.
+        assert!(
+            app.log.iter().any(|l| l.contains("Tool list")),
+            "log must contain list preview"
+        );
+        assert!(
+            app.log.iter().any(|l| {
+                l == "Run /context attach-last-tool to include this tool output in the next prompt."
+            }),
+            "log must contain attach-guidance line"
+        );
+    }
+
+    #[test]
+    fn request_run_pending_path_violation_tool_error() {
+        use kernel::manual_context::ManualToolContext;
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        let escaping_req = ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "../../etc/passwd".to_string(),
+        };
+        app.pending_model_tool_request = Some(escaping_req.clone());
+
+        // Pre-seed sentinel values for both candidates.
+        let sentinel_candidate =
+            ManualToolContext::from_read_file("sentinel.txt", "sentinel content");
+        let sentinel_candidate_summary = sentinel_candidate.attach_summary();
+        app.last_tool_output_candidate = Some(sentinel_candidate);
+
+        let sentinel_ctx = ManualToolContext::from_read_file("ctx_sentinel.txt", "ctx content");
+        let sentinel_ctx_summary = sentinel_ctx.attach_summary();
+        app.pending_manual_tool_context = Some(sentinel_ctx);
+
+        let event_len_before = app.event_log.len();
+
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let new_events = &app.event_log.events()[event_len_before..];
+
+        // Events in order: SlashCommand → ToolCall → ToolError.
+        assert!(
+            new_events.len() >= 3,
+            "expected at least 3 new events, got {}",
+            new_events.len()
+        );
+        assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+        assert_eq!(new_events[1].kind, EventKind::ToolCall);
+        assert_eq!(new_events[2].kind, EventKind::ToolError);
+
+        // No model run events.
+        assert!(!new_events.iter().any(|e| e.kind == EventKind::RunCreate));
+        assert!(!new_events.iter().any(|e| e.kind == EventKind::ModelRoute));
+        assert!(
+            !new_events
+                .iter()
+                .any(|e| e.kind == EventKind::AssistantMessage)
+        );
+
+        // pending_model_tool_request kept (header: Request: pending).
+        assert!(
+            app.pending_model_tool_request.is_some(),
+            "pending_model_tool_request must remain Some after tool error"
+        );
+
+        // Both sentinels unchanged.
+        assert_eq!(
+            app.last_tool_output_candidate
+                .as_ref()
+                .map(|c| c.attach_summary()),
+            Some(sentinel_candidate_summary),
+            "last_tool_output_candidate must be unchanged on failure"
+        );
+        assert_eq!(
+            app.pending_manual_tool_context
+                .as_ref()
+                .map(|c| c.attach_summary()),
+            Some(sentinel_ctx_summary),
+            "pending_manual_tool_context must be unchanged on failure"
+        );
+
+        // Log contains a tool error message.
+        assert!(
+            app.log.iter().any(|l| l.contains("Tool error:")),
+            "log must contain a tool error message"
+        );
+    }
+
+    #[test]
+    fn request_run_success_then_attach_last_tool_includes_output() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        let file_content = "caravan tool output";
+        std::fs::write(workspace_dir.path().join("output.txt"), file_content).unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "output.txt".to_string(),
+        });
+
+        // Step 1: /request run (success).
+        app.input = "/request run".to_string();
+        app.submit();
+        assert!(
+            app.pending_model_tool_request.is_none(),
+            "pending must be cleared after successful run"
+        );
+        assert!(
+            app.last_tool_output_candidate.is_some(),
+            "candidate must be set after successful run"
+        );
+
+        // Step 2: /context attach-last-tool.
+        app.input = "/context attach-last-tool".to_string();
+        app.submit();
+        assert!(
+            app.pending_manual_tool_context.is_some(),
+            "pending_manual_tool_context must be set after attach"
+        );
+
+        // Step 3: user message — the PromptCompile event must include the tool output.
+        app.input = "use the output".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        let prompt_compile = events
+            .iter()
+            .filter(|e| e.kind == EventKind::PromptCompile)
+            .last()
+            .expect("PromptCompile event should exist");
+
+        assert!(
+            prompt_compile.detail.contains(file_content),
+            "PromptCompile detail must include the tool output content"
         );
     }
 }
