@@ -19,6 +19,7 @@ pub mod prompt;
 pub mod runner;
 pub mod storage;
 pub mod tool_events;
+pub mod tool_policy;
 pub mod tool_schema;
 pub mod tools;
 pub mod transcript;
@@ -44,6 +45,7 @@ pub use model_types::{ModelAdapterKind, ModelProvider};
 pub use runner::{MockRunOutput, run_mock_turn};
 pub use storage::EventStore;
 pub use tool_events::ToolEventRunner;
+pub use tool_policy::{ToolPolicyDecision, ToolPolicyEngine, ToolPolicyOutcome};
 pub use tool_schema::{ToolCatalog, ToolInputSpec, ToolSpec};
 pub use tools::{
     ToolError, ToolExecutionContext, ToolName, ToolOutput, ToolRegistry, ToolRequest, ToolRisk,
