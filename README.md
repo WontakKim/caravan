@@ -149,6 +149,7 @@ not persisted to `.caravan/events.jsonl`.
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
 | `ToolContextAttach`          | When `/context attach-last-tool` successfully stages a recent tool output as pending context; detail is summary-only (no raw tool output). Not emitted when there is no recent tool output to attach |
 | `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
+| `ToolPolicy`                 | Policy decision trace recorded immediately before `ToolCall`; carries the tool name, path, risk level, decision, and reason |
 
 ## Mock Run/Turn Flow
 
@@ -1126,6 +1127,75 @@ size regardless of the files being read.
 > the `Tool Call`, `Tool Result`, and `Tool Error` labels. No model output
 > triggers a tool call — tool results are not yet injected into the model
 > prompt, and there is no model-driven tool calling yet.
+
+## Read-only Tool Policy / Approval-lite Boundary
+
+`ToolPolicyEngine` provides the policy gate between a tool request and its
+execution. It evaluates every `ToolRequest` before any filesystem operation
+is attempted and records the outcome as a `ToolPolicy` event in the `EventLog`.
+
+### Current Policy: Auto-allow Read-only Tools
+
+`ToolPolicyEngine::read_only()` is the engine wired into `ToolEventRunner`.
+Its current policy is to **auto-allow every read-only tool** — no interactive
+approval is required. The `ToolPolicy` event is always `decision=allow` on the
+production path.
+
+### `ToolPolicy` Event Detail Format
+
+The `ToolPolicy` event `detail` string uses the following format:
+
+```
+tool=<name> path="<path>" risk=read_only decision=allow reason=read_only_auto_allow
+```
+
+For example, reading `README.md` produces:
+
+```
+tool=read_file path="README.md" risk=read_only decision=allow reason=read_only_auto_allow
+```
+
+### Updated Event Sequences
+
+**Success sequence** (tool executes without error):
+
+```
+SlashCommand, ToolPolicy, ToolCall, ToolResult
+```
+
+**Workspace-violation sequence** (path rejected by the workspace confinement
+check — the policy still allows, but the registry rejects the path after
+`ToolCall` is recorded):
+
+```
+SlashCommand, ToolPolicy, ToolCall, ToolError
+```
+
+The `ToolPolicy` event records the policy decision **before** the registry
+validates the path; a workspace violation is therefore a post-policy registry
+error, not a policy denial.
+
+### What Does NOT Emit `ToolPolicy`
+
+- **`ModelToolRequest` detection** — detecting a `CARAVAN_TOOL_REQUEST` block
+  in a model response records only a `ModelToolRequest` event. No tool is
+  executed and no `ToolPolicy` event is emitted.
+- **The basic mock flow** — plain text submitted to the mock runner produces
+  the standard `UserMessage → RunCreate → … → RunComplete` sequence with no
+  `ToolPolicy` event, because no tool is executed.
+
+### Not Yet Implemented
+
+The following are **explicitly out of scope** for this POC and are not
+implemented:
+
+- **Approval modal** — no interactive confirmation UI exists; `ToolPolicyDecision::Deny`
+  is exercised by tests only.
+- **Sandbox** — no sandboxing or capability-restriction layer is applied to
+  tool execution.
+- **Write, shell, and network tools** — only the two read-only tools
+  (`list_files`, `read_file`) are registered; no write, shell, delete, or
+  network tool exists in this stage.
 
 ## Manual Tool Commands
 
