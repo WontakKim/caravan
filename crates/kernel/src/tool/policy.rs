@@ -4,7 +4,7 @@
 //! still defines a `Deny` variant for type completeness and future approval
 //! gating; the `Deny` branch is exercised only by tests.
 
-use crate::tools::{ToolRequest, ToolRisk};
+use crate::tool::registry::{ToolRequest, ToolRisk};
 
 /// The outcome of a policy evaluation: allow or deny.
 #[derive(Debug, PartialEq)]
@@ -89,7 +89,7 @@ pub(crate) fn format_tool_policy_detail(tool_name: &str, path: &str, outcome: &T
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::ToolRequest;
+    use crate::tool::registry::ToolRequest;
 
     #[test]
     fn evaluate_list_files_returns_allow_read_only_auto_allow() {

@@ -4,7 +4,7 @@
 //! renderer for inclusion in model prompts. This is NOT JSON Schema / OpenAI
 //! function-calling / MCP — plain Rust structs and a plain-text renderer only.
 
-use crate::tools::ToolRisk;
+use crate::tool::registry::ToolRisk;
 
 /// Describes a single input parameter accepted by a tool.
 pub struct ToolInputSpec {
@@ -142,7 +142,7 @@ impl ToolCatalog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::ToolRisk;
+    use crate::tool::registry::ToolRisk;
 
     #[test]
     fn readonly_returns_exactly_two_specs() {

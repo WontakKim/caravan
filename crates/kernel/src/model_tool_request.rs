@@ -3,7 +3,7 @@
 //! This module is intentionally free of filesystem access and path-safety
 //! validation; those concerns belong to the `ToolRegistry` execution stage.
 
-use crate::tools::ToolRequest;
+use crate::tool::registry::ToolRequest;
 
 const OPEN_DELIMITER: &str = "CARAVAN_TOOL_REQUEST";
 const CLOSE_DELIMITER: &str = "END_CARAVAN_TOOL_REQUEST";

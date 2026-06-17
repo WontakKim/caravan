@@ -1,8 +1,10 @@
 //! ToolEventRunner: traces read-only tool execution as EventLog entries.
 
 use crate::events::{EventKind, EventLog};
-use crate::tool_policy::{ToolPolicyDecision, ToolPolicyEngine, format_tool_policy_detail};
-use crate::tools::{ToolError, ToolExecutionContext, ToolOutput, ToolRegistry, ToolRequest};
+use crate::tool::policy::{ToolPolicyDecision, ToolPolicyEngine, format_tool_policy_detail};
+use crate::tool::registry::{
+    ToolError, ToolExecutionContext, ToolOutput, ToolRegistry, ToolRequest,
+};
 
 /// Runs read-only tool calls and records them in an [`EventLog`].
 pub struct ToolEventRunner {
@@ -138,7 +140,7 @@ mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
     use crate::storage::EventStore;
-    use crate::tools::ToolExecutionContext;
+    use crate::tool::registry::ToolExecutionContext;
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 

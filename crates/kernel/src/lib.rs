@@ -18,10 +18,7 @@ pub mod model_types;
 pub mod prompt;
 pub mod runner;
 pub mod storage;
-pub mod tool_events;
-pub mod tool_policy;
-pub mod tool_schema;
-pub mod tools;
+pub mod tool;
 pub mod transcript;
 
 pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
@@ -44,10 +41,10 @@ pub use model_tool_request::{
 pub use model_types::{ModelAdapterKind, ModelProvider};
 pub use runner::{MockRunOutput, run_mock_turn};
 pub use storage::EventStore;
-pub use tool_events::ToolEventRunner;
-pub use tool_policy::{ToolPolicyDecision, ToolPolicyEngine, ToolPolicyOutcome};
-pub use tool_schema::{ToolCatalog, ToolInputSpec, ToolSpec};
-pub use tools::{
+pub use tool::events::ToolEventRunner;
+pub use tool::policy::{ToolPolicyDecision, ToolPolicyEngine, ToolPolicyOutcome};
+pub use tool::registry::{
     ToolError, ToolExecutionContext, ToolName, ToolOutput, ToolRegistry, ToolRequest, ToolRisk,
 };
+pub use tool::schema::{ToolCatalog, ToolInputSpec, ToolSpec};
 pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};
