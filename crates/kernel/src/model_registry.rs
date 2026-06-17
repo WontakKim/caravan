@@ -1,12 +1,12 @@
+use crate::model::openai::compatible::OpenAICompatibleAdapter;
+use crate::model::openai::config::OpenAICompatibleConfig;
+use crate::model::openai::http::{
+    BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, StubOpenAIHttpClient,
+};
 use crate::model::{
     MockModelAdapter, ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest,
 };
 use crate::model_config::ModelProfile;
-use crate::model_openai_compatible::OpenAICompatibleAdapter;
-use crate::model_openai_config::OpenAICompatibleConfig;
-use crate::model_openai_http::{
-    BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, StubOpenAIHttpClient,
-};
 use crate::model_types::ModelAdapterKind;
 
 pub struct ModelAdapterRegistry {
@@ -78,10 +78,10 @@ impl ModelAdapterRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::openai::http::OpenAIHttpResult;
+    use crate::model::openai::request::OpenAIRequestPlan;
+    use crate::model::openai::types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
     use crate::model_config::ModelConfig;
-    use crate::model_openai_http::OpenAIHttpResult;
-    use crate::model_openai_request::OpenAIRequestPlan;
-    use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
     use crate::model_types::ModelProvider;
 
     struct FakeSuccessClient;
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn from_openai_runtime_stub_returns_skeleton_error() {
-        use crate::model_openai_http::OpenAIHttpClientKind;
+        use crate::model::openai::http::OpenAIHttpClientKind;
 
         let registry = ModelAdapterRegistry::from_openai_runtime(
             OpenAICompatibleConfig::default(),
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn from_openai_runtime_blocking_missing_key_returns_missing_api_key() {
-        use crate::model_openai_http::OpenAIHttpClientKind;
+        use crate::model::openai::http::OpenAIHttpClientKind;
 
         let config = OpenAICompatibleConfig {
             base_url: "https://api.openai.com/v1".into(),

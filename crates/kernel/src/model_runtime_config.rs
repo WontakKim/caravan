@@ -4,9 +4,9 @@
 //! `ModelError` (runtime adapter phase): config errors arise before any adapter
 //! is instantiated, whereas `ModelError` is produced by an already-running adapter.
 
+use crate::model::openai::config::OpenAICompatibleConfig;
+use crate::model::openai::http::OpenAIHttpClientKind;
 use crate::model_config::{ModelConfig, ModelProfile};
-use crate::model_openai_config::OpenAICompatibleConfig;
-use crate::model_openai_http::OpenAIHttpClientKind;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
 use std::collections::HashMap;
 

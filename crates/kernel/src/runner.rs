@@ -103,13 +103,13 @@ mod tests {
     use super::*;
     use crate::events::{EventKind, EventLog};
     use crate::model::ModelError;
-    use crate::model_config::{ModelConfig, ModelProfile};
-    use crate::model_gateway::ModelGateway;
-    use crate::model_openai_http::{OpenAIHttpClient, OpenAIHttpResult};
-    use crate::model_openai_request::OpenAIRequestPlan;
-    use crate::model_openai_types::{
+    use crate::model::openai::http::{OpenAIHttpClient, OpenAIHttpResult};
+    use crate::model::openai::request::OpenAIRequestPlan;
+    use crate::model::openai::types::{
         OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIUsage,
     };
+    use crate::model_config::{ModelConfig, ModelProfile};
+    use crate::model_gateway::ModelGateway;
     use crate::model_types::{ModelAdapterKind, ModelProvider};
 
     #[test]

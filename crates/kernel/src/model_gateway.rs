@@ -1,9 +1,9 @@
+#[cfg(test)]
+use crate::model::openai::config::OpenAICompatibleConfig;
+#[cfg(test)]
+use crate::model::openai::http::OpenAIHttpClient;
 use crate::model::{ModelError, ModelRequest, ModelUsage};
 use crate::model_config::ModelConfig;
-#[cfg(test)]
-use crate::model_openai_config::OpenAICompatibleConfig;
-#[cfg(test)]
-use crate::model_openai_http::OpenAIHttpClient;
 use crate::model_registry::ModelAdapterRegistry;
 use crate::model_runtime_config::ModelRuntimeConfig;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
@@ -122,12 +122,12 @@ impl Default for ModelGateway {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_config::ModelProfile;
-    use crate::model_openai_http::{OpenAIHttpClientKind, OpenAIHttpResult};
-    use crate::model_openai_request::OpenAIRequestPlan;
-    use crate::model_openai_types::{
+    use crate::model::openai::http::{OpenAIHttpClientKind, OpenAIHttpResult};
+    use crate::model::openai::request::OpenAIRequestPlan;
+    use crate::model::openai::types::{
         OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIUsage,
     };
+    use crate::model_config::ModelProfile;
 
     #[test]
     fn complete_openai_profile_returns_adapter_failure() {

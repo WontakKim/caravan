@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use crate::model_openai_request::OpenAIRequestPlan;
-use crate::model_openai_types::OpenAIChatResponse;
+use super::request::OpenAIRequestPlan;
+use super::types::OpenAIChatResponse;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OpenAIHttpError {
@@ -176,9 +176,9 @@ impl OpenAIHttpClient for BlockingOpenAIHttpClient {
 mod tests {
     use super::*;
     use crate::model::ModelRequest;
-    use crate::model_openai_config::OpenAICompatibleConfig;
-    use crate::model_openai_request::OpenAIRequestBuilder;
-    use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage};
+    use crate::model::openai::config::OpenAICompatibleConfig;
+    use crate::model::openai::request::OpenAIRequestBuilder;
+    use crate::model::openai::types::{OpenAIChatChoice, OpenAIChatMessage};
 
     fn default_plan() -> OpenAIRequestPlan {
         let config = OpenAICompatibleConfig::default();
@@ -365,7 +365,7 @@ mod tests {
             url: "http://127.0.0.1:9/unreachable".to_string(),
             api_key_env: "CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST".to_string(),
             timeout_secs: 1,
-            body: crate::model_openai_types::OpenAIChatRequest {
+            body: crate::model::openai::types::OpenAIChatRequest {
                 model: "test-model".to_string(),
                 messages: vec![],
                 stream: false,

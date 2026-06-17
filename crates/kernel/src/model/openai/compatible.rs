@@ -1,9 +1,9 @@
+use super::config::OpenAICompatibleConfig;
+use super::http::{OpenAIHttpClient, StubOpenAIHttpClient};
+use super::request::OpenAIRequestBuilder;
 use crate::model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
 };
-use crate::model_openai_config::OpenAICompatibleConfig;
-use crate::model_openai_http::{OpenAIHttpClient, StubOpenAIHttpClient};
-use crate::model_openai_request::OpenAIRequestBuilder;
 
 pub struct OpenAICompatibleAdapter {
     config: OpenAICompatibleConfig,
@@ -55,9 +55,9 @@ impl ModelAdapter for OpenAICompatibleAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model_openai_http::OpenAIHttpResult;
-    use crate::model_openai_request::OpenAIRequestPlan;
-    use crate::model_openai_types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
+    use crate::model::openai::http::OpenAIHttpResult;
+    use crate::model::openai::request::OpenAIRequestPlan;
+    use crate::model::openai::types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
     use crate::model_types::{ModelAdapterKind, ModelProvider};
 
     struct FakeSuccessClient;

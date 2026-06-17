@@ -6,11 +6,6 @@ pub mod manual_context;
 pub mod model;
 pub mod model_config;
 pub mod model_gateway;
-pub mod model_openai_compatible;
-pub mod model_openai_config;
-pub mod model_openai_http;
-pub mod model_openai_request;
-pub mod model_openai_types;
 pub mod model_registry;
 pub mod model_runtime_config;
 pub mod model_tool_request;
@@ -24,16 +19,16 @@ pub mod transcript;
 pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
+pub use model::openai::http::{
+    BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError,
+    OpenAIHttpResult, StubOpenAIHttpClient,
+};
 pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
     ModelUsage,
 };
 pub use model_config::{ModelConfig, ModelProfile};
 pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};
-pub use model_openai_http::{
-    BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError,
-    OpenAIHttpResult, StubOpenAIHttpClient,
-};
 pub use model_runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model_tool_request::{
     ModelToolRequest, ModelToolRequestKind, parse_first_model_tool_request,

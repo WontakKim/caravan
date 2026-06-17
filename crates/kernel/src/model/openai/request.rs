@@ -1,6 +1,6 @@
+use super::config::OpenAICompatibleConfig;
+use super::types::OpenAIChatRequest;
 use crate::model::ModelRequest;
-use crate::model_openai_config::OpenAICompatibleConfig;
-use crate::model_openai_types::OpenAIChatRequest;
 
 /// Describes what would be sent to an OpenAI-compatible endpoint.
 ///

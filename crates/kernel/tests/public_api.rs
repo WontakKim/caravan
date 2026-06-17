@@ -128,8 +128,8 @@ fn conversation_transcript_from_event_log_via_root_exports() {
 
 #[test]
 fn stub_http_client_returns_skeleton_error_via_root_exports() {
-    let plan = kernel::model_openai_request::OpenAIRequestBuilder::build(
-        &kernel::model_openai_config::OpenAICompatibleConfig::default(),
+    let plan = kernel::model::openai::request::OpenAIRequestBuilder::build(
+        &kernel::model::openai::config::OpenAICompatibleConfig::default(),
         "gpt-4o",
         &ModelRequest {
             prompt: String::new(),

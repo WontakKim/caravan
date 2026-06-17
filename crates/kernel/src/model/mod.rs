@@ -1,3 +1,5 @@
+pub mod openai;
+
 use crate::model_types::{ModelAdapterKind, ModelProvider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
