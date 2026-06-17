@@ -1,7 +1,7 @@
 //! ToolEventRunner: traces read-only tool execution as EventLog entries.
 
 use crate::events::{EventKind, EventLog};
-use crate::tool_policy::{ToolPolicyEngine, format_tool_policy_detail};
+use crate::tool_policy::{ToolPolicyDecision, ToolPolicyEngine, format_tool_policy_detail};
 use crate::tools::{ToolError, ToolExecutionContext, ToolOutput, ToolRegistry, ToolRequest};
 
 /// Runs read-only tool calls and records them in an [`EventLog`].
@@ -19,9 +19,23 @@ impl ToolEventRunner {
         }
     }
 
+    /// Creates a new runner with an injected [`ToolPolicyEngine`], backed by a
+    /// read-only [`ToolRegistry`]. Used in tests to exercise the deny path.
+    #[cfg(test)]
+    pub fn with_policy(policy: ToolPolicyEngine) -> Self {
+        ToolEventRunner {
+            registry: ToolRegistry::new_readonly(),
+            policy,
+        }
+    }
+
     /// Executes a tool request, recording a [`ToolPolicy`] event immediately
     /// before the [`ToolCall`] event, then delegating to the registry and
     /// appending either a [`ToolResult`] or [`ToolError`] event on completion.
+    ///
+    /// When the policy returns [`ToolPolicyDecision::Deny`], the runner records
+    /// the `ToolPolicy` event and returns `Err(ToolError::PolicyDenied { .. })`
+    /// without appending `ToolCall`, `ToolResult`, or `ToolError` events.
     ///
     /// The `path` is captured from `&request` BEFORE the move into
     /// [`ToolRegistry::execute`] so the event always reflects the caller-supplied
@@ -43,25 +57,37 @@ impl ToolEventRunner {
             format_tool_policy_detail(tool_name, &tool_path, &outcome),
         );
 
-        event_log.append(
-            EventKind::ToolCall,
-            format_tool_call_detail(tool_name, &tool_path),
-        );
+        match outcome.decision {
+            ToolPolicyDecision::Allow => {
+                event_log.append(
+                    EventKind::ToolCall,
+                    format_tool_call_detail(tool_name, &tool_path),
+                );
 
-        match self.registry.execute(context, request) {
-            Ok(output) => {
-                event_log.append(
-                    EventKind::ToolResult,
-                    format_tool_result_detail(tool_name, &tool_path, &output),
-                );
-                Ok(output)
+                match self.registry.execute(context, request) {
+                    Ok(output) => {
+                        event_log.append(
+                            EventKind::ToolResult,
+                            format_tool_result_detail(tool_name, &tool_path, &output),
+                        );
+                        Ok(output)
+                    }
+                    Err(error) => {
+                        event_log.append(
+                            EventKind::ToolError,
+                            format_tool_error_detail(tool_name, &tool_path, &error),
+                        );
+                        Err(error)
+                    }
+                }
             }
-            Err(error) => {
-                event_log.append(
-                    EventKind::ToolError,
-                    format_tool_error_detail(tool_name, &tool_path, &error),
-                );
-                Err(error)
+            ToolPolicyDecision::Deny => {
+                // Policy denial happens before tool execution: the ToolPolicy event already
+                // records decision=deny. Do not append ToolCall or ToolError because no tool
+                // was invoked.
+                Err(ToolError::PolicyDenied {
+                    reason: outcome.reason.clone(),
+                })
             }
         }
     }
@@ -99,6 +125,7 @@ fn format_tool_error_detail(tool_name: &str, path: &str, error: &ToolError) -> S
             let token = "io";
             format!("{} message={:?}", token, message)
         }
+        ToolError::PolicyDenied { .. } => "policy_denied".to_string(),
     };
     format!("tool={} path={:?} error={}", tool_name, path, token)
 }
@@ -600,6 +627,47 @@ mod tests {
         assert!(
             policy_detail.contains("decision=allow"),
             "ToolPolicy must allow even for escaping paths: {policy_detail}"
+        );
+    }
+
+    // --- Deny-path tests (T-5) ---
+
+    #[test]
+    fn deny_all_engine_returns_policy_denied_error_without_tool_call() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("hello.txt"), "hello, world!").expect("write file");
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::with_policy(ToolPolicyEngine::deny_all());
+        let mut log = EventLog::new();
+
+        let result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "hello.txt".to_string(),
+            },
+        );
+
+        // Exactly one event: ToolPolicy with decision=deny.
+        assert_eq!(log.len(), 1);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        let policy_detail = &log.get(0).unwrap().detail;
+        assert!(
+            policy_detail.contains("decision=deny"),
+            "ToolPolicy detail must contain decision=deny: {policy_detail}"
+        );
+
+        // No ToolCall event appended.
+        assert!(
+            !log.events().iter().any(|e| e.kind == EventKind::ToolCall),
+            "no ToolCall event should be appended on policy deny"
+        );
+
+        // Result is Err(ToolError::PolicyDenied { .. }).
+        assert!(
+            matches!(result, Err(ToolError::PolicyDenied { .. })),
+            "expected PolicyDenied error, got {:?}",
+            result
         );
     }
 }

@@ -421,6 +421,9 @@ impl App {
             kernel::ToolError::Io { message } => {
                 format!("Tool error: I/O error: {}", message)
             }
+            kernel::ToolError::PolicyDenied { reason } => {
+                format!("Tool error: policy denied ({})", reason)
+            }
         };
         self.log.push(msg);
     }
@@ -3098,6 +3101,25 @@ mod tests {
         assert!(
             prompt_compile.detail.contains(file_content),
             "PromptCompile detail must include the tool output content"
+        );
+    }
+
+    // --- PolicyDenied arm test (T-5) ---
+
+    #[test]
+    fn push_tool_error_output_policy_denied_formats_message() {
+        let mut app = App::new();
+        app.push_tool_error_output(kernel::ToolError::PolicyDenied {
+            reason: "test_reason".to_string(),
+        });
+        let last = app.log.last().unwrap();
+        assert!(
+            last.contains("policy denied"),
+            "log must contain 'policy denied': {last}"
+        );
+        assert!(
+            last.contains("test_reason"),
+            "log must contain 'test_reason': {last}"
         );
     }
 }
