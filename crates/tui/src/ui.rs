@@ -44,6 +44,7 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ToolCall => labeled("Tool Call"),
                 EventKind::ToolResult => labeled("Tool Result"),
                 EventKind::ToolError => labeled("Tool Error"),
+                EventKind::ToolPolicy => labeled("Tool Policy"),
                 EventKind::ToolContextAttach => labeled("Tool Context Attach"),
                 EventKind::ToolContextClear => labeled("Tool Context Clear"),
                 EventKind::ModelToolRequest => labeled("Model Tool Request"),
@@ -384,6 +385,20 @@ mod tests {
         assert!(
             result.contains("Tool Error:"),
             "ToolError events should use 'Tool Error:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_tool_policy_uses_tool_policy_label() {
+        let ev = AppEvent {
+            seq: EventSeq(18),
+            kind: EventKind::ToolPolicy,
+            detail: "allow".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Tool Policy:"),
+            "ToolPolicy events should use 'Tool Policy:' label"
         );
     }
 
