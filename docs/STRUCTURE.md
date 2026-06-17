@@ -64,12 +64,24 @@ give each family a private namespace and prevent flat-file sprawl at the
 
 ```
 crates/tui/src/
-├── app.rs          # App struct (state machine) + command-dispatch methods
+├── app.rs          # App struct, constructors, high-level submit() dispatcher, and help_lines
 ├── app/
-│   └── tests.rs    # Integration-style tests for App behaviour (cfg(test))
+│   ├── context.rs   # handle_context_command: /context attach-last-tool, clear, status
+│   ├── logging.rs   # screen-log formatting helpers
+│   ├── request.rs   # handle_request_command: /request status, run, clear
+│   ├── selection.rs # navigation: move_selection_up/down
+│   ├── tests.rs     # Integration-style tests for App behaviour (cfg(test))
+│   └── tools.rs     # handle_tool_command: /tool list, /tool read
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
 └── ui.rs           # Drawing layer: maps App state → ratatui Frame widgets
 ```
+
+`app.rs` is the command-dispatch root: it owns the `App` struct, constructors, a
+high-level `submit()` dispatcher that routes each slash command to the appropriate
+handler, and the `help_lines` helper. `app/*.rs` is the per-command handler family:
+`handle_tool_command` in `app/tools.rs`, `handle_context_command` in
+`app/context.rs`, `handle_request_command` in `app/request.rs`, navigation in
+`app/selection.rs`, and screen-log formatting helpers in `app/logging.rs`.
 
 `app/tests.rs` is co-located with the module it tests rather than placed in
 `crates/tui/tests/`, which would require making internals `pub`. The public
@@ -161,6 +173,8 @@ constraints are enforced:
 | Tool logic scattered across flat `kernel/src/` files | `tool/` sub-directory with `events.rs`, `policy.rs`, `registry.rs`, `schema.rs` | Tool harness is a cohesive family with clear internal boundaries |
 | OpenAI adapter spread across flat `kernel/src/` files | `model/openai/` sub-directory with `compatible.rs`, `config.rs`, `http.rs`, `request.rs`, `types.rs` | HTTP client, wire types, and config belong together; isolates provider details from the adapter trait |
 | `App` tests inside `app.rs` or absent | `app/tests.rs` alongside `app.rs` | Keeps tests co-located without polluting the main module file; avoids forcing internal APIs public |
+| Per-command handlers inline in `app.rs` | `app/{tools,context,request,selection,logging}.rs` handler family | Each handler family has a distinct responsibility (`/tool`, `/context`, `/request`, navigation, screen-log formatting); extracting them gives `app.rs` a clean dispatch-root role |
+| `runner.rs` tests inline in the production module | `runner/tests.rs` extracted alongside `runner.rs` | Co-locates tests with the module they exercise without crowding the production code; mirrors the `app/tests.rs` pattern |
 
 ---
 
@@ -172,9 +186,7 @@ explicit decision, not an oversight:
 | File | Reason not split |
 |------|-----------------|
 | `events.rs` | `EventLog`, `AppEvent`, `EventKind`, `EventSeq`, `RunId`, and `TurnId` are all part of the same closed type set; splitting gains nothing and would require re-exporting everything. |
-| `runner.rs` (test extraction) | The runner tests are small enough to live alongside the production code; extracting them to a separate file adds file-count overhead with no clarity benefit at this size. |
 | `ui.rs` | The drawing layer is a single coherent pass over `App` state. Sub-splitting by widget would obscure the single-pass nature and fragment the borrow of `App`. |
-| `app.rs` (submit-dispatch handler) | The submit handler is deeply entwined with `App` field mutations; extracting it to a sub-module would only move the coupling, not reduce it. |
 | `model_*` flat files → `model/` consolidation | The remaining `model_config.rs`, `model_gateway.rs`, `model_registry.rs`, `model_runtime_config.rs`, `model_tool_request.rs`, and `model_types.rs` files at the `kernel/src/` level were not folded into the `model/` sub-tree; they concern gateway routing and config, not the adapter implementation, so the conceptual boundary does not yet justify a full consolidation. |
 
 ---
@@ -188,9 +200,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 |----------|-----------------|
 | Full `model_*` consolidation into `model/` | Gateway, config, and registry modules overlap conceptually with the `model/` sub-tree but each also touches the broader kernel API surface. Consolidating them cleanly requires a broader API audit that is out of scope for this pass. |
 | `events.rs` split | All types are a tightly coupled closed set; no clarity gain at current size. Revisit if `EventKind` variants grow beyond ~40 entries or if `EventLog` grows persistence strategies. |
-| `runner.rs` test extraction | Test surface is small. Extract to `runner/tests.rs` when the test count makes the file unwieldy (rough threshold: >300 lines of test code). |
 | `ui.rs` split | The widget-per-file split is common in ratatui projects but premature here; revisit when the file exceeds ~500 lines or when individual widgets need their own state. |
-| `app.rs` submit-dispatch handler extraction | The submit handler is ~80 lines and currently cannot be cleanly extracted without duplicating `App` field borrows. Requires refactoring `App` field access patterns first. |
 
 ---
 
