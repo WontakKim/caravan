@@ -69,7 +69,7 @@ crates/tui/src/
 │   ├── context.rs   # handle_context_command: /context attach-last-tool, clear, status
 │   ├── logging.rs   # screen-log formatting helpers
 │   ├── request.rs   # handle_request_command: /request status, run, clear
-│   ├── selection.rs # navigation: move_selection_up/down
+│   ├── selection.rs # navigation: select_next/select_prev, scroll_inspector_down/up
 │   ├── tests.rs     # Integration-style tests for App behaviour (cfg(test))
 │   └── tools.rs     # handle_tool_command: /tool list, /tool read
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
