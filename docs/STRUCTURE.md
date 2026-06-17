@@ -31,7 +31,7 @@ crates/kernel/src/
 ├── model_runtime_config.rs  # ModelRuntimeConfig loaded from process environment
 ├── model_tool_request.rs    # ModelToolRequest parsed from model output
 ├── model_types.rs       # ModelAdapterKind / ModelProvider enums
-├── prompt.rs            # Prompt compilation: ConversationTranscript → API messages
+├── prompt.rs            # Prompt compilation: transcript + manual context + static ToolCatalog section → prompt string
 ├── runner.rs            # Turn execution orchestrator (run_mock_turn, MockRunOutput)
 ├── storage.rs           # EventStore: JSONL persistence for EventLog
 ├── transcript.rs        # ConversationTranscript / TranscriptMessage / TranscriptRole
@@ -138,8 +138,10 @@ constraints are enforced:
 └─────────────────────────────────────────────────────┘
 ```
 
-- **Prompt** knows only `ConversationTranscript` and `ManualToolContext`; it
-  produces the message list sent to the model. It does not touch the event log.
+- **Prompt** builds the prompt string from `ConversationTranscript`,
+  `ManualToolContext`, and the static read-only `ToolCatalog` prompt section
+  (`tool::schema`); it produces the prompt text placed in the `ModelRequest`. It
+  does not touch the event log.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a
   `ModelRequest` and returns `ModelOutput`. It has no knowledge of tools,
   prompts, or the event log.
