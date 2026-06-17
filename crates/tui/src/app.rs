@@ -1168,10 +1168,11 @@ mod tests {
         app.input = "/tool list .".to_string();
         app.submit();
 
-        assert_eq!(app.event_log.len(), event_len_before + 3);
+        assert_eq!(app.event_log.len(), event_len_before + 4);
         let events = app.event_log.events();
         let n = events.len();
-        assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
         assert_eq!(events[n - 2].kind, EventKind::ToolCall);
         assert_eq!(events[n - 1].kind, EventKind::ToolResult);
 
@@ -1202,10 +1203,11 @@ mod tests {
         app.input = "/tool read greeting.txt".to_string();
         app.submit();
 
-        assert_eq!(app.event_log.len(), event_len_before + 3);
+        assert_eq!(app.event_log.len(), event_len_before + 4);
         let events = app.event_log.events();
         let n = events.len();
-        assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
         assert_eq!(events[n - 2].kind, EventKind::ToolCall);
         assert_eq!(events[n - 1].kind, EventKind::ToolResult);
 
@@ -1237,10 +1239,11 @@ mod tests {
         app.input = "/tool read ../secret.txt".to_string();
         app.submit();
 
-        assert_eq!(app.event_log.len(), event_len_before + 3);
+        assert_eq!(app.event_log.len(), event_len_before + 4);
         let events = app.event_log.events();
         let n = events.len();
-        assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+        assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
         assert_eq!(events[n - 2].kind, EventKind::ToolCall);
         assert_eq!(events[n - 1].kind, EventKind::ToolError);
 
@@ -1371,6 +1374,10 @@ mod tests {
 
         let events = app.event_log.events();
 
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+            "plain text must not produce ToolPolicy events"
+        );
         assert!(
             !events.iter().any(|e| e.kind == EventKind::ToolCall),
             "plain text must not produce ToolCall events"
@@ -2710,15 +2717,16 @@ mod tests {
 
         let new_events = &app.event_log.events()[event_len_before..];
 
-        // Events in order: SlashCommand → ToolCall → ToolResult.
+        // Events in order: SlashCommand → ToolPolicy → ToolCall → ToolResult.
         assert!(
-            new_events.len() >= 3,
-            "expected at least 3 new events, got {}",
+            new_events.len() >= 4,
+            "expected at least 4 new events, got {}",
             new_events.len()
         );
         assert_eq!(new_events[0].kind, EventKind::SlashCommand);
-        assert_eq!(new_events[1].kind, EventKind::ToolCall);
-        assert_eq!(new_events[2].kind, EventKind::ToolResult);
+        assert_eq!(new_events[1].kind, EventKind::ToolPolicy);
+        assert_eq!(new_events[2].kind, EventKind::ToolCall);
+        assert_eq!(new_events[3].kind, EventKind::ToolResult);
 
         // No model run events.
         assert!(!new_events.iter().any(|e| e.kind == EventKind::RunCreate));
@@ -2791,15 +2799,16 @@ mod tests {
 
         let new_events = &app.event_log.events()[event_len_before..];
 
-        // Events in order: SlashCommand → ToolCall → ToolResult.
+        // Events in order: SlashCommand → ToolPolicy → ToolCall → ToolResult.
         assert!(
-            new_events.len() >= 3,
-            "expected at least 3 new events, got {}",
+            new_events.len() >= 4,
+            "expected at least 4 new events, got {}",
             new_events.len()
         );
         assert_eq!(new_events[0].kind, EventKind::SlashCommand);
-        assert_eq!(new_events[1].kind, EventKind::ToolCall);
-        assert_eq!(new_events[2].kind, EventKind::ToolResult);
+        assert_eq!(new_events[1].kind, EventKind::ToolPolicy);
+        assert_eq!(new_events[2].kind, EventKind::ToolCall);
+        assert_eq!(new_events[3].kind, EventKind::ToolResult);
 
         // No model run events.
         assert!(!new_events.iter().any(|e| e.kind == EventKind::RunCreate));
@@ -2873,15 +2882,16 @@ mod tests {
 
         let new_events = &app.event_log.events()[event_len_before..];
 
-        // Events in order: SlashCommand → ToolCall → ToolError.
+        // Events in order: SlashCommand → ToolPolicy → ToolCall → ToolError.
         assert!(
-            new_events.len() >= 3,
-            "expected at least 3 new events, got {}",
+            new_events.len() >= 4,
+            "expected at least 4 new events, got {}",
             new_events.len()
         );
         assert_eq!(new_events[0].kind, EventKind::SlashCommand);
-        assert_eq!(new_events[1].kind, EventKind::ToolCall);
-        assert_eq!(new_events[2].kind, EventKind::ToolError);
+        assert_eq!(new_events[1].kind, EventKind::ToolPolicy);
+        assert_eq!(new_events[2].kind, EventKind::ToolCall);
+        assert_eq!(new_events[3].kind, EventKind::ToolError);
 
         // No model run events.
         assert!(!new_events.iter().any(|e| e.kind == EventKind::RunCreate));
@@ -2918,6 +2928,118 @@ mod tests {
         assert!(
             app.log.iter().any(|l| l.contains("Tool error:")),
             "log must contain a tool error message"
+        );
+    }
+
+    // --- New /request run event-sequence tests (Step 9) ---
+
+    #[test]
+    fn request_run_pending_success_appends_slash_policy_call_result() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+        std::fs::write(workspace_dir.path().join("notes.txt"), "hello world").unwrap();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "notes.txt".to_string(),
+        });
+
+        let event_len_before = app.event_log.len();
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let new_events = &app.event_log.events()[event_len_before..];
+
+        assert_eq!(new_events.len(), 4);
+        assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+        assert_eq!(new_events[1].kind, EventKind::ToolPolicy);
+        assert_eq!(new_events[2].kind, EventKind::ToolCall);
+        assert_eq!(new_events[3].kind, EventKind::ToolResult);
+    }
+
+    #[test]
+    fn request_run_pending_failure_appends_slash_policy_call_error() {
+        use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+        let store_dir = TempDir::new();
+        let workspace_dir = TempDir::new();
+
+        let store = EventStore::new(store_dir.path());
+        let mut app = App::with_store_gateway_and_workspace_root(
+            store,
+            kernel::model_gateway::ModelGateway::default(),
+            workspace_dir.path().to_path_buf(),
+        );
+
+        app.pending_model_tool_request = Some(ModelToolRequest {
+            kind: ModelToolRequestKind::ReadFile,
+            path: "../secret.txt".to_string(),
+        });
+
+        let event_len_before = app.event_log.len();
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let new_events = &app.event_log.events()[event_len_before..];
+
+        assert_eq!(new_events.len(), 4);
+        assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+        assert_eq!(new_events[1].kind, EventKind::ToolPolicy);
+        assert_eq!(new_events[2].kind, EventKind::ToolCall);
+        assert_eq!(new_events[3].kind, EventKind::ToolError);
+    }
+
+    // --- Negative-path ToolPolicy tests (Step 11) ---
+
+    #[test]
+    fn invalid_tool_subcommand_produces_no_tool_policy_event() {
+        let mut app = App::new();
+        app.input = "/tool bogus".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+            "invalid /tool command must not produce ToolPolicy events"
+        );
+    }
+
+    #[test]
+    fn request_run_without_pending_produces_no_tool_policy_event() {
+        let mut app = App::new();
+        assert!(app.pending_model_tool_request.is_none());
+
+        app.input = "/request run".to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+            "/request run with no pending request must not produce ToolPolicy events"
+        );
+    }
+
+    #[test]
+    fn model_tool_request_detection_only_produces_no_tool_policy_event() {
+        let mut app = App::new();
+        app.input =
+            "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
+                .to_string();
+        app.submit();
+
+        let events = app.event_log.events();
+        assert!(
+            !events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+            "ModelToolRequest detection without execution must not produce ToolPolicy events"
         );
     }
 

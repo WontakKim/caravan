@@ -1,11 +1,13 @@
 //! ToolEventRunner: traces read-only tool execution as EventLog entries.
 
 use crate::events::{EventKind, EventLog};
+use crate::tool_policy::{ToolPolicyEngine, format_tool_policy_detail};
 use crate::tools::{ToolError, ToolExecutionContext, ToolOutput, ToolRegistry, ToolRequest};
 
 /// Runs read-only tool calls and records them in an [`EventLog`].
 pub struct ToolEventRunner {
     registry: ToolRegistry,
+    policy: ToolPolicyEngine,
 }
 
 impl ToolEventRunner {
@@ -13,11 +15,13 @@ impl ToolEventRunner {
     pub fn new_readonly() -> Self {
         ToolEventRunner {
             registry: ToolRegistry::new_readonly(),
+            policy: ToolPolicyEngine::read_only(),
         }
     }
 
-    /// Executes a tool request, recording a [`ToolCall`] event before delegating
-    /// and either a [`ToolResult`] or [`ToolError`] event on completion.
+    /// Executes a tool request, recording a [`ToolPolicy`] event immediately
+    /// before the [`ToolCall`] event, then delegating to the registry and
+    /// appending either a [`ToolResult`] or [`ToolError`] event on completion.
     ///
     /// The `path` is captured from `&request` BEFORE the move into
     /// [`ToolRegistry::execute`] so the event always reflects the caller-supplied
@@ -32,6 +36,12 @@ impl ToolEventRunner {
             ToolRequest::ListFiles { path } => ("list_files", path.clone()),
             ToolRequest::ReadFile { path } => ("read_file", path.clone()),
         };
+
+        let outcome = self.policy.evaluate(&request);
+        event_log.append(
+            EventKind::ToolPolicy,
+            format_tool_policy_detail(tool_name, &tool_path, &outcome),
+        );
 
         event_log.append(
             EventKind::ToolCall,
@@ -151,9 +161,10 @@ mod tests {
         );
 
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
-        assert_eq!(log.len(), 2);
-        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolCall);
-        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolResult);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
     }
 
     #[test]
@@ -176,9 +187,10 @@ mod tests {
             "expected WorkspaceViolation, got {:?}",
             result
         );
-        assert_eq!(log.len(), 2);
-        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolCall);
-        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolError);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(2).unwrap().kind, EventKind::ToolError);
     }
 
     #[test]
@@ -263,9 +275,10 @@ mod tests {
         );
 
         assert!(result.is_ok(), "expected Ok, got {:?}", result);
-        assert_eq!(log.len(), 2);
-        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolCall);
-        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolResult);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
     }
 
     // --- Failure-ordering tests (Step 2) ---
@@ -291,9 +304,10 @@ mod tests {
             "expected NotADirectory, got {:?}",
             result
         );
-        assert_eq!(log.len(), 2);
-        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolCall);
-        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolError);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(2).unwrap().kind, EventKind::ToolError);
     }
 
     // --- Detail-content tests (Step 3) ---
@@ -315,7 +329,7 @@ mod tests {
             )
             .ok();
 
-        let detail = &log.get(1).unwrap().detail;
+        let detail = &log.get(2).unwrap().detail;
         assert!(
             detail.contains("entries="),
             "expected entries= in detail: {detail}"
@@ -341,7 +355,7 @@ mod tests {
             )
             .ok();
 
-        let detail = &log.get(1).unwrap().detail;
+        let detail = &log.get(2).unwrap().detail;
         assert!(
             detail.contains("bytes="),
             "expected bytes= in detail: {detail}"
@@ -369,7 +383,7 @@ mod tests {
             )
             .ok();
 
-        let detail = &log.get(1).unwrap().detail;
+        let detail = &log.get(2).unwrap().detail;
         assert!(
             detail.contains("error=workspace_violation"),
             "expected error=workspace_violation in detail: {detail}"
@@ -474,19 +488,23 @@ mod tests {
                 .ok();
         }
 
-        // Reload from the same store dir and verify all four events restored.
+        // Reload from the same store dir and verify all six events restored.
         let store2 = EventStore::new(store_dir.path());
         let log2 = EventLog::load_from(store2);
 
-        assert_eq!(log2.len(), 4);
-        assert_eq!(log2.get(0).unwrap().kind, EventKind::ToolCall);
-        assert_eq!(log2.get(1).unwrap().kind, EventKind::ToolResult);
-        assert_eq!(log2.get(2).unwrap().kind, EventKind::ToolCall);
-        assert_eq!(log2.get(3).unwrap().kind, EventKind::ToolError);
+        assert_eq!(log2.len(), 6);
+        assert_eq!(log2.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log2.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log2.get(2).unwrap().kind, EventKind::ToolResult);
+        assert_eq!(log2.get(3).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log2.get(4).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log2.get(5).unwrap().kind, EventKind::ToolError);
         assert!(!log2.get(0).unwrap().detail.is_empty());
         assert!(!log2.get(1).unwrap().detail.is_empty());
         assert!(!log2.get(2).unwrap().detail.is_empty());
         assert!(!log2.get(3).unwrap().detail.is_empty());
+        assert!(!log2.get(4).unwrap().detail.is_empty());
+        assert!(!log2.get(5).unwrap().detail.is_empty());
     }
 
     // --- Never-panic test (Step 6) ---
@@ -507,7 +525,81 @@ mod tests {
             },
         );
 
-        let detail = &log.get(0).unwrap().detail;
-        assert!(!detail.is_empty(), "ToolCall detail must be non-empty");
+        let detail = &log.get(1).unwrap().detail;
+        assert!(
+            !detail.is_empty(),
+            "ToolCall event at index 1 detail must be non-empty"
+        );
+    }
+
+    // --- ToolPolicy ordering and detail tests (Steps 6-7) ---
+
+    #[test]
+    fn list_files_success_policy_event_precedes_call_and_result_with_allow_detail() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        let result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ListFiles {
+                path: ".".to_string(),
+            },
+        );
+
+        assert!(result.is_ok(), "expected Ok, got {:?}", result);
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
+
+        let policy_detail = &log.get(0).unwrap().detail;
+        assert!(
+            policy_detail.contains("risk=read_only"),
+            "ToolPolicy detail must contain risk=read_only: {policy_detail}"
+        );
+        assert!(
+            policy_detail.contains("decision=allow"),
+            "ToolPolicy detail must contain decision=allow: {policy_detail}"
+        );
+        assert!(
+            policy_detail.contains("reason=read_only_auto_allow"),
+            "ToolPolicy detail must contain reason=read_only_auto_allow: {policy_detail}"
+        );
+    }
+
+    #[test]
+    fn read_file_escape_policy_allows_then_registry_produces_violation() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let runner = ToolEventRunner::new_readonly();
+        let mut log = EventLog::new();
+
+        let result = runner.run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "../secret.txt".to_string(),
+            },
+        );
+
+        assert!(
+            matches!(result, Err(ToolError::WorkspaceViolation { .. })),
+            "expected WorkspaceViolation, got {:?}",
+            result
+        );
+        assert_eq!(log.len(), 3);
+        assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+        assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+        assert_eq!(log.get(2).unwrap().kind, EventKind::ToolError);
+
+        // Policy allows even for escaping paths — registry produces the violation post-ToolCall.
+        let policy_detail = &log.get(0).unwrap().detail;
+        assert!(
+            policy_detail.contains("decision=allow"),
+            "ToolPolicy must allow even for escaping paths: {policy_detail}"
+        );
     }
 }
