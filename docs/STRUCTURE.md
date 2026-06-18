@@ -73,7 +73,12 @@ crates/tui/src/
 │   ├── tests.rs     # Integration-style tests for App behaviour (cfg(test))
 │   └── tools.rs     # handle_tool_command: /tool list, /tool read
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
-└── ui.rs           # Drawing layer: maps App state → ratatui Frame widgets
+├── ui.rs           # Layout-orchestration root: draw() calls each widget's render helper; Nav and Main panel blocks remain inline in draw()
+└── ui/
+    ├── header.rs        # Header text + render
+    ├── inspector.rs     # Inspector text/labels + render
+    ├── event_log.rs     # Event-log tailing/highlight + render
+    └── prompt_bar.rs    # Input display width + prompt bar + cursor
 ```
 
 `app.rs` is the command-dispatch root: it owns the `App` struct, constructors, a
@@ -86,6 +91,14 @@ handler, and the `help_lines` helper. `app/*.rs` is the per-command handler fami
 `app/tests.rs` is co-located with the module it tests rather than placed in
 `crates/tui/tests/`, which would require making internals `pub`. The public
 integration-test suite lives in `crates/tui/tests/public_api.rs`.
+
+`ui.rs` is the layout-orchestration root: its `draw()` function computes the
+overall screen layout and calls each widget's `render` helper. `ui/*.rs` is the
+per-widget render family: `ui/header.rs` owns header text and render,
+`ui/inspector.rs` owns inspector text/labels and render, `ui/event_log.rs` owns
+event-log tailing, highlight logic, and render, and `ui/prompt_bar.rs` owns input
+display width, the prompt bar, and cursor render. Each widget's text/compute
+helper and its tests are co-located in the child module.
 
 ---
 
@@ -175,6 +188,7 @@ constraints are enforced:
 | `App` tests inside `app.rs` or absent | `app/tests.rs` alongside `app.rs` | Keeps tests co-located without polluting the main module file; avoids forcing internal APIs public |
 | Per-command handlers inline in `app.rs` | `app/{tools,context,request,selection,logging}.rs` handler family | Each handler family has a distinct responsibility (`/tool`, `/context`, `/request`, navigation, screen-log formatting); extracting them gives `app.rs` a clean dispatch-root role |
 | `runner.rs` tests inline in the production module | `runner/tests.rs` extracted alongside `runner.rs` | Co-locates tests with the module they exercise without crowding the production code; mirrors the `app/tests.rs` pattern |
+| `ui.rs` single drawing file | `ui/{header,inspector,event_log,prompt_bar}.rs` render modules | Each widget's render + its text/compute helper + its tests now has a clear home; `draw()` becomes layout orchestration |
 
 ---
 
@@ -186,7 +200,6 @@ explicit decision, not an oversight:
 | File | Reason not split |
 |------|-----------------|
 | `events.rs` | `EventLog`, `AppEvent`, `EventKind`, `EventSeq`, `RunId`, and `TurnId` are all part of the same closed type set; splitting gains nothing and would require re-exporting everything. |
-| `ui.rs` | The drawing layer is a single coherent pass over `App` state. Sub-splitting by widget would obscure the single-pass nature and fragment the borrow of `App`. |
 | `model_*` flat files → `model/` consolidation | The remaining `model_config.rs`, `model_gateway.rs`, `model_registry.rs`, `model_runtime_config.rs`, `model_tool_request.rs`, and `model_types.rs` files at the `kernel/src/` level were not folded into the `model/` sub-tree; they concern gateway routing and config, not the adapter implementation, so the conceptual boundary does not yet justify a full consolidation. |
 
 ---
@@ -200,7 +213,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 |----------|-----------------|
 | Full `model_*` consolidation into `model/` | Gateway, config, and registry modules overlap conceptually with the `model/` sub-tree but each also touches the broader kernel API surface. Consolidating them cleanly requires a broader API audit that is out of scope for this pass. |
 | `events.rs` split | All types are a tightly coupled closed set; no clarity gain at current size. Revisit if `EventKind` variants grow beyond ~40 entries or if `EventLog` grows persistence strategies. |
-| `ui.rs` split | The widget-per-file split is common in ratatui projects but premature here; revisit when the file exceeds ~500 lines or when individual widgets need their own state. |
+| Nav / Main panel blocks in `draw()` | The Nav and Main panel blocks were intentionally left inline in `draw()` because they are small static/literal blocks with no compute helper; a separate file would add navigation cost without clarity. |
 
 ---
 
