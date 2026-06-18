@@ -55,7 +55,7 @@ crates/kernel/src/
     ├── policy.rs        # ToolPolicyEngine / ToolPolicyDecision / ToolPolicyOutcome
     ├── registry.rs      # ToolRegistry, ToolRequest, ToolOutput, ToolName, ToolRisk
     ├── registry/        # registry submodule
-    │   ├── path.rs      # Path-safety helper: validates identifiers before path composition
+    │   ├── path.rs      # Workspace path confinement helper (resolve_in_workspace) for safe in-workspace resolution
     │   └── tests.rs     # Unit tests for ToolRegistry and path-safety logic
     └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog
 ```
@@ -212,7 +212,7 @@ constraints are enforced:
 | `runner.rs` tests inline in the production module | `runner/tests.rs` extracted alongside `runner.rs` | Co-locates tests with the module they exercise without crowding the production code; mirrors the `app/tests.rs` pattern |
 | `ui.rs` single drawing file | `ui/{header,inspector,event_log,prompt_bar}.rs` render modules | Each widget's render + its text/compute helper + its tests now has a clear home; `draw()` becomes layout orchestration |
 | `tool/events.rs` flat module | `events/` subdir: `detail.rs` (event detail string formatters) + `tests.rs` (unit tests) | Isolates detail formatting logic from the runner; keeps tests co-located without crowding the production module |
-| `tool/registry.rs` flat module | `registry/` subdir: `path.rs` (path-safety helper) + `tests.rs` (unit tests) | Extracts path-safety identifier validation into a focused module; co-locates tests alongside the code they exercise |
+| `tool/registry.rs` flat module | `registry/` subdir: `path.rs` (workspace path confinement helper) + `tests.rs` (unit tests) | Extracts workspace-root path confinement into a focused module; rejects absolute paths and `..`, canonicalizes root and candidate paths, and verifies the canonical candidate remains under the canonical workspace root to guard against symlink escape; co-locates tests alongside the code they exercise |
 
 ---
 
