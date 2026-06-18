@@ -22,7 +22,11 @@ The workspace contains three crates under `crates/`:
 
 ```
 crates/kernel/src/
-├── commands.rs          # Parsed user input: Command enum + ParsedInput
+├── commands.rs          # Facade: re-exports from commands/ submodule
+├── commands/            # commands submodule
+│   ├── types.rs         # Command enum + ParsedInput
+│   ├── parse.rs         # Command parsing logic
+│   └── tests.rs         # Unit tests
 ├── events.rs            # Facade: re-exports from events/ submodule
 ├── events/              # events submodule
 │   ├── ids.rs           # EventSeq, RunId, TurnId
@@ -65,6 +69,10 @@ crates/kernel/src/
     │   └── tests.rs     # Unit tests for ToolRegistry and path-safety logic
     └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog
 ```
+
+The `commands/` sub-directory follows the same facade pattern as `events/`:
+`commands.rs` re-exports from `commands/types.rs` (Command enum + ParsedInput),
+`commands/parse.rs` (parsing logic), and `commands/tests.rs` (unit tests).
 
 The `tool/` and `model/openai/` sub-directories were introduced in this POC to
 give each family a private namespace and prevent flat-file sprawl at the
@@ -247,6 +255,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `app/tests.rs` grouping into child modules | **DONE** — All 86 `App` tests were distributed across 10 child modules under `app/tests/` (`common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 10 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
 | `tool/registry/types.rs` split | `ToolRegistry`, `ToolRequest`, `ToolOutput`, `ToolName`, and `ToolRisk` remain in `registry.rs`. Splitting the type definitions into a separate file would require re-exporting them through `registry.rs` or changing all existing import paths across the crate. Defer until the type set grows large enough that the boundary becomes unambiguous. |
 | `tool/registry/execute.rs` split | The execution path in `registry.rs` is tightly coupled to its type definitions; separating them now would fragment a small module without a meaningful responsibility boundary and cause public-API import churn. Revisit if dispatch logic grows substantially or diverges in ownership. |
+| `commands/parse.rs` per-family split | If `/model`, `/agent`, or approval command families grow substantially, `parse.rs` can be split into `parse_tool.rs`, `parse_context.rs`, `parse_request.rs`, and `parse_model.rs` — one parser per command family. Defer until the command family boundary becomes unambiguous. |
 
 ---
 
