@@ -70,7 +70,18 @@ crates/tui/src/
 │   ├── logging.rs   # screen-log formatting helpers
 │   ├── request.rs   # handle_request_command: /request status, run, clear
 │   ├── selection.rs # navigation: select_next/select_prev, scroll_inspector_down/up
-│   ├── tests.rs     # Integration-style tests for App behaviour (cfg(test))
+│   ├── tests.rs     # Aggregator: 10 `mod` declarations only; no test bodies (cfg(test))
+│   ├── tests/
+│   │   ├── common.rs      # Shared helpers (make_app, fixture builders)
+│   │   ├── lifecycle.rs   # App construction and teardown tests
+│   │   ├── commands.rs    # Slash-command dispatch tests
+│   │   ├── storage.rs     # EventStore / persistence tests
+│   │   ├── selection.rs   # Navigation (select_next/prev, scroll) tests
+│   │   ├── model_flow.rs  # Model execution flow tests
+│   │   ├── tools.rs       # /tool command handler tests
+│   │   ├── context.rs     # /context command handler tests
+│   │   ├── request.rs     # /request command handler tests
+│   │   └── policy.rs      # Tool-policy decision tests
 │   └── tools.rs     # handle_tool_command: /tool list, /tool read
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
 ├── ui.rs           # Layout-orchestration root: draw() calls each widget's render helper; Nav and Main panel blocks remain inline in draw()
@@ -88,9 +99,14 @@ handler, and the `help_lines` helper. `app/*.rs` is the per-command handler fami
 `app/context.rs`, `handle_request_command` in `app/request.rs`, navigation in
 `app/selection.rs`, and screen-log formatting helpers in `app/logging.rs`.
 
-`app/tests.rs` is co-located with the module it tests rather than placed in
-`crates/tui/tests/`, which would require making internals `pub`. The public
-integration-test suite lives in `crates/tui/tests/public_api.rs`.
+`app/tests.rs` is a thin aggregator that contains only the 10 `mod` declarations
+for its child modules under `app/tests/`. Each child module owns a focused group
+of tests: `common` provides shared helpers; `lifecycle`, `commands`, `storage`,
+`selection`, `model_flow`, `tools`, `context`, `request`, and `policy` each own
+the tests for the corresponding `App` behaviour. All 86 tests are distributed
+across these child modules. The aggregator is co-located with the module it tests
+rather than placed in `crates/tui/tests/`, which would require making internals
+`pub`. The public integration-test suite lives in `crates/tui/tests/public_api.rs`.
 
 `ui.rs` is the layout-orchestration root: its `draw()` function computes the
 overall screen layout and calls each widget's `render` helper. `ui/*.rs` is the
@@ -185,7 +201,7 @@ constraints are enforced:
 |--------|-------|--------|
 | Tool logic scattered across flat `kernel/src/` files | `tool/` sub-directory with `events.rs`, `policy.rs`, `registry.rs`, `schema.rs` | Tool harness is a cohesive family with clear internal boundaries |
 | OpenAI adapter spread across flat `kernel/src/` files | `model/openai/` sub-directory with `compatible.rs`, `config.rs`, `http.rs`, `request.rs`, `types.rs` | HTTP client, wire types, and config belong together; isolates provider details from the adapter trait |
-| `App` tests inside `app.rs` or absent | `app/tests.rs` alongside `app.rs` | Keeps tests co-located without polluting the main module file; avoids forcing internal APIs public |
+| `App` tests inside `app.rs` or absent | `app/tests.rs` aggregator + `app/tests/{common,lifecycle,commands,storage,selection,model_flow,tools,context,request,policy}.rs` child modules | Keeps tests co-located without polluting the main module file; avoids forcing internal APIs public; grouping by concern keeps each child module focused and independently navigable |
 | Per-command handlers inline in `app.rs` | `app/{tools,context,request,selection,logging}.rs` handler family | Each handler family has a distinct responsibility (`/tool`, `/context`, `/request`, navigation, screen-log formatting); extracting them gives `app.rs` a clean dispatch-root role |
 | `runner.rs` tests inline in the production module | `runner/tests.rs` extracted alongside `runner.rs` | Co-locates tests with the module they exercise without crowding the production code; mirrors the `app/tests.rs` pattern |
 | `ui.rs` single drawing file | `ui/{header,inspector,event_log,prompt_bar}.rs` render modules | Each widget's render + its text/compute helper + its tests now has a clear home; `draw()` becomes layout orchestration |
@@ -214,6 +230,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | Full `model_*` consolidation into `model/` | Gateway, config, and registry modules overlap conceptually with the `model/` sub-tree but each also touches the broader kernel API surface. Consolidating them cleanly requires a broader API audit that is out of scope for this pass. |
 | `events.rs` split | All types are a tightly coupled closed set; no clarity gain at current size. Revisit if `EventKind` variants grow beyond ~40 entries or if `EventLog` grows persistence strategies. |
 | Nav / Main panel blocks in `draw()` | The Nav and Main panel blocks were intentionally left inline in `draw()` because they are small static/literal blocks with no compute helper; a separate file would add navigation cost without clarity. |
+| `app/tests.rs` grouping into child modules | **DONE** — All 86 `App` tests were distributed across 10 child modules under `app/tests/` (`common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 10 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
 
 ---
 
