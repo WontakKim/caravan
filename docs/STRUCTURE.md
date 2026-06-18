@@ -37,8 +37,12 @@ crates/kernel/src/
 ├── manual_context.rs    # ManualToolContext: user-attached tool context blobs
 ├── model_config.rs      # ModelConfig / ModelProfile (static configuration)
 ├── model_gateway.rs     # ModelGateway / ModelResponse / ModelRoute (routing logic)
+├── model_gateway/       # model_gateway submodule
+│   └── tests.rs         # Unit tests (T-2: test extraction only; production code unchanged)
 ├── model_registry.rs    # Adapter registry: maps ModelAdapterKind → ModelAdapter impl
 ├── model_runtime_config.rs  # ModelRuntimeConfig loaded from process environment
+├── model_runtime_config/    # model_runtime_config submodule
+│   └── tests.rs             # Unit tests (T-1: test extraction only; production code unchanged)
 ├── model_tool_request.rs    # ModelToolRequest parsed from model output
 ├── model_types.rs       # ModelAdapterKind / ModelProvider enums
 ├── prompt.rs            # Prompt compilation: transcript + manual context + static ToolCatalog section → prompt string
@@ -53,6 +57,8 @@ crates/kernel/src/
 │       ├── compatible.rs  # OpenAICompatibleAdapter (ModelAdapter impl)
 │       ├── config.rs      # Provider-specific URL / auth config
 │       ├── http.rs        # StubOpenAIHttpClient + BlockingOpenAIHttpClient (synchronous; no async/tokio)
+│       ├── http/          # http submodule
+│       │   └── tests.rs   # Unit tests (T-3: test extraction only; production code unchanged)
 │       ├── request.rs     # Request serialisation helpers
 │       └── types.rs       # OpenAI wire types (ChatCompletionRequest, etc.)
 │
@@ -228,6 +234,9 @@ constraints are enforced:
 | `tool/events.rs` flat module | `events/` subdir: `detail.rs` (event detail string formatters) + `tests.rs` (unit tests) | Isolates detail formatting logic from the runner; keeps tests co-located without crowding the production module |
 | `tool/registry.rs` flat module | `registry/` subdir: `path.rs` (workspace path confinement helper) + `tests.rs` (unit tests) | Extracts workspace-root path confinement into a focused module; rejects absolute paths and `..`, canonicalizes root and candidate paths, and verifies the canonical candidate remains under the canonical workspace root to guard against symlink escape; co-locates tests alongside the code they exercise |
 | `events.rs` flat module | `events/` subdir: `ids.rs, kind.rs, record.rs, log.rs, tests.rs` | Separate the id/seq, kind, record, and log responsibilities; co-locate tests |
+| `model_runtime_config.rs` inline tests | `model_runtime_config/tests.rs` extracted alongside `model_runtime_config.rs` (T-1: **test extraction only** — production code was not split) | Co-locates tests with the module they exercise without crowding the production file; mirrors the `runner/tests.rs` pattern |
+| `model_gateway.rs` inline tests | `model_gateway/tests.rs` extracted alongside `model_gateway.rs` (T-2: **test extraction only** — production code was not split) | Co-locates tests with the module they exercise without crowding the production file; mirrors the `runner/tests.rs` pattern |
+| `model/openai/http.rs` inline tests | `model/openai/http/tests.rs` extracted alongside `http.rs` (T-3: **test extraction only** — production code was not split) | Co-locates tests with the module they exercise without crowding the production file; mirrors the `runner/tests.rs` pattern |
 
 ---
 
@@ -256,6 +265,9 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `tool/registry/types.rs` split | `ToolRegistry`, `ToolRequest`, `ToolOutput`, `ToolName`, and `ToolRisk` remain in `registry.rs`. Splitting the type definitions into a separate file would require re-exporting them through `registry.rs` or changing all existing import paths across the crate. Defer until the type set grows large enough that the boundary becomes unambiguous. |
 | `tool/registry/execute.rs` split | The execution path in `registry.rs` is tightly coupled to its type definitions; separating them now would fragment a small module without a meaningful responsibility boundary and cause public-API import churn. Revisit if dispatch logic grows substantially or diverges in ownership. |
 | `commands/parse.rs` per-family split | If `/model`, `/agent`, or approval command families grow substantially, `parse.rs` can be split into `parse_tool.rs`, `parse_context.rs`, `parse_request.rs`, and `parse_model.rs` — one parser per command family. Defer until the command family boundary becomes unambiguous. |
+| `model_runtime_config` production split into error/env/parser | `model_runtime_config.rs` mixes error types, environment-variable loading, and config parsing. A future split into `error.rs`, `env.rs`, and `parser.rs` sub-modules would give each responsibility a clean home. Defer until the module grows large enough that the boundaries are unambiguous. |
+| `model_gateway` production split once gateway routing grows | `model_gateway.rs` currently holds `ModelGateway`, `ModelResponse`, and `ModelRoute` in a single file. A production split makes sense once gateway routing logic grows (e.g. per-provider dispatch, fallback logic, or load-balancing); defer until the routing grows enough to justify a subdir. |
+| `model/openai/http` production split once async/streaming/client variants are added | `http.rs` currently contains `StubOpenAIHttpClient` and `BlockingOpenAIHttpClient` as a synchronous stub and blocking client in one file. When async or streaming variants are introduced, split into dedicated modules (e.g. `async.rs`, `streaming.rs`, `client.rs`). Defer until those variants exist. |
 
 ---
 
