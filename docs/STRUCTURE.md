@@ -23,7 +23,13 @@ The workspace contains three crates under `crates/`:
 ```
 crates/kernel/src/
 ├── commands.rs          # Parsed user input: Command enum + ParsedInput
-├── events.rs            # EventLog, AppEvent, EventKind, EventSeq, RunId, TurnId
+├── events.rs            # Facade: re-exports from events/ submodule
+├── events/              # events submodule
+│   ├── ids.rs           # EventSeq, RunId, TurnId
+│   ├── kind.rs          # EventKind + name()
+│   ├── record.rs        # AppEvent
+│   ├── log.rs           # EventLog
+│   └── tests.rs         # Unit tests
 ├── manual_context.rs    # ManualToolContext: user-attached tool context blobs
 ├── model_config.rs      # ModelConfig / ModelProfile (static configuration)
 ├── model_gateway.rs     # ModelGateway / ModelResponse / ModelRoute (routing logic)
@@ -213,6 +219,7 @@ constraints are enforced:
 | `ui.rs` single drawing file | `ui/{header,inspector,event_log,prompt_bar}.rs` render modules | Each widget's render + its text/compute helper + its tests now has a clear home; `draw()` becomes layout orchestration |
 | `tool/events.rs` flat module | `events/` subdir: `detail.rs` (event detail string formatters) + `tests.rs` (unit tests) | Isolates detail formatting logic from the runner; keeps tests co-located without crowding the production module |
 | `tool/registry.rs` flat module | `registry/` subdir: `path.rs` (workspace path confinement helper) + `tests.rs` (unit tests) | Extracts workspace-root path confinement into a focused module; rejects absolute paths and `..`, canonicalizes root and candidate paths, and verifies the canonical candidate remains under the canonical workspace root to guard against symlink escape; co-locates tests alongside the code they exercise |
+| `events.rs` flat module | `events/` subdir: `ids.rs, kind.rs, record.rs, log.rs, tests.rs` | Separate the id/seq, kind, record, and log responsibilities; co-locate tests |
 
 ---
 
@@ -223,7 +230,6 @@ explicit decision, not an oversight:
 
 | File | Reason not split |
 |------|-----------------|
-| `events.rs` | `EventLog`, `AppEvent`, `EventKind`, `EventSeq`, `RunId`, and `TurnId` are all part of the same closed type set; splitting gains nothing and would require re-exporting everything. |
 | `model_*` flat files → `model/` consolidation | The remaining `model_config.rs`, `model_gateway.rs`, `model_registry.rs`, `model_runtime_config.rs`, `model_tool_request.rs`, and `model_types.rs` files at the `kernel/src/` level were not folded into the `model/` sub-tree; they concern gateway routing and config, not the adapter implementation, so the conceptual boundary does not yet justify a full consolidation. |
 
 ---
@@ -236,7 +242,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | Refactor | Reason deferred |
 |----------|-----------------|
 | Full `model_*` consolidation into `model/` | Gateway, config, and registry modules overlap conceptually with the `model/` sub-tree but each also touches the broader kernel API surface. Consolidating them cleanly requires a broader API audit that is out of scope for this pass. |
-| `events.rs` split | All types are a tightly coupled closed set; no clarity gain at current size. Revisit if `EventKind` variants grow beyond ~40 entries or if `EventLog` grows persistence strategies. |
+| `events.rs` split | **DONE** — `events.rs` was split into `ids.rs` (EventSeq/RunId/TurnId), `kind.rs` (EventKind + name()), `record.rs` (AppEvent), `log.rs` (EventLog), and `tests.rs` (unit tests) under `events/`. |
 | Nav / Main panel blocks in `draw()` | The Nav and Main panel blocks were intentionally left inline in `draw()` because they are small static/literal blocks with no compute helper; a separate file would add navigation cost without clarity. |
 | `app/tests.rs` grouping into child modules | **DONE** — All 86 `App` tests were distributed across 10 child modules under `app/tests/` (`common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 10 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
 | `tool/registry/types.rs` split | `ToolRegistry`, `ToolRequest`, `ToolOutput`, `ToolName`, and `ToolRisk` remain in `registry.rs`. Splitting the type definitions into a separate file would require re-exporting them through `registry.rs` or changing all existing import paths across the crate. Defer until the type set grows large enough that the boundary becomes unambiguous. |
