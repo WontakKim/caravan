@@ -72,7 +72,7 @@ crates/tui/src/
 │   ├── selection.rs # navigation: select_next/select_prev, scroll_inspector_down/up
 │   ├── tests.rs     # Aggregator: 10 `mod` declarations only; no test bodies (cfg(test))
 │   ├── tests/
-│   │   ├── common.rs      # Shared helpers (make_app, fixture builders)
+│   │   ├── common.rs      # Shared test helpers (TempDir RAII, TEST_COUNTER)
 │   │   ├── lifecycle.rs   # App construction and teardown tests
 │   │   ├── commands.rs    # Slash-command dispatch tests
 │   │   ├── storage.rs     # EventStore / persistence tests
