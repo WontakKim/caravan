@@ -1,5 +1,3 @@
-use serde::{Deserialize, Serialize};
-
 use crate::storage::EventStore;
 
 mod ids;
@@ -8,13 +6,8 @@ pub use ids::{EventSeq, RunId, TurnId};
 mod kind;
 pub use kind::EventKind;
 
-/// A single application event with its sequence number, kind, and detail string.
-#[derive(Serialize, Deserialize, PartialEq, Debug)]
-pub struct AppEvent {
-    pub seq: EventSeq,
-    pub kind: EventKind,
-    pub detail: String,
-}
+mod record;
+pub use record::AppEvent;
 
 /// An append-only log of application events with monotonically increasing sequence numbers.
 pub struct EventLog {
