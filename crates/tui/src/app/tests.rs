@@ -1,37 +1,12 @@
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
+
+mod common;
+use self::common::*;
 use kernel::events::{EventKind, EventLog, EventSeq};
 use kernel::model_runtime_config::ModelRuntimeConfig;
 use kernel::storage::EventStore;
-
-static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
-
-struct TempDir {
-    path: std::path::PathBuf,
-}
-
-impl TempDir {
-    fn new() -> Self {
-        let count = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let name = format!("caravan_apptest_{}_{}", std::process::id(), count);
-        let path = std::env::temp_dir().join(name);
-        std::fs::create_dir_all(&path).expect("failed to create temp dir");
-        TempDir { path }
-    }
-
-    fn path(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
 
 #[test]
 fn new_yields_app_started_event() {
