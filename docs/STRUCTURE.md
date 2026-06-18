@@ -49,8 +49,14 @@ crates/kernel/src/
 └── tool/                # Tool harness family
     ├── mod.rs           # Module declarations
     ├── events.rs        # ToolEventRunner: executes a tool and records events
+    ├── events/          # events submodule
+    │   ├── detail.rs    # Event detail string formatters for ToolCall/ToolResult/ToolError
+    │   └── tests.rs     # Unit tests for ToolEventRunner and detail formatters
     ├── policy.rs        # ToolPolicyEngine / ToolPolicyDecision / ToolPolicyOutcome
     ├── registry.rs      # ToolRegistry, ToolRequest, ToolOutput, ToolName, ToolRisk
+    ├── registry/        # registry submodule
+    │   ├── path.rs      # Path-safety helper: validates identifiers before path composition
+    │   └── tests.rs     # Unit tests for ToolRegistry and path-safety logic
     └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog
 ```
 
@@ -205,6 +211,8 @@ constraints are enforced:
 | Per-command handlers inline in `app.rs` | `app/{tools,context,request,selection,logging}.rs` handler family | Each handler family has a distinct responsibility (`/tool`, `/context`, `/request`, navigation, screen-log formatting); extracting them gives `app.rs` a clean dispatch-root role |
 | `runner.rs` tests inline in the production module | `runner/tests.rs` extracted alongside `runner.rs` | Co-locates tests with the module they exercise without crowding the production code; mirrors the `app/tests.rs` pattern |
 | `ui.rs` single drawing file | `ui/{header,inspector,event_log,prompt_bar}.rs` render modules | Each widget's render + its text/compute helper + its tests now has a clear home; `draw()` becomes layout orchestration |
+| `tool/events.rs` flat module | `events/` subdir: `detail.rs` (event detail string formatters) + `tests.rs` (unit tests) | Isolates detail formatting logic from the runner; keeps tests co-located without crowding the production module |
+| `tool/registry.rs` flat module | `registry/` subdir: `path.rs` (path-safety helper) + `tests.rs` (unit tests) | Extracts path-safety identifier validation into a focused module; co-locates tests alongside the code they exercise |
 
 ---
 
@@ -231,6 +239,8 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `events.rs` split | All types are a tightly coupled closed set; no clarity gain at current size. Revisit if `EventKind` variants grow beyond ~40 entries or if `EventLog` grows persistence strategies. |
 | Nav / Main panel blocks in `draw()` | The Nav and Main panel blocks were intentionally left inline in `draw()` because they are small static/literal blocks with no compute helper; a separate file would add navigation cost without clarity. |
 | `app/tests.rs` grouping into child modules | **DONE** — All 86 `App` tests were distributed across 10 child modules under `app/tests/` (`common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 10 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
+| `tool/registry/types.rs` split | `ToolRegistry`, `ToolRequest`, `ToolOutput`, `ToolName`, and `ToolRisk` remain in `registry.rs`. Splitting the type definitions into a separate file would require re-exporting them through `registry.rs` or changing all existing import paths across the crate. Defer until the type set grows large enough that the boundary becomes unambiguous. |
+| `tool/registry/execute.rs` split | The execution path in `registry.rs` is tightly coupled to its type definitions; separating them now would fragment a small module without a meaningful responsibility boundary and cause public-API import churn. Revisit if dispatch logic grows substantially or diverges in ownership. |
 
 ---
 
