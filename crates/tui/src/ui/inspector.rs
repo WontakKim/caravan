@@ -36,6 +36,7 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ToolContextAttach => labeled("Tool Context Attach"),
                 EventKind::ToolContextClear => labeled("Tool Context Clear"),
                 EventKind::ModelToolRequest => labeled("Model Tool Request"),
+                EventKind::ApprovalRequest => labeled("Approval Request"),
                 _ => format!(
                     "seq: {}\nkind: {}\nmessage: {}",
                     ev.seq,
@@ -269,6 +270,20 @@ mod tests {
         assert!(
             result.contains("Tool Context Clear:"),
             "ToolContextClear events should use 'Tool Context Clear:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_approval_request_uses_approval_request_label() {
+        let ev = AppEvent {
+            seq: EventSeq(20),
+            kind: EventKind::ApprovalRequest,
+            detail: "tool=bash cmd=\"rm -rf /tmp/test\"".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Approval Request:"),
+            "ApprovalRequest events should use 'Approval Request:' label"
         );
     }
 
