@@ -1,3 +1,4 @@
+pub mod config;
 pub mod openai;
 pub mod types;
 
@@ -224,7 +225,7 @@ mod tests {
 
     #[test]
     fn adapter_context_builds_from_profile_values() {
-        let profile = crate::model_config::ModelProfile {
+        let profile = crate::model::config::ModelProfile {
             provider: ModelProvider::OpenAI,
             model: "gpt-4o".into(),
             adapter: ModelAdapterKind::OpenAICompatibleAdapter,

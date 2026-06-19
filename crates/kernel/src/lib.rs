@@ -19,6 +19,7 @@ pub mod transcript;
 pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
+pub use model::config::{ModelConfig, ModelProfile};
 pub use model::openai::http::{
     BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError,
     OpenAIHttpResult, StubOpenAIHttpClient,
@@ -28,7 +29,6 @@ pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
     ModelUsage,
 };
-pub use model_config::{ModelConfig, ModelProfile};
 pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};
 pub use model_runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model_tool_request::{
