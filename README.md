@@ -1252,9 +1252,13 @@ operator-facing approval command** in this step. The Manual path is
 test-only and is never reachable through any production or user-visible code
 path.
 
-> **This is a data-only skeleton.** `approval.rs` defines the types; it does
-> not touch the event log, the policy engine wiring, or the runner. Wiring
-> `ApprovalGate` into the live execution path is deferred to a future task.
+> **The `approval.rs` module is pure data** — it defines the types and does not
+> import the event log, policy engine, or runner. The wiring lives elsewhere:
+> `ToolPolicyEngine` sets `approval_requirement`, and `ToolEventRunner` already
+> evaluates the `ApprovalGate` after `ToolPolicy` on the allow path (returning
+> `None`, and so emitting no `ApprovalRequest`, for production read-only tools).
+> What is deferred to a future task is the approve/reject resolution flow, an
+> interactive approval UI, and any approval-requiring (write/shell) tool.
 
 ## Manual Tool Commands
 
