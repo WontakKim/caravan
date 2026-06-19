@@ -1,5 +1,6 @@
 pub mod config;
 pub mod openai;
+pub mod registry;
 pub mod tool_request;
 pub mod types;
 
