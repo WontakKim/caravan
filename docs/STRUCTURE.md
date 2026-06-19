@@ -23,6 +23,7 @@ The workspace contains three crates under `crates/`:
 ```
 crates/kernel/src/
 ├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest (pure data; evaluated by ToolEventRunner after ToolPolicy — approve/reject flow deferred)
+├── approval_queue.rs    # ApprovalQueue / PendingApproval projection over the EventLog
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput
@@ -108,6 +109,7 @@ unchanged through the facades. Core adapter types (`ModelAdapter`,
 crates/tui/src/
 ├── app.rs          # App struct, constructors, high-level submit() dispatcher, and help_lines
 ├── app/
+│   ├── approval.rs  # handle_approval_command: /approval status
 │   ├── context.rs   # handle_context_command: /context attach-last-tool, clear, status
 │   ├── logging.rs   # screen-log formatting helpers
 │   ├── request.rs   # handle_request_command: /request status, run, clear
@@ -123,7 +125,8 @@ crates/tui/src/
 │   │   ├── tools.rs       # /tool command handler tests
 │   │   ├── context.rs     # /context command handler tests
 │   │   ├── request.rs     # /request command handler tests
-│   │   └── policy.rs      # Tool-policy decision tests
+│   │   ├── policy.rs      # Tool-policy decision tests
+│   │   └── approval.rs    # /approval status command tests
 │   └── tools.rs     # handle_tool_command: /tool list, /tool read
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
 ├── ui.rs           # Layout-orchestration root: draw() calls each widget's render helper; Nav and Main panel blocks remain inline in draw()
@@ -137,18 +140,19 @@ crates/tui/src/
 `app.rs` is the command-dispatch root: it owns the `App` struct, constructors, a
 high-level `submit()` dispatcher that routes each slash command to the appropriate
 handler, and the `help_lines` helper. `app/*.rs` is the per-command handler family:
-`handle_tool_command` in `app/tools.rs`, `handle_context_command` in
-`app/context.rs`, `handle_request_command` in `app/request.rs`, navigation in
-`app/selection.rs`, and screen-log formatting helpers in `app/logging.rs`.
+`handle_approval_command` in `app/approval.rs`, `handle_tool_command` in
+`app/tools.rs`, `handle_context_command` in `app/context.rs`,
+`handle_request_command` in `app/request.rs`, navigation in `app/selection.rs`,
+and screen-log formatting helpers in `app/logging.rs`.
 
-`app/tests.rs` is a thin aggregator that contains only the 10 `mod` declarations
+`app/tests.rs` is a thin aggregator that contains only the 11 `mod` declarations
 for its child modules under `app/tests/`. Each child module owns a focused group
 of tests: `common` provides shared helpers; `lifecycle`, `commands`, `storage`,
-`selection`, `model_flow`, `tools`, `context`, `request`, and `policy` each own
-the tests for the corresponding `App` behaviour. All 86 tests are distributed
-across these child modules. The aggregator is co-located with the module it tests
-rather than placed in `crates/tui/tests/`, which would require making internals
-`pub`. The public integration-test suite lives in `crates/tui/tests/public_api.rs`.
+`selection`, `model_flow`, `tools`, `context`, `request`, `policy`, and
+`app/tests/approval.rs` each own the tests for the corresponding `App` behaviour.
+The aggregator is co-located with the module it tests rather than placed in
+`crates/tui/tests/`, which would require making internals `pub`. The public
+integration-test suite lives in `crates/tui/tests/public_api.rs`.
 
 `ui.rs` is the layout-orchestration root: its `draw()` function computes the
 overall screen layout and calls each widget's `render` helper. `ui/*.rs` is the

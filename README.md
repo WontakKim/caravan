@@ -57,6 +57,7 @@ cargo test --workspace
 | `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
 | `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolPolicy` + `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolPolicy` + `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
 | `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
+| `/approval status`            | Show the pending approval queue (`ApprovalQueue` projection of `ApprovalRequest` events); observe-only — no approve/reject, appends only a `SlashCommand` event, starts no model run or tool execution; prints `pending: none` when no approvals are pending |
 
 ### Header Context Indicator
 
@@ -152,7 +153,7 @@ not persisted to `.caravan/events.jsonl`.
 | `ToolContextAttach`          | When `/context attach-last-tool` successfully stages a recent tool output as pending context; detail is summary-only (no raw tool output). Not emitted when there is no recent tool output to attach |
 | `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
 | `ToolPolicy`                 | Policy decision trace recorded immediately before the Approval Gate; carries the tool name, path, risk level, decision, and reason |
-| `ApprovalRequest`            | Emitted by the Approval Gate when `approval_requirement` is `Manual`; sits between `ToolPolicy` and `ToolCall`; never emitted on the production read-only-tool path |
+| `ApprovalRequest`            | Emitted by the Approval Gate when `approval_requirement` is `Manual`; sits between `ToolPolicy` and `ToolCall`; never emitted on the production read-only-tool path; pending `ApprovalRequest` events can be observed via `/approval status` (the `ApprovalQueue` projection) |
 
 ## Mock Run/Turn Flow
 
@@ -1259,6 +1260,32 @@ path.
 > `None`, and so emitting no `ApprovalRequest`, for production read-only tools).
 > What is deferred to a future task is the approve/reject resolution flow, an
 > interactive approval UI, and any approval-requiring (write/shell) tool.
+
+### `/approval status`
+
+```
+/approval status
+```
+
+Shows the pending approval queue. The queue is the `ApprovalQueue` projection —
+a read-only view over the `EventLog` that collects all `ApprovalRequest` events
+that have been recorded but not yet resolved.
+
+This command is **observe-only**:
+
+- It does **not** approve or reject any pending request.
+- It does **not** run the model or execute any tool.
+- It appends only a `SlashCommand` event to the event log.
+
+When there are no pending approvals the output is:
+
+```
+pending: none
+```
+
+On the production read-only-tool path, `ApprovalRequest` events are never
+emitted (see [Approval Gate Skeleton](#approval-gate-skeleton)), so
+`/approval status` will always report `pending: none` during normal use.
 
 ## Manual Tool Commands
 
