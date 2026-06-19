@@ -4,6 +4,7 @@
 //! still defines a `Deny` variant for type completeness and future approval
 //! gating; the `Deny` branch is exercised only by tests.
 
+use crate::approval::ApprovalRequirement;
 use crate::tool::registry::{ToolRequest, ToolRisk};
 
 /// The outcome of a policy evaluation: allow or deny.
@@ -29,23 +30,41 @@ pub struct ToolPolicyOutcome {
     pub decision: ToolPolicyDecision,
     pub risk: ToolRisk,
     pub reason: String,
+    pub approval_requirement: ApprovalRequirement,
 }
 
 /// Evaluates tool requests against a policy.
 pub struct ToolPolicyEngine {
     deny_all: bool,
+    manual_reason: Option<String>,
 }
 
 impl ToolPolicyEngine {
     /// Creates an engine that auto-allows all read-only tools.
     pub fn read_only() -> Self {
-        ToolPolicyEngine { deny_all: false }
+        ToolPolicyEngine {
+            deny_all: false,
+            manual_reason: None,
+        }
     }
 
     /// Creates an engine that denies all requests (test-only).
     #[cfg(test)]
     pub(crate) fn deny_all() -> Self {
-        ToolPolicyEngine { deny_all: true }
+        ToolPolicyEngine {
+            deny_all: true,
+            manual_reason: None,
+        }
+    }
+
+    /// Creates an engine that allows all requests and signals manual approval
+    /// with the given reason (test-only).
+    #[cfg(test)]
+    pub(crate) fn manual_for_test(reason: impl Into<String>) -> Self {
+        ToolPolicyEngine {
+            deny_all: false,
+            manual_reason: Some(reason.into()),
+        }
     }
 
     /// Evaluates a tool request and returns the policy outcome.
@@ -59,12 +78,18 @@ impl ToolPolicyEngine {
                 decision: ToolPolicyDecision::Deny,
                 risk,
                 reason: "deny_all".to_string(),
+                approval_requirement: ApprovalRequirement::None,
             }
         } else {
+            let approval_requirement = match &self.manual_reason {
+                Some(r) => ApprovalRequirement::Manual { reason: r.clone() },
+                None => ApprovalRequirement::None,
+            };
             ToolPolicyOutcome {
                 decision: ToolPolicyDecision::Allow,
                 risk,
                 reason: "read_only_auto_allow".to_string(),
+                approval_requirement,
             }
         }
     }
@@ -121,6 +146,7 @@ mod tests {
             decision: ToolPolicyDecision::Allow,
             risk: ToolRisk::ReadOnly,
             reason: "read_only_auto_allow".to_string(),
+            approval_requirement: ApprovalRequirement::None,
         };
         let detail = format_tool_policy_detail("list_files", ".", &outcome);
         assert_eq!(
@@ -135,6 +161,7 @@ mod tests {
             decision: ToolPolicyDecision::Deny,
             risk: ToolRisk::ReadOnly,
             reason: "deny_all".to_string(),
+            approval_requirement: ApprovalRequirement::None,
         };
         let detail = format_tool_policy_detail("list_files", ".", &outcome);
         assert!(
@@ -151,5 +178,30 @@ mod tests {
         };
         let outcome = engine.evaluate(&request);
         assert_eq!(outcome.decision, ToolPolicyDecision::Deny);
+    }
+
+    #[test]
+    fn read_only_engine_produces_approval_requirement_none() {
+        let engine = ToolPolicyEngine::read_only();
+        let request = ToolRequest::ListFiles {
+            path: ".".to_string(),
+        };
+        let outcome = engine.evaluate(&request);
+        assert_eq!(outcome.approval_requirement, ApprovalRequirement::None);
+    }
+
+    #[test]
+    fn manual_for_test_engine_produces_approval_requirement_manual_with_reason() {
+        let engine = ToolPolicyEngine::manual_for_test("needs review");
+        let request = ToolRequest::ListFiles {
+            path: ".".to_string(),
+        };
+        let outcome = engine.evaluate(&request);
+        assert_eq!(
+            outcome.approval_requirement,
+            ApprovalRequirement::Manual {
+                reason: "needs review".to_string(),
+            }
+        );
     }
 }
