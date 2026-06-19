@@ -1,6 +1,7 @@
 pub mod openai;
+pub mod types;
 
-use crate::model_types::{ModelAdapterKind, ModelProvider};
+use crate::model::types::{ModelAdapterKind, ModelProvider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ModelUsage {

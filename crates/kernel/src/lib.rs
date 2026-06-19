@@ -23,6 +23,7 @@ pub use model::openai::http::{
     BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError,
     OpenAIHttpResult, StubOpenAIHttpClient,
 };
+pub use model::types::{ModelAdapterKind, ModelProvider};
 pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
     ModelUsage,
@@ -33,7 +34,6 @@ pub use model_runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model_tool_request::{
     ModelToolRequest, ModelToolRequestKind, parse_first_model_tool_request,
 };
-pub use model_types::{ModelAdapterKind, ModelProvider};
 pub use runner::{MockRunOutput, run_mock_turn};
 pub use storage::EventStore;
 pub use tool::events::ToolEventRunner;

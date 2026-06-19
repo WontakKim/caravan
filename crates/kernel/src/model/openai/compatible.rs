@@ -58,7 +58,7 @@ mod tests {
     use crate::model::openai::http::OpenAIHttpResult;
     use crate::model::openai::request::OpenAIRequestPlan;
     use crate::model::openai::types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
-    use crate::model_types::{ModelAdapterKind, ModelProvider};
+    use crate::model::types::{ModelAdapterKind, ModelProvider};
 
     struct FakeSuccessClient;
 
