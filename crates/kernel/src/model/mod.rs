@@ -1,4 +1,5 @@
 pub mod config;
+pub mod gateway;
 pub mod openai;
 pub mod registry;
 pub mod runtime_config;

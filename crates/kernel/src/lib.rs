@@ -20,6 +20,7 @@ pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCom
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
 pub use model::config::{ModelConfig, ModelProfile};
+pub use model::gateway::{ModelGateway, ModelResponse, ModelRoute};
 pub use model::openai::http::{
     BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError,
     OpenAIHttpResult, StubOpenAIHttpClient,
@@ -33,7 +34,6 @@ pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
     ModelUsage,
 };
-pub use model_gateway::{ModelGateway, ModelResponse, ModelRoute};
 pub use runner::{MockRunOutput, run_mock_turn};
 pub use storage::EventStore;
 pub use tool::events::ToolEventRunner;

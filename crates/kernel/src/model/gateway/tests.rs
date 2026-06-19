@@ -1,10 +1,10 @@
 use super::*;
+use crate::model::config::ModelProfile;
 use crate::model::openai::http::{OpenAIHttpClientKind, OpenAIHttpResult};
 use crate::model::openai::request::OpenAIRequestPlan;
 use crate::model::openai::types::{
     OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIUsage,
 };
-use crate::model_config::ModelProfile;
 
 #[test]
 fn complete_openai_profile_returns_adapter_failure() {
@@ -212,8 +212,8 @@ fn from_runtime_config_blocking_kind_missing_key_returns_missing_api_key() {
             "CARAVAN_TEST_MISSING_OPENAI_KEY_SHOULD_NOT_EXIST".into(),
         ),
     ]);
-    let runtime_config =
-        crate::model_runtime_config::ModelRuntimeConfig::from_env_map(&vars).expect("valid config");
+    let runtime_config = crate::model::runtime_config::ModelRuntimeConfig::from_env_map(&vars)
+        .expect("valid config");
     let result = ModelGateway::from_runtime_config(runtime_config).complete(ModelRequest {
         prompt: "any".into(),
         user_message: "hello caravan".into(),
@@ -242,8 +242,8 @@ fn from_runtime_config_explicit_stub_kind_returns_skeleton_error() {
         ("CARAVAN_MODEL_PROVIDER".into(), "openai".into()),
         ("CARAVAN_OPENAI_HTTP_CLIENT".into(), "stub".into()),
     ]);
-    let runtime_config =
-        crate::model_runtime_config::ModelRuntimeConfig::from_env_map(&vars).expect("valid config");
+    let runtime_config = crate::model::runtime_config::ModelRuntimeConfig::from_env_map(&vars)
+        .expect("valid config");
     let result = ModelGateway::from_runtime_config(runtime_config).complete(ModelRequest {
         prompt: "any".into(),
         user_message: "hello caravan".into(),
