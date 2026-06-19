@@ -535,3 +535,128 @@ fn deny_all_engine_returns_policy_denied_error_without_tool_call() {
         result
     );
 }
+
+// --- ApprovalGate integration tests (T-4) ---
+
+#[test]
+fn manual_approval_engine_stops_before_tool_call_and_records_approval_request() {
+    let dir = TempDir::new();
+    // Target file is intentionally NOT created — gate stops before registry.
+    let ctx = make_context(dir.path());
+    let runner =
+        ToolEventRunner::with_policy(ToolPolicyEngine::manual_for_test("test_manual_approval"));
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "missing.txt".to_string(),
+        },
+    );
+
+    // Exactly two events: ToolPolicy then ApprovalRequest.
+    assert_eq!(log.len(), 2, "expected exactly 2 events, got {}", log.len());
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ApprovalRequest);
+
+    // No ToolCall, ToolResult, or ToolError events appended.
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolCall),
+        "ToolCall must not be appended when gate stops execution"
+    );
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolResult),
+        "ToolResult must not be appended when gate stops execution"
+    );
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolError),
+        "ToolError must not be appended when gate stops execution"
+    );
+
+    // Result is Err(ToolError::ApprovalRequired { .. }).
+    assert!(
+        matches!(result, Err(ToolError::ApprovalRequired { .. })),
+        "expected ApprovalRequired error, got {:?}",
+        result
+    );
+
+    // ApprovalRequest detail contains risk=read_only and reason=test_manual_approval.
+    let approval_detail = &log.get(1).unwrap().detail;
+    assert!(
+        approval_detail.contains("risk=read_only"),
+        "ApprovalRequest detail must contain risk=read_only: {approval_detail}"
+    );
+    assert!(
+        approval_detail.contains("reason=test_manual_approval"),
+        "ApprovalRequest detail must contain reason=test_manual_approval: {approval_detail}"
+    );
+}
+
+#[test]
+fn read_only_engine_gate_pass_produces_no_approval_request_event() {
+    let dir = TempDir::new();
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::ListFiles {
+            path: ".".to_string(),
+        },
+    );
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+
+    // Exactly three events in order: ToolPolicy, ToolCall, ToolResult.
+    assert_eq!(log.len(), 3, "expected exactly 3 events, got {}", log.len());
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+    assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
+
+    // No ApprovalRequest event inserted when requirement is None.
+    assert!(
+        !log.events()
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalRequest),
+        "ApprovalRequest must not appear when ApprovalRequirement::None"
+    );
+}
+
+#[test]
+fn approval_request_event_survives_persistence_round_trip() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let ctx = make_context(workspace_dir.path());
+    let runner =
+        ToolEventRunner::with_policy(ToolPolicyEngine::manual_for_test("test_manual_approval"));
+
+    // Run a request that triggers the gate; flush by dropping the log.
+    {
+        let store = EventStore::new(store_dir.path());
+        let mut log = EventLog::load_from(store);
+        runner
+            .run(
+                &mut log,
+                &ctx,
+                ToolRequest::ReadFile {
+                    path: "missing.txt".to_string(),
+                },
+            )
+            .ok();
+    }
+
+    // Reload and verify the ApprovalRequest event kind is preserved.
+    let store2 = EventStore::new(store_dir.path());
+    let log2 = EventLog::load_from(store2);
+
+    assert_eq!(log2.len(), 2);
+    assert_eq!(log2.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log2.get(1).unwrap().kind, EventKind::ApprovalRequest);
+    assert!(
+        !log2.get(1).unwrap().detail.is_empty(),
+        "ApprovalRequest detail must be non-empty after reload"
+    );
+}

@@ -59,6 +59,10 @@ impl super::App {
             kernel::ToolError::PolicyDenied { reason } => {
                 format!("Tool error: policy denied ({})", reason)
             }
+            // production-unreachable: new_readonly() always yields ApprovalRequirement::None; kept for exhaustive match
+            kernel::ToolError::ApprovalRequired { reason } => {
+                format!("Tool error: approval required ({})", reason)
+            }
         };
         self.log.push(msg);
     }

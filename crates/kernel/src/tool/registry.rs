@@ -62,6 +62,7 @@ pub enum ToolError {
     TooLarge { path: String, max_bytes: u64 },
     Io { message: String },
     PolicyDenied { reason: String },
+    ApprovalRequired { reason: String },
 }
 
 /// Maximum bytes allowed when reading a file.

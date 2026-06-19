@@ -1,6 +1,14 @@
 //! Detail-string formatters for ToolCall, ToolResult, and ToolError events.
 
+use crate::approval::ApprovalRequest;
 use crate::tool::registry::{ToolError, ToolOutput};
+
+pub(super) fn format_approval_request_detail(request: &ApprovalRequest) -> String {
+    format!(
+        "tool={} path={:?} risk={} reason={}",
+        request.tool, request.path, request.risk, request.reason
+    )
+}
 
 pub(super) fn format_tool_call_detail(tool_name: &str, path: &str) -> String {
     format!("tool={} path={:?} risk=read_only", tool_name, path)
@@ -39,6 +47,7 @@ pub(super) fn format_tool_error_detail(tool_name: &str, path: &str, error: &Tool
             format!("{} message={:?}", token, message)
         }
         ToolError::PolicyDenied { .. } => "policy_denied".to_string(),
+        ToolError::ApprovalRequired { .. } => "approval_required".to_string(),
     };
     format!("tool={} path={:?} error={}", tool_name, path, token)
 }

@@ -1,8 +1,12 @@
 //! ToolEventRunner: traces read-only tool execution as EventLog entries.
 
 mod detail;
-use detail::{format_tool_call_detail, format_tool_error_detail, format_tool_result_detail};
+use detail::{
+    format_approval_request_detail, format_tool_call_detail, format_tool_error_detail,
+    format_tool_result_detail,
+};
 
+use crate::approval::ApprovalGate;
 use crate::events::{EventKind, EventLog};
 use crate::tool::policy::{ToolPolicyDecision, ToolPolicyEngine, format_tool_policy_detail};
 use crate::tool::registry::{
@@ -64,6 +68,22 @@ impl ToolEventRunner {
 
         match outcome.decision {
             ToolPolicyDecision::Allow => {
+                let gate = ApprovalGate::new();
+                if let Some(request) = gate.evaluate(
+                    tool_name,
+                    &tool_path,
+                    outcome.risk.as_str(),
+                    &outcome.approval_requirement,
+                ) {
+                    event_log.append(
+                        EventKind::ApprovalRequest,
+                        format_approval_request_detail(&request),
+                    );
+                    return Err(ToolError::ApprovalRequired {
+                        reason: request.reason,
+                    });
+                }
+
                 event_log.append(
                     EventKind::ToolCall,
                     format_tool_call_detail(tool_name, &tool_path),
