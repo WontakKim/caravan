@@ -1,5 +1,6 @@
 pub mod config;
 pub mod openai;
+pub mod tool_request;
 pub mod types;
 
 use crate::model::types::{ModelAdapterKind, ModelProvider};
