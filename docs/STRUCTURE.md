@@ -114,7 +114,7 @@ crates/tui/src/
 │   ├── logging.rs   # screen-log formatting helpers
 │   ├── request.rs   # handle_request_command: /request status, run, clear
 │   ├── selection.rs # navigation: select_next/select_prev, scroll_inspector_down/up
-│   ├── tests.rs     # Aggregator: 10 `mod` declarations only; no test bodies (cfg(test))
+│   ├── tests.rs     # Aggregator: 11 `mod` declarations only; no test bodies (cfg(test))
 │   ├── tests/
 │   │   ├── common.rs      # Shared test helpers (TempDir RAII, TEST_COUNTER)
 │   │   ├── lifecycle.rs   # App construction and teardown tests
@@ -295,7 +295,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `model/core.rs` extraction | Pull `ModelAdapter`/`MockModelAdapter`/`ModelRequest`/`Output`/`Error`/`Usage`/`Result` out of `model/mod.rs` into `model/core.rs`. Deferred from the consolidation pass to limit import churn; revisit once the core contract grows or a second adapter family lands. |
 | `events.rs` split | **DONE** — `events.rs` was split into `ids.rs` (EventSeq/RunId/TurnId), `kind.rs` (EventKind + name()), `record.rs` (AppEvent), `log.rs` (EventLog), and `tests.rs` (unit tests) under `events/`. |
 | Nav / Main panel blocks in `draw()` | The Nav and Main panel blocks were intentionally left inline in `draw()` because they are small static/literal blocks with no compute helper; a separate file would add navigation cost without clarity. |
-| `app/tests.rs` grouping into child modules | **DONE** — All 86 `App` tests were distributed across 10 child modules under `app/tests/` (`common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 10 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
+| `app/tests.rs` grouping into child modules | **DONE** — The `App` tests were distributed across 11 child modules under `app/tests/` (`approval`, `common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 11 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
 | `tool/registry/types.rs` split | `ToolRegistry`, `ToolRequest`, `ToolOutput`, `ToolName`, and `ToolRisk` remain in `registry.rs`. Splitting the type definitions into a separate file would require re-exporting them through `registry.rs` or changing all existing import paths across the crate. Defer until the type set grows large enough that the boundary becomes unambiguous. |
 | `tool/registry/execute.rs` split | The execution path in `registry.rs` is tightly coupled to its type definitions; separating them now would fragment a small module without a meaningful responsibility boundary and cause public-API import churn. Revisit if dispatch logic grows substantially or diverges in ownership. |
 | `commands/parse.rs` per-family split | If `/model`, `/agent`, or approval command families grow substantially, `parse.rs` can be split into `parse_tool.rs`, `parse_context.rs`, `parse_request.rs`, and `parse_model.rs` — one parser per command family. Defer until the command family boundary becomes unambiguous. |
