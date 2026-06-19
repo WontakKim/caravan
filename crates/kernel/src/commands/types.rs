@@ -19,6 +19,11 @@ pub enum RequestCommand {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalCommand {
+    Status,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Help,
     Clear,
@@ -26,6 +31,7 @@ pub enum Command {
     Tool(ToolCommand),
     Context(ContextCommand),
     Request(RequestCommand),
+    Approval(ApprovalCommand),
     Unknown(String),
 }
 

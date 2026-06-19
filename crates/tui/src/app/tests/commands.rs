@@ -128,6 +128,7 @@ fn help_lines_exact_content() {
         "  /request status - show the pending model tool request".to_string(),
         "  /request clear - clear the pending model tool request".to_string(),
         "  /request run - execute the pending model tool request (read-only)".to_string(),
+        "  /approval status - show pending approval requests".to_string(),
     ];
     assert_eq!(App::help_lines(), expected);
 }

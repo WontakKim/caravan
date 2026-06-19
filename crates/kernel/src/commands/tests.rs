@@ -294,3 +294,61 @@ fn request_accept_is_unknown() {
         ParsedInput::SlashCommand(Command::Unknown(_))
     ));
 }
+
+// --- /approval command parsing tests ---
+
+#[test]
+fn approval_status_parses_correctly() {
+    assert_eq!(
+        parse_input("/approval status"),
+        ParsedInput::SlashCommand(Command::Approval(ApprovalCommand::Status))
+    );
+}
+
+#[test]
+fn approval_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_approve_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval approve"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_reject_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval reject"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_clear_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval clear"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_run_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval run"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_unknown_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval unknown"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}

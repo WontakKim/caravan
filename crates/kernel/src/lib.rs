@@ -20,7 +20,9 @@ pub mod transcript;
 
 pub use approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, ApprovalRequirement};
 pub use approval_queue::{ApprovalQueue, PendingApproval};
-pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
+pub use commands::{
+    ApprovalCommand, Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand,
+};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
 pub use model::config::{ModelConfig, ModelProfile};

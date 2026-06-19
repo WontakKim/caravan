@@ -128,6 +128,7 @@ impl App {
                     Command::Tool(tc) => self.handle_tool_command(tc),
                     Command::Context(cc) => self.handle_context_command(cc),
                     Command::Request(rc) => self.handle_request_command(rc),
+                    Command::Approval(ac) => self.handle_approval_command(ac),
                     Command::Unknown(c) => {
                         self.event_log
                             .append(EventKind::UnknownSlashCommand, c.clone());
@@ -174,10 +175,12 @@ impl App {
             "  /request status - show the pending model tool request".to_string(),
             "  /request clear - clear the pending model tool request".to_string(),
             "  /request run - execute the pending model tool request (read-only)".to_string(),
+            "  /approval status - show pending approval requests".to_string(),
         ]
     }
 }
 
+mod approval;
 mod context;
 mod logging;
 mod request;

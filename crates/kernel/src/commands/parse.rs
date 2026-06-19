@@ -1,4 +1,6 @@
-use super::types::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
+use super::types::{
+    ApprovalCommand, Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand,
+};
 
 pub fn parse_input(input: &str) -> ParsedInput {
     let trimmed = input.trim();
@@ -16,6 +18,7 @@ pub fn parse_input(input: &str) -> ParsedInput {
             "/request status" => Command::Request(RequestCommand::Status),
             "/request clear" => Command::Request(RequestCommand::Clear),
             "/request run" => Command::Request(RequestCommand::Run),
+            "/approval status" => Command::Approval(ApprovalCommand::Status),
             t if t.starts_with("/tool ") => {
                 let after_tool = t["/tool ".len()..].trim();
                 let (subcommand, path) = match after_tool.split_once(char::is_whitespace) {
