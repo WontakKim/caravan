@@ -1,5 +1,6 @@
 //! Core execution and model logic for Caravan.
 
+pub mod approval;
 pub mod commands;
 pub mod events;
 pub mod manual_context;
@@ -16,6 +17,7 @@ pub mod storage;
 pub mod tool;
 pub mod transcript;
 
+pub use approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, ApprovalRequirement};
 pub use commands::{Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand};
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
