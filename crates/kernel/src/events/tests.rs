@@ -269,6 +269,23 @@ fn model_tool_request_event_kind_serializes_and_round_trips() {
 }
 
 #[test]
+fn approval_request_event_kind_name_and_json_round_trip() {
+    assert_eq!(EventKind::ApprovalRequest.name(), "ApprovalRequest");
+
+    let event = AppEvent {
+        seq: EventSeq(1),
+        kind: EventKind::ApprovalRequest,
+        detail: "tool=read_file".into(),
+    };
+    let json = serde_json::to_string(&event).expect("serialization should succeed");
+    let v: serde_json::Value =
+        serde_json::from_str(&json).expect("parsing to Value should succeed");
+    assert_eq!(v["kind"], "ApprovalRequest");
+    let restored: AppEvent = serde_json::from_str(&json).expect("deserialization should succeed");
+    assert_eq!(event, restored);
+}
+
+#[test]
 fn tool_call_event_kind_name_and_json_round_trip() {
     assert_eq!(EventKind::ToolCall.name(), "ToolCall");
 
