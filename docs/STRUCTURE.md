@@ -35,23 +35,29 @@ crates/kernel/src/
 │   ├── log.rs           # EventLog
 │   └── tests.rs         # Unit tests
 ├── manual_context.rs    # ManualToolContext: user-attached tool context blobs
-├── model_config.rs      # ModelConfig / ModelProfile (static configuration)
-├── model_gateway.rs     # ModelGateway / ModelResponse / ModelRoute (routing logic)
-├── model_gateway/       # model_gateway submodule
-│   └── tests.rs         # Unit tests (T-2: test extraction only; production code unchanged)
-├── model_registry.rs    # Adapter registry: maps ModelAdapterKind → ModelAdapter impl
-├── model_runtime_config.rs  # ModelRuntimeConfig loaded from process environment
-├── model_runtime_config/    # model_runtime_config submodule
-│   └── tests.rs             # Unit tests (T-1: test extraction only; production code unchanged)
-├── model_tool_request.rs    # ModelToolRequest parsed from model output
-├── model_types.rs       # ModelAdapterKind / ModelProvider enums
+├── model_config.rs      # Facade: pub use crate::model::config::*
+├── model_gateway.rs     # Facade: pub use crate::model::gateway::*
+├── model_registry.rs    # Facade: pub use crate::model::registry::*
+├── model_runtime_config.rs  # Facade: pub use crate::model::runtime_config::*
+├── model_tool_request.rs    # Facade: pub use crate::model::tool_request::*
+├── model_types.rs       # Facade: pub use crate::model::types::*
 ├── prompt.rs            # Prompt compilation: transcript + manual context + static ToolCatalog section → prompt string
 ├── runner.rs            # Turn execution orchestrator (run_mock_turn, MockRunOutput)
 ├── storage.rs           # EventStore: JSONL persistence for EventLog
 ├── transcript.rs        # ConversationTranscript / TranscriptMessage / TranscriptRole
 │
-├── model/               # Model adapter family
-│   ├── mod.rs           # ModelAdapter trait, ModelRequest/Output/Error/Usage
+├── model/               # Model family (canonical home; top-level model_* are facades into here)
+│   ├── mod.rs           # ModelAdapter trait + ModelRequest/Output/Error/Usage (core); submodule decls + root re-exports
+│   ├── config.rs        # ModelConfig / ModelProfile (static configuration)
+│   ├── gateway.rs       # ModelGateway / ModelResponse / ModelRoute (routing logic)
+│   ├── gateway/         # gateway submodule
+│   │   └── tests.rs     # Unit tests
+│   ├── registry.rs      # Adapter registry: maps ModelAdapterKind → ModelAdapter impl
+│   ├── runtime_config.rs    # ModelRuntimeConfig loaded from process environment
+│   ├── runtime_config/      # runtime_config submodule
+│   │   └── tests.rs         # Unit tests
+│   ├── tool_request.rs  # ModelToolRequest parsed from model output
+│   ├── types.rs         # ModelAdapterKind / ModelProvider enums
 │   └── openai/          # OpenAI-compatible HTTP adapter
 │       ├── mod.rs
 │       ├── compatible.rs  # OpenAICompatibleAdapter (ModelAdapter impl)
@@ -83,6 +89,15 @@ The `commands/` sub-directory follows the same facade pattern as `events/`:
 The `tool/` and `model/openai/` sub-directories were introduced in this POC to
 give each family a private namespace and prevent flat-file sprawl at the
 `kernel/src/` level.
+
+The six top-level `model_*.rs` files are now thin compatibility facades
+(`pub use crate::model::<sub>::*;`) over canonical submodules consolidated under
+`model/`. The canonical paths are `kernel::model::{config, gateway, registry,
+runtime_config, tool_request, types}`; the legacy `kernel::model_*` module paths
+(e.g. `kernel::model_gateway::ModelGateway`) and the kernel root re-exports
+(`kernel::ModelGateway`, `kernel::ModelRuntimeConfig`, …) continue to resolve
+unchanged through the facades. Core adapter types (`ModelAdapter`,
+`ModelRequest`/`Output`/`Error`/`Usage`) still live in `model/mod.rs`.
 
 ---
 
@@ -247,7 +262,11 @@ explicit decision, not an oversight:
 
 | File | Reason not split |
 |------|-----------------|
-| `model_*` flat files → `model/` consolidation | The remaining `model_config.rs`, `model_gateway.rs`, `model_registry.rs`, `model_runtime_config.rs`, `model_tool_request.rs`, and `model_types.rs` files at the `kernel/src/` level were not folded into the `model/` sub-tree; they concern gateway routing and config, not the adapter implementation, so the conceptual boundary does not yet justify a full consolidation. |
+| `model/mod.rs` core types → `model/core.rs` | The core adapter contract (`ModelAdapter`, `MockModelAdapter`, `ModelRequest`/`Output`/`Error`/`Usage`, `ModelResult`) remains inline in `model/mod.rs`. Extracting it into `model/core.rs` was deferred because the consolidation of the six `model_*` flat files (see §7) already touches every model-family module and lib.rs; splitting core in the same pass would add import churn without a clear boundary win. |
+
+The earlier `model_*` flat files have since been consolidated into the `model/`
+family (see §7 and §9); only the `model/mod.rs` core split above remains
+deliberately deferred.
 
 ---
 
@@ -258,15 +277,16 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 
 | Refactor | Reason deferred |
 |----------|-----------------|
-| Full `model_*` consolidation into `model/` | Gateway, config, and registry modules overlap conceptually with the `model/` sub-tree but each also touches the broader kernel API surface. Consolidating them cleanly requires a broader API audit that is out of scope for this pass. |
+| `model_*` family consolidation into `model/` | **DONE** — All six top-level `model_config.rs`, `model_gateway.rs`, `model_registry.rs`, `model_runtime_config.rs`, `model_tool_request.rs`, and `model_types.rs` files were folded into canonical `model::{config, gateway, registry, runtime_config, tool_request, types}` modules (`gateway` and `runtime_config` keep their split `tests.rs` under matching subdirs). The top-level files remain as `pub use crate::model::<sub>::*;` compatibility facades, so `kernel::model_*` module paths and the kernel root re-exports are unchanged. Core adapter types still live in `model/mod.rs` — see the `model/core.rs` deferral in §8. |
+| `model/core.rs` extraction | Pull `ModelAdapter`/`MockModelAdapter`/`ModelRequest`/`Output`/`Error`/`Usage`/`Result` out of `model/mod.rs` into `model/core.rs`. Deferred from the consolidation pass to limit import churn; revisit once the core contract grows or a second adapter family lands. |
 | `events.rs` split | **DONE** — `events.rs` was split into `ids.rs` (EventSeq/RunId/TurnId), `kind.rs` (EventKind + name()), `record.rs` (AppEvent), `log.rs` (EventLog), and `tests.rs` (unit tests) under `events/`. |
 | Nav / Main panel blocks in `draw()` | The Nav and Main panel blocks were intentionally left inline in `draw()` because they are small static/literal blocks with no compute helper; a separate file would add navigation cost without clarity. |
 | `app/tests.rs` grouping into child modules | **DONE** — All 86 `App` tests were distributed across 10 child modules under `app/tests/` (`common`, `lifecycle`, `commands`, `storage`, `selection`, `model_flow`, `tools`, `context`, `request`, `policy`). `app/tests.rs` is now a thin aggregator containing only the 10 `mod` declarations. No tests remain in the aggregator and no grouping candidates are deferred. |
 | `tool/registry/types.rs` split | `ToolRegistry`, `ToolRequest`, `ToolOutput`, `ToolName`, and `ToolRisk` remain in `registry.rs`. Splitting the type definitions into a separate file would require re-exporting them through `registry.rs` or changing all existing import paths across the crate. Defer until the type set grows large enough that the boundary becomes unambiguous. |
 | `tool/registry/execute.rs` split | The execution path in `registry.rs` is tightly coupled to its type definitions; separating them now would fragment a small module without a meaningful responsibility boundary and cause public-API import churn. Revisit if dispatch logic grows substantially or diverges in ownership. |
 | `commands/parse.rs` per-family split | If `/model`, `/agent`, or approval command families grow substantially, `parse.rs` can be split into `parse_tool.rs`, `parse_context.rs`, `parse_request.rs`, and `parse_model.rs` — one parser per command family. Defer until the command family boundary becomes unambiguous. |
-| `model_runtime_config` production split into error/env/parser | `model_runtime_config.rs` mixes error types, environment-variable loading, and config parsing. A future split into `error.rs`, `env.rs`, and `parser.rs` sub-modules would give each responsibility a clean home. Defer until the module grows large enough that the boundaries are unambiguous. |
-| `model_gateway` production split once gateway routing grows | `model_gateway.rs` currently holds `ModelGateway`, `ModelResponse`, and `ModelRoute` in a single file. A production split makes sense once gateway routing logic grows (e.g. per-provider dispatch, fallback logic, or load-balancing); defer until the routing grows enough to justify a subdir. |
+| `model/runtime_config` production split into error/env/parser | `model/runtime_config.rs` mixes error types, environment-variable loading, and config parsing. A future split into `error.rs`, `env.rs`, and `parser.rs` sub-modules would give each responsibility a clean home. Defer until the module grows large enough that the boundaries are unambiguous. |
+| `model/gateway` production split once gateway routing grows | `model/gateway.rs` currently holds `ModelGateway`, `ModelResponse`, and `ModelRoute` in a single file. A production split makes sense once gateway routing logic grows (e.g. per-provider dispatch, fallback logic, or load-balancing); defer until the routing grows enough to justify a subdir. |
 | `model/openai/http` production split once async/streaming/client variants are added | `http.rs` currently contains `StubOpenAIHttpClient` and `BlockingOpenAIHttpClient` as a synchronous stub and blocking client in one file. When async or streaming variants are introduced, split into dedicated modules (e.g. `async.rs`, `streaming.rs`, `client.rs`). Defer until those variants exist. |
 
 ---
