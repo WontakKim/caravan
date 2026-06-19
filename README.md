@@ -151,7 +151,8 @@ not persisted to `.caravan/events.jsonl`.
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
 | `ToolContextAttach`          | When `/context attach-last-tool` successfully stages a recent tool output as pending context; detail is summary-only (no raw tool output). Not emitted when there is no recent tool output to attach |
 | `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
-| `ToolPolicy`                 | Policy decision trace recorded immediately before `ToolCall`; carries the tool name, path, risk level, decision, and reason |
+| `ToolPolicy`                 | Policy decision trace recorded immediately before the Approval Gate; carries the tool name, path, risk level, decision, and reason |
+| `ApprovalRequest`            | Emitted by the Approval Gate when `approval_requirement` is `Manual`; sits between `ToolPolicy` and `ToolCall`; never emitted on the production read-only-tool path |
 
 ## Mock Run/Turn Flow
 
@@ -1200,6 +1201,60 @@ implemented:
 - **Write, shell, and network tools** — only the two read-only tools
   (`list_files`, `read_file`) are registered; no write, shell, delete, or
   network tool exists in this stage.
+
+## Approval Gate Skeleton
+
+`crates/kernel/src/approval.rs` defines the data types that form the Approval
+Gate boundary. The gate sits between `ToolPolicy` and `ToolCall`: after
+`ToolPolicyEngine` produces a `ToolPolicyOutcome`, the `ApprovalGate` inspects
+the `approval_requirement` field to decide whether the tool may proceed
+immediately or whether a human must approve first.
+
+### Approval Module Types
+
+| Type | Role |
+|------|------|
+| `ApprovalRequirement` | Enum with two variants: `None` (no approval needed) and `Manual { reason }` (human must approve before the tool runs) |
+| `ApprovalGate` | Evaluates an `ApprovalRequirement` and returns `Some(ApprovalRequest)` when manual approval is required, or `None` when the tool may proceed |
+| `ApprovalRequest` | Pending approval request surfaced to the operator; carries `tool`, `path`, `risk`, and `reason` fields |
+
+### `EventKind::ApprovalRequest`
+
+`EventKind::ApprovalRequest` is recorded when the `ApprovalGate` determines
+that manual approval is required for a tool invocation. It sits between the
+`ToolPolicy` event and the `ToolCall` event in the event sequence: a gate
+evaluation returning `Some(ApprovalRequest)` would emit this event before the
+tool may run.
+
+### `approval_requirement` Field on `ToolPolicyOutcome`
+
+`ToolPolicyOutcome` carries an `approval_requirement: ApprovalRequirement`
+field that the `ApprovalGate` reads to determine whether to emit an
+`ApprovalRequest`. This field is the bridge between the policy engine and the
+gate.
+
+### Production Behavior: Read-only Tools Run Without Approval
+
+`ToolPolicyEngine::read_only()` — the engine wired into the production tool
+harness — always sets `approval_requirement` to `ApprovalRequirement::None`.
+`ApprovalGate::evaluate()` returns `None` for `ApprovalRequirement::None`, so
+**no `ApprovalRequest` event is ever emitted on the production path**. Read-only
+tools (`list_files`, `read_file`) proceed directly from `ToolPolicy` to
+`ToolCall` without an approval step.
+
+### Manual Path: Test-Only — No Approve/Reject Flow or UI
+
+`ToolPolicyEngine::manual_for_test(reason)` is a `#[cfg(test)]`-gated
+constructor that returns `ApprovalRequirement::Manual { reason }`. It exists
+solely to let tests exercise the `ApprovalGate` → `ApprovalRequest` code path.
+There is **no approve/reject flow, no interactive confirmation UI, and no
+operator-facing approval command** in this step. The Manual path is
+test-only and is never reachable through any production or user-visible code
+path.
+
+> **This is a data-only skeleton.** `approval.rs` defines the types; it does
+> not touch the event log, the policy engine wiring, or the runner. Wiring
+> `ApprovalGate` into the live execution path is deferred to a future task.
 
 ## Manual Tool Commands
 

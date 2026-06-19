@@ -22,6 +22,7 @@ The workspace contains three crates under `crates/`:
 
 ```
 crates/kernel/src/
+├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest (pure data; no event-log or runtime wiring in this step)
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput
@@ -184,7 +185,7 @@ constraints are enforced:
   `AppStart`, `UserMessage`, `RunCreate`, `TurnStart`, `PromptCompile`,
   `ModelRoute`, `ModelOutputChunk`, `AssistantMessage`, `ModelUsage`,
   `RunComplete`, `RunFail`, `ModelError`, `ModelToolRequest`, `ToolPolicy`,
-  `ToolCall`, `ToolResult`, `ToolError`, `ToolContextAttach`,
+  `ApprovalRequest`, `ToolCall`, `ToolResult`, `ToolError`, `ToolContextAttach`,
   `ToolContextClear`, `SlashCommand`, `HelpRequest`, `LogClear`,
   `ExitRequest`, `UnknownSlashCommand`.
 - **No UI selection, scroll, or focus events.** Events such as "user moved the
@@ -228,8 +229,17 @@ constraints are enforced:
   `ModelRequest` and returns `ModelOutput`. It has no knowledge of tools,
   prompts, or the event log.
 - **Tool (`tool/`)** owns the harness: schema, registry, policy, and event
-  runner. It records `ToolCall`/`ToolResult`/`ToolError` events but does not
-  interact with the model layer directly.
+  runner. It records `ToolPolicy` / `ApprovalRequest` / `ToolCall` /
+  `ToolResult` / `ToolError` events but does not interact with the model layer
+  directly. The **Approval Gate** (`crates/kernel/src/approval.rs`) sits
+  between `ToolPolicy` and `ToolCall`: after `ToolPolicyEngine` produces a
+  `ToolPolicyOutcome` (including the `approval_requirement` field), the
+  `ApprovalGate` evaluates that requirement and returns
+  `Some(ApprovalRequest)` when manual approval is needed (emitting an
+  `ApprovalRequest` event) or `None` when the tool may proceed immediately. On
+  the production path (`ToolPolicyEngine::read_only()`), `approval_requirement`
+  is always `ApprovalRequirement::None`, so no `ApprovalRequest` event is
+  emitted and tools run without an approval step.
 - **TUI** reads from `EventLog` and `App` state to draw the screen. It writes
   to `App` state through `input::handle_key`. It never reaches into
   `model/openai/` internals or tool registry internals.
