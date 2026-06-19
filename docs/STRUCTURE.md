@@ -22,7 +22,7 @@ The workspace contains three crates under `crates/`:
 
 ```
 crates/kernel/src/
-├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest (pure data; no event-log or runtime wiring in this step)
+├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest (pure data; evaluated by ToolEventRunner after ToolPolicy — approve/reject flow deferred)
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput

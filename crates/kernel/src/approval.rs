@@ -1,7 +1,12 @@
 //! Approval gate types for tool-execution approval flows.
 //!
-//! These types are pure data; they do not touch the event log, policy engine,
-//! or runner. Wiring into the runtime is deferred to a future task.
+//! These types are pure data: this module imports neither the event log, the
+//! policy engine, nor the runner. The wiring lives elsewhere — `ToolPolicyEngine`
+//! sets `approval_requirement`, and `ToolEventRunner` evaluates [`ApprovalGate`]
+//! after the `ToolPolicy` event on the allow path (yielding `None`, and so no
+//! `ApprovalRequest`, for production read-only tools). What is deferred to a
+//! future task is the approve/reject resolution flow, an approval UI, and any
+//! approval-requiring (write/shell) tool.
 
 /// Whether a tool invocation requires human approval before it may proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
