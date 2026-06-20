@@ -57,7 +57,7 @@ cargo test --workspace
 | `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
 | `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolPolicy` + `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolPolicy` + `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
 | `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
-| `/approval status`            | Show the pending approval queue (`ApprovalQueue` projection of `ApprovalRequest` events); lists only **pending** (unresolved) requests — requests resolved by a recorded `ApprovalDecision` event are excluded from the output; observe-only, appends only a `SlashCommand` event, starts no model run or tool execution; prints `pending: none` when no approvals are pending |
+| `/approval status`            | Show the pending approval queue and approved resume plan summary: lists only **pending** (unresolved) `ApprovalRequest` events, then always prints the count of approved resume plans (`ApprovalQueue::resume_plans` — resolved `Approved` decisions for supported tools), a per-plan summary line (`seq=<n> <detail>`), and a suggested `/tool` command for each plan; observe-only, appends only a `SlashCommand` event; no resume execution happens in this step |
 | `/approval approve <seq>`     | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=approved reason=operator_approved`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
 | `/approval reject <seq>`      | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=rejected reason=operator_rejected`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
 
@@ -1283,23 +1283,93 @@ A `ApprovalDecision` is **valid** for a request when it parses via
 event seq is greater than that request seq; if several valid decisions reference the
 same request, the one with the greatest decision seq wins.
 
+After the pending queue, `/approval status` also prints the **approved resume plan**
+count produced by `ApprovalQueue::resume_plans` — a read-only projection of resolved
+approvals whose `decision` is `Approved` and whose tool name is supported (`read_file`
+or `list_files`). For each such plan one summary line and the suggested `/tool`
+command are printed. **No tool execution or resume is performed in this step.**
+
+Example output when one request was approved and the pending queue is now empty:
+
+```
+Approval status:
+- pending: none
+- approved resume plans: 1
+- seq=3 tool=read_file path="README.md" risk=read_only reason=operator_approved
+- suggested: /tool read README.md
+```
+
 This command is **observe-only**:
 
 - It does **not** approve or reject any pending request.
 - It does **not** run the model or execute any tool.
+- It does **not** resume tool execution — the suggested `/tool` command is a hint
+  only; execution requires a manual `/tool read` or `/tool list` command.
 - It appends only a `SlashCommand` event to the event log.
 - `/approval approve <seq>` and `/approval reject <seq>` now exist and append
   an `ApprovalDecision` event, but they do **not** resume tool execution.
 
-When there are no pending approvals the output is:
+When there are no pending approvals and no approved resume plans, the output is:
 
 ```
-pending: none
+Approval status:
+- pending: none
+- approved resume plans: 0
 ```
 
 On the production read-only-tool path, `ApprovalRequest` events are never
 emitted (see [Approval Gate Skeleton](#approval-gate-skeleton)), so
-`/approval status` will always report `pending: none` during normal use.
+`/approval status` will always report `pending: none` and `approved resume plans: 0`
+during normal use.
+
+## Approval Resume Plan Projection
+
+`ApprovalQueue::resume_plans()` is a read-only projection method on `ApprovalQueue`
+(defined in `crates/kernel/src/approval_queue.rs`). It reads the `resolved` list,
+keeps only entries whose `decision` is `Approved`, and for each one attempts to parse
+the `request_detail` string via `ParsedApprovalRequest::parse_detail`. Entries that
+fail to parse, or whose parsed tool name is not supported
+(`ParsedApprovalRequest::to_tool_request` returns `None`), are silently dropped.
+Each surviving entry becomes one `ApprovalResumePlan`.
+
+### `ParsedApprovalRequest`
+
+`ParsedApprovalRequest` (defined in `crates/kernel/src/approval.rs`) is a parsed
+representation of an `ApprovalRequest` event detail string. It carries the same four
+fields as `ApprovalRequest` (`tool`, `path`, `risk`, `reason`) and exposes two methods:
+
+- `parse_detail(detail: &str) -> Option<Self>` — label-aware parser that handles
+  Debug-quoted paths (paths with spaces, `=` characters, or escaped quotes).
+- `to_tool_request() -> Option<ToolRequest>` — converts to a `ToolRequest` for
+  recognised tool names (`read_file`, `list_files`); returns `None` for unsupported
+  tool names.
+
+### `ApprovalResumePlan`
+
+`ApprovalResumePlan` (defined in `crates/kernel/src/approval.rs`) ties a
+`ParsedApprovalRequest` to its approval/decision sequence numbers so that a later
+step could use them to resume execution. It carries:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `request_seq` | `EventSeq` | Seq of the original `ApprovalRequest` event |
+| `decision_seq` | `EventSeq` | Seq of the `ApprovalDecision` event that resolved it |
+| `request_detail` | `String` | Original event detail string (verbatim) |
+| `request` | `ParsedApprovalRequest` | Parsed representation of the request |
+
+`ApprovalResumePlan` also exposes:
+
+- `to_tool_request() -> Option<ToolRequest>` — delegates to the inner
+  `ParsedApprovalRequest::to_tool_request()`.
+- `suggested_command() -> Option<String>` — returns the `/tool read <path>` or
+  `/tool list <path>` command string the operator should run to replay the request;
+  returns `None` for unsupported tool names.
+
+> **No resume execution happens in this step.** `ApprovalQueue::resume_plans()` and
+> `ApprovalResumePlan` are purely read-only projections. The suggested `/tool` command
+> from `suggested_command()` is surfaced as a screen-log hint by `/approval status`;
+> the tool is never invoked automatically and no `ToolCall`/`ToolResult`/`ToolError`
+> event is emitted. Resume execution is explicitly deferred to a future task.
 
 ## Manual Tool Commands
 
