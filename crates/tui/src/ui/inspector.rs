@@ -37,6 +37,7 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ToolContextClear => labeled("Tool Context Clear"),
                 EventKind::ModelToolRequest => labeled("Model Tool Request"),
                 EventKind::ApprovalRequest => labeled("Approval Request"),
+                EventKind::ApprovalDecision => labeled("Approval Decision"),
                 _ => format!(
                     "seq: {}\nkind: {}\nmessage: {}",
                     ev.seq,
@@ -284,6 +285,24 @@ mod tests {
         assert!(
             result.contains("Approval Request:"),
             "ApprovalRequest events should use 'Approval Request:' label"
+        );
+    }
+
+    #[test]
+    fn inspector_text_approval_decision_uses_approval_decision_label() {
+        let ev = AppEvent {
+            seq: EventSeq(12),
+            kind: EventKind::ApprovalDecision,
+            detail: "request_seq=12 decision=approved reason=test_approval".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Approval Decision:"),
+            "ApprovalDecision events should use 'Approval Decision:' label"
+        );
+        assert!(
+            result.contains("request_seq=12 decision=approved reason=test_approval"),
+            "result should contain raw detail"
         );
     }
 
