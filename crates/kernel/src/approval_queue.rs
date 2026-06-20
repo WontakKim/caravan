@@ -1,3 +1,6 @@
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::approval::{ApprovalDecision, ApprovalDecisionRecord};
 use crate::events::{AppEvent, EventKind, EventLog, EventSeq};
 
 /// A single pending approval derived from an `ApprovalRequest` event.
@@ -7,24 +10,93 @@ pub struct PendingApproval {
     pub detail: String,
 }
 
+/// A resolved approval whose request was decided via an `ApprovalDecision` event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedApproval {
+    pub request_seq: EventSeq,
+    pub decision_seq: EventSeq,
+    pub request_detail: String,
+    pub decision: ApprovalDecision,
+    pub reason: String,
+}
+
 /// A read-only projection of all pending approvals collected from an event log.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ApprovalQueue {
     pub pending: Vec<PendingApproval>,
+    pub resolved: Vec<ResolvedApproval>,
 }
 
 impl ApprovalQueue {
-    /// Collects all `ApprovalRequest` events from a slice, in order, into a queue.
+    /// Collects `ApprovalRequest` events and resolves them against `ApprovalDecision`
+    /// events, partitioning into `pending` (undecided) and `resolved` (decided) lists.
     pub fn from_events(events: &[AppEvent]) -> Self {
-        let pending = events
+        // Collect all requests in order, preserving original sequence.
+        let requests: Vec<(EventSeq, String)> = events
             .iter()
             .filter(|e| e.kind == EventKind::ApprovalRequest)
-            .map(|e| PendingApproval {
-                seq: e.seq,
-                detail: e.detail.clone(),
-            })
+            .map(|e| (e.seq, e.detail.clone()))
             .collect();
-        ApprovalQueue { pending }
+
+        // Build a set of known request seqs for fast lookup.
+        let request_seqs: BTreeSet<EventSeq> = requests.iter().map(|(seq, _)| *seq).collect();
+
+        // For each request_seq, track the best (greatest decision_seq) valid decision.
+        let mut best_decisions: BTreeMap<EventSeq, (EventSeq, ApprovalDecision, String)> =
+            BTreeMap::new();
+
+        for event in events {
+            if event.kind != EventKind::ApprovalDecision {
+                continue;
+            }
+            // decision_seq is the event's own seq — NOT a value from the detail.
+            let decision_seq = event.seq;
+
+            let Some(record) = ApprovalDecisionRecord::parse_detail(&event.detail) else {
+                continue;
+            };
+            let request_seq = record.request_seq;
+
+            // Ignore decisions referencing an unknown request.
+            if !request_seqs.contains(&request_seq) {
+                continue;
+            }
+            // A valid decision must come strictly after the request.
+            if decision_seq <= request_seq {
+                continue;
+            }
+            // Keep only the decision with the greatest decision_seq.
+            let is_better = match best_decisions.get(&request_seq) {
+                Some((existing_seq, _, _)) => decision_seq > *existing_seq,
+                None => true,
+            };
+            if is_better {
+                best_decisions.insert(request_seq, (decision_seq, record.decision, record.reason));
+            }
+        }
+
+        // Partition requests into pending (no decision) and resolved (has a decision).
+        let mut pending = Vec::new();
+        let mut resolved = Vec::new();
+
+        for (request_seq, request_detail) in requests {
+            if let Some((decision_seq, decision, reason)) = best_decisions.remove(&request_seq) {
+                resolved.push(ResolvedApproval {
+                    request_seq,
+                    decision_seq,
+                    request_detail,
+                    decision,
+                    reason,
+                });
+            } else {
+                pending.push(PendingApproval {
+                    seq: request_seq,
+                    detail: request_detail,
+                });
+            }
+        }
+
+        ApprovalQueue { pending, resolved }
     }
 
     /// Builds a queue from an `EventLog` by delegating to `from_events`.
@@ -65,7 +137,38 @@ impl ApprovalQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::events::{EventKind, EventLog};
+    use crate::approval::{ApprovalDecision, ApprovalDecisionRecord};
+    use crate::events::{AppEvent, EventKind, EventLog, EventSeq};
+
+    // --- helpers ---
+
+    fn make_request_event(seq: u64, detail: &str) -> AppEvent {
+        AppEvent {
+            seq: EventSeq(seq),
+            kind: EventKind::ApprovalRequest,
+            detail: detail.to_string(),
+        }
+    }
+
+    fn make_decision_event(
+        seq: u64,
+        request_seq: u64,
+        decision: ApprovalDecision,
+        reason: &str,
+    ) -> AppEvent {
+        let record = ApprovalDecisionRecord {
+            request_seq: EventSeq(request_seq),
+            decision,
+            reason: reason.to_string(),
+        };
+        AppEvent {
+            seq: EventSeq(seq),
+            kind: EventKind::ApprovalDecision,
+            detail: record.detail(),
+        }
+    }
+
+    // --- existing tests (must remain unchanged) ---
 
     #[test]
     fn empty_input_yields_empty_queue() {
@@ -174,5 +277,106 @@ mod tests {
                 seq2
             )
         );
+    }
+
+    // --- new resolution tests ---
+
+    #[test]
+    fn one_request_no_decision_yields_one_pending_zero_resolved() {
+        let events = [make_request_event(
+            1,
+            "tool=bash path=\"/tmp\" risk=high reason=test",
+        )];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 1);
+        assert_eq!(queue.resolved.len(), 0);
+    }
+
+    #[test]
+    fn approved_decision_moves_request_to_resolved() {
+        let events = [
+            make_request_event(1, "tool=bash path=\"/tmp\" risk=high reason=test"),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "looks good"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 0);
+        assert_eq!(queue.resolved.len(), 1);
+        let r = &queue.resolved[0];
+        assert_eq!(r.request_seq, EventSeq(1));
+        assert_eq!(r.decision_seq, EventSeq(2));
+        assert_eq!(r.decision, ApprovalDecision::Approved);
+        assert_eq!(r.reason, "looks good");
+    }
+
+    #[test]
+    fn rejected_decision_moves_request_to_resolved() {
+        let events = [
+            make_request_event(1, "tool=rm path=\"/etc\" risk=critical reason=danger"),
+            make_decision_event(2, 1, ApprovalDecision::Rejected, "too risky"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 0);
+        assert_eq!(queue.resolved.len(), 1);
+        let r = &queue.resolved[0];
+        assert_eq!(r.decision, ApprovalDecision::Rejected);
+        assert_eq!(r.reason, "too risky");
+    }
+
+    #[test]
+    fn decision_with_missing_request_seq_does_not_affect_resolved() {
+        // Decision references seq=99 which has no matching ApprovalRequest.
+        let events = [
+            make_request_event(1, "tool=bash path=\"/tmp\" risk=high reason=test"),
+            make_decision_event(2, 99, ApprovalDecision::Approved, "ok"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 1);
+        assert_eq!(queue.resolved.len(), 0);
+    }
+
+    #[test]
+    fn decision_with_seq_not_exceeding_request_seq_is_not_resolved() {
+        // decision_seq (5) <= request_seq (10) → decision must be ignored.
+        let events = [
+            make_request_event(10, "tool=bash path=\"/tmp\" risk=high reason=test"),
+            make_decision_event(5, 10, ApprovalDecision::Approved, "ok"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 1);
+        assert_eq!(queue.resolved.len(), 0);
+    }
+
+    #[test]
+    fn malformed_decision_detail_leaves_request_pending_not_resolved() {
+        let malformed = AppEvent {
+            seq: EventSeq(2),
+            kind: EventKind::ApprovalDecision,
+            detail: "this is not valid detail".to_string(),
+        };
+        let events = [
+            make_request_event(1, "tool=bash path=\"/tmp\" risk=high reason=test"),
+            malformed,
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 1);
+        assert_eq!(queue.resolved.len(), 0);
+    }
+
+    #[test]
+    fn last_valid_decision_seq_wins_when_multiple_decisions_for_same_request_resolved() {
+        // Two decisions for request_seq=1: first Approved (seq=2), then Rejected (seq=3).
+        // The one with the greatest decision_seq (3, Rejected) should win.
+        let events = [
+            make_request_event(1, "tool=bash path=\"/tmp\" risk=high reason=test"),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "first decision"),
+            make_decision_event(3, 1, ApprovalDecision::Rejected, "second decision"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.pending.len(), 0);
+        assert_eq!(queue.resolved.len(), 1);
+        let r = &queue.resolved[0];
+        assert_eq!(r.decision_seq, EventSeq(3));
+        assert_eq!(r.decision, ApprovalDecision::Rejected);
+        assert_eq!(r.reason, "second decision");
     }
 }
