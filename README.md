@@ -57,7 +57,7 @@ cargo test --workspace
 | `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
 | `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolPolicy` + `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolPolicy` + `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
 | `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
-| `/approval status`            | Show the pending approval queue (`ApprovalQueue` projection of `ApprovalRequest` events); observe-only — no approve/reject, appends only a `SlashCommand` event, starts no model run or tool execution; prints `pending: none` when no approvals are pending |
+| `/approval status`            | Show the pending approval queue (`ApprovalQueue` projection of `ApprovalRequest` events); lists only **pending** (unresolved) requests — requests resolved by a recorded `ApprovalDecision` event are excluded from the output; observe-only — no approve/reject, appends only a `SlashCommand` event, starts no model run or tool execution; prints `pending: none` when no approvals are pending; no `/approval approve\|reject` command exists in this POC |
 
 ### Header Context Indicator
 
@@ -154,6 +154,7 @@ not persisted to `.caravan/events.jsonl`.
 | `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
 | `ToolPolicy`                 | Policy decision trace recorded immediately before the Approval Gate; carries the tool name, path, risk level, decision, and reason |
 | `ApprovalRequest`            | Emitted by the Approval Gate when `approval_requirement` is `Manual`; sits between `ToolPolicy` and `ToolCall`; never emitted on the production read-only-tool path; pending `ApprovalRequest` events can be observed via `/approval status` (the `ApprovalQueue` projection) |
+| `ApprovalDecision`           | Governance trace that resolves a referenced `ApprovalRequest`; carries `request_seq`, `decision` (`approved`\|`rejected`), and `reason` in its detail string (formatted by `ApprovalDecisionRecord`); when a valid `ApprovalDecision` event is recorded for a given `ApprovalRequest` seq, the `ApprovalQueue` projection moves that request from the `pending` list to the `resolved` list, so it no longer appears in `/approval status` output; no user-facing `/approval approve\|reject` command exists in this POC — approve/reject commands remain `UnknownSlashCommand` |
 
 ## Mock Run/Turn Flow
 
@@ -1267,15 +1268,19 @@ path.
 /approval status
 ```
 
-Shows the pending approval queue. The queue is the `ApprovalQueue` projection —
-a read-only view over the `EventLog` that collects all `ApprovalRequest` events
-that have been recorded but not yet resolved.
+Shows the **pending** approval queue. The queue is the `ApprovalQueue` projection —
+a read-only view over the `EventLog` that collects `ApprovalRequest` events and
+partitions them into `pending` (no matching `ApprovalDecision`) and `resolved`
+(a valid `ApprovalDecision` event references the request seq). Only **pending**
+requests are shown; requests resolved by a recorded `ApprovalDecision` are excluded.
 
 This command is **observe-only**:
 
 - It does **not** approve or reject any pending request.
 - It does **not** run the model or execute any tool.
 - It appends only a `SlashCommand` event to the event log.
+- No `/approval approve|reject` command exists in this POC — those inputs
+  produce `UnknownSlashCommand` events.
 
 When there are no pending approvals the output is:
 

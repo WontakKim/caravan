@@ -22,8 +22,8 @@ The workspace contains three crates under `crates/`:
 
 ```
 crates/kernel/src/
-├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest (pure data; evaluated by ToolEventRunner after ToolPolicy — approve/reject flow deferred)
-├── approval_queue.rs    # ApprovalQueue / PendingApproval projection over the EventLog
+├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest / ApprovalDecision / ApprovalDecisionRecord (pure data; ApprovalDecision is the governance trace that resolves a referenced ApprovalRequest; ApprovalDecisionRecord formats and parses the decision detail string; evaluated by ToolEventRunner after ToolPolicy — no user-facing approve/reject command in this POC)
+├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; /approval status shows only the pending list
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput
@@ -189,9 +189,9 @@ constraints are enforced:
   `AppStart`, `UserMessage`, `RunCreate`, `TurnStart`, `PromptCompile`,
   `ModelRoute`, `ModelOutputChunk`, `AssistantMessage`, `ModelUsage`,
   `RunComplete`, `RunFail`, `ModelError`, `ModelToolRequest`, `ToolPolicy`,
-  `ApprovalRequest`, `ToolCall`, `ToolResult`, `ToolError`, `ToolContextAttach`,
-  `ToolContextClear`, `SlashCommand`, `HelpRequest`, `LogClear`,
-  `ExitRequest`, `UnknownSlashCommand`.
+  `ApprovalRequest`, `ApprovalDecision`, `ToolCall`, `ToolResult`, `ToolError`,
+  `ToolContextAttach`, `ToolContextClear`, `SlashCommand`, `HelpRequest`,
+  `LogClear`, `ExitRequest`, `UnknownSlashCommand`.
 - **No UI selection, scroll, or focus events.** Events such as "user moved the
   inspector cursor" or "user scrolled the event pane" are pure view state and
   must not enter the log.
