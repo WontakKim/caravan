@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::approval::{ApprovalDecision, ApprovalDecisionRecord};
+use crate::approval::{
+    ApprovalDecision, ApprovalDecisionRecord, ApprovalResumePlan, ParsedApprovalRequest,
+};
 use crate::events::{AppEvent, EventKind, EventLog, EventSeq};
 
 /// A single pending approval derived from an `ApprovalRequest` event.
@@ -112,6 +114,35 @@ impl ApprovalQueue {
     /// Returns the number of pending approvals.
     pub fn len(&self) -> usize {
         self.pending.len()
+    }
+
+    /// Projects the resolved approvals into a list of resume plans for approved,
+    /// supported-tool requests.
+    ///
+    /// Iterates `self.resolved`, keeps only entries whose `decision` is
+    /// [`ApprovalDecision::Approved`], parses `request_detail` via
+    /// [`ParsedApprovalRequest::parse_detail`], and drops entries that fail to
+    /// parse or whose [`ParsedApprovalRequest::to_tool_request`] returns `None`
+    /// (unsupported tool). Each surviving entry yields one [`ApprovalResumePlan`]
+    /// carrying `request_seq`, `decision_seq`, `request_detail` (cloned verbatim),
+    /// and the parsed request.
+    ///
+    /// This method reads `self.resolved` only and does not mutate the event log.
+    pub fn resume_plans(&self) -> Vec<ApprovalResumePlan> {
+        self.resolved
+            .iter()
+            .filter(|r| r.decision == ApprovalDecision::Approved)
+            .filter_map(|r| {
+                let request = ParsedApprovalRequest::parse_detail(&r.request_detail)?;
+                request.to_tool_request()?;
+                Some(ApprovalResumePlan {
+                    request_seq: r.request_seq,
+                    decision_seq: r.decision_seq,
+                    request_detail: r.request_detail.clone(),
+                    request,
+                })
+            })
+            .collect()
     }
 
     /// Returns a human-readable status summary.
@@ -378,5 +409,99 @@ mod tests {
         assert_eq!(r.decision_seq, EventSeq(3));
         assert_eq!(r.decision, ApprovalDecision::Rejected);
         assert_eq!(r.reason, "second decision");
+    }
+
+    // --- resume_plans tests ---
+
+    const SUPPORTED_DETAIL: &str = r#"tool=read_file path="README.md" risk=read_only reason=test"#;
+    const UNSUPPORTED_DETAIL: &str =
+        r#"tool=write_file path="output.txt" risk=high reason=dangerous"#;
+
+    #[test]
+    fn resume_plans_approved_supported_request_yields_one_plan_with_matching_detail() {
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        let plans = queue.resume_plans();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].request_detail, SUPPORTED_DETAIL);
+        assert_eq!(plans[0].request_seq, EventSeq(1));
+        assert_eq!(plans[0].decision_seq, EventSeq(2));
+    }
+
+    #[test]
+    fn resume_plans_rejected_request_yields_none() {
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Rejected, "too risky"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.resume_plans().len(), 0);
+    }
+
+    #[test]
+    fn resume_plans_latest_rejected_after_earlier_approve_yields_none() {
+        // First decision: Approved (seq=2), then overridden by Rejected (seq=3).
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "first ok"),
+            make_decision_event(3, 1, ApprovalDecision::Rejected, "changed mind"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.resume_plans().len(), 0);
+    }
+
+    #[test]
+    fn resume_plans_latest_approved_after_earlier_reject_yields_one_plan() {
+        // First decision: Rejected (seq=2), then overridden by Approved (seq=3).
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Rejected, "initially refused"),
+            make_decision_event(3, 1, ApprovalDecision::Approved, "reconsidered"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        let plans = queue.resume_plans();
+        assert_eq!(plans.len(), 1);
+        assert_eq!(plans[0].request_detail, SUPPORTED_DETAIL);
+    }
+
+    #[test]
+    fn resume_plans_malformed_request_detail_yields_none() {
+        // Inject a ResolvedApproval with Approved decision but a detail that
+        // ParsedApprovalRequest::parse_detail cannot parse.
+        let mut queue = ApprovalQueue::default();
+        queue.resolved.push(ResolvedApproval {
+            request_seq: EventSeq(1),
+            decision_seq: EventSeq(2),
+            request_detail: "this is not valid request detail".to_string(),
+            decision: ApprovalDecision::Approved,
+            reason: "ok".to_string(),
+        });
+        assert_eq!(queue.resume_plans().len(), 0);
+    }
+
+    #[test]
+    fn resume_plans_unsupported_tool_yields_none() {
+        let events = [
+            make_request_event(1, UNSUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "approved anyway"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.resume_plans().len(), 0);
+    }
+
+    #[test]
+    fn resume_plans_decision_seq_not_greater_than_request_seq_yields_none() {
+        // decision_seq (1) <= request_seq (5): this entry is excluded from resolved
+        // upstream by from_events, so resume_plans sees an empty resolved list.
+        let events = [
+            make_request_event(5, SUPPORTED_DETAIL),
+            make_decision_event(1, 5, ApprovalDecision::Approved, "too early"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert_eq!(queue.resolved.len(), 0);
+        assert_eq!(queue.resume_plans().len(), 0);
     }
 }
