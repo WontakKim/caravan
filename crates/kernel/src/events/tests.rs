@@ -286,6 +286,48 @@ fn approval_request_event_kind_name_and_json_round_trip() {
 }
 
 #[test]
+fn approval_decision_event_kind_name_and_json_round_trip() {
+    assert_eq!(EventKind::ApprovalDecision.name(), "ApprovalDecision");
+
+    let event = AppEvent {
+        seq: EventSeq(1),
+        kind: EventKind::ApprovalDecision,
+        detail: "request_seq=1 decision=approved reason=test_approval".into(),
+    };
+    let json = serde_json::to_string(&event).expect("serialization should succeed");
+    let v: serde_json::Value =
+        serde_json::from_str(&json).expect("parsing to Value should succeed");
+    assert_eq!(v["kind"], "ApprovalDecision");
+    let restored: AppEvent = serde_json::from_str(&json).expect("deserialization should succeed");
+    assert_eq!(event, restored);
+}
+
+#[test]
+fn approval_decision_event_round_trips_through_event_store() {
+    let dir = TempDir::new();
+
+    let store = EventStore::new(dir.path());
+    let mut log = EventLog::load_from(store);
+    log.append(EventKind::ApprovalRequest, "tool=read_file");
+    log.append(
+        EventKind::ApprovalDecision,
+        "request_seq=1 decision=approved reason=test_approval",
+    );
+    drop(log);
+
+    let store2 = EventStore::new(dir.path());
+    let log2 = EventLog::load_from(store2);
+    assert_eq!(log2.len(), 2);
+    assert_eq!(log2.get(0).unwrap().kind, EventKind::ApprovalRequest);
+    assert_eq!(log2.get(0).unwrap().detail, "tool=read_file");
+    assert_eq!(log2.get(1).unwrap().kind, EventKind::ApprovalDecision);
+    assert_eq!(
+        log2.get(1).unwrap().detail,
+        "request_seq=1 decision=approved reason=test_approval"
+    );
+}
+
+#[test]
 fn tool_call_event_kind_name_and_json_round_trip() {
     assert_eq!(EventKind::ToolCall.name(), "ToolCall");
 
