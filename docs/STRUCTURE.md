@@ -22,7 +22,7 @@ The workspace contains three crates under `crates/`:
 
 ```
 crates/kernel/src/
-├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest / ApprovalDecision / ApprovalDecisionRecord (pure data; ApprovalDecision is the governance trace that resolves a referenced ApprovalRequest; ApprovalDecisionRecord formats and parses the decision detail string; evaluated by ToolEventRunner after ToolPolicy — no user-facing approve/reject command in this POC)
+├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest / ApprovalDecision / ApprovalDecisionRecord (pure data; ApprovalDecision is the governance trace that resolves a referenced ApprovalRequest; ApprovalDecisionRecord formats and parses the decision detail string; evaluated by ToolEventRunner after ToolPolicy — /approval approve <seq> / /approval reject <seq> append an ApprovalDecision without resuming tool execution)
 ├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no valid matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; a decision is valid when it parses via ApprovalDecisionRecord, references an existing ApprovalRequest seq, and its own seq > request seq (greatest decision seq wins on ties); /approval status shows only the pending list
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
@@ -109,7 +109,7 @@ unchanged through the facades. Core adapter types (`ModelAdapter`,
 crates/tui/src/
 ├── app.rs          # App struct, constructors, high-level submit() dispatcher, and help_lines
 ├── app/
-│   ├── approval.rs  # handle_approval_command: /approval status
+│   ├── approval.rs  # handle_approval_command: /approval status, /approval approve <seq>, /approval reject <seq>
 │   ├── context.rs   # handle_context_command: /context attach-last-tool, clear, status
 │   ├── logging.rs   # screen-log formatting helpers
 │   ├── request.rs   # handle_request_command: /request status, run, clear
@@ -126,7 +126,7 @@ crates/tui/src/
 │   │   ├── context.rs     # /context command handler tests
 │   │   ├── request.rs     # /request command handler tests
 │   │   ├── policy.rs      # Tool-policy decision tests
-│   │   └── approval.rs    # /approval status command tests
+│   │   └── approval.rs    # /approval status, approve command tests, and reject command tests
 │   └── tools.rs     # handle_tool_command: /tool list, /tool read
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
 ├── ui.rs           # Layout-orchestration root: draw() calls each widget's render helper; Nav and Main panel blocks remain inline in draw()
