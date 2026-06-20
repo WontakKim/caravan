@@ -1246,13 +1246,15 @@ harness — always sets `approval_requirement` to `ApprovalRequirement::None`.
 tools (`list_files`, `read_file`) proceed directly from `ToolPolicy` to
 `ToolCall` without an approval step.
 
-### Manual Path: Test-Only — No Approve/Reject Flow or UI
+### Manual Path: Test-Only — No Tool-Execution Resume or UI
 
 `ToolPolicyEngine::manual_for_test(reason)` is a `#[cfg(test)]`-gated
 constructor that returns `ApprovalRequirement::Manual { reason }`. It exists
 solely to let tests exercise the `ApprovalGate` → `ApprovalRequest` code path.
-There is **no approve/reject flow, no interactive confirmation UI, and no
-operator-facing approval command** in this step. The Manual path is
+There is **no post-approval tool-execution resume and no interactive
+confirmation UI** in this step: `/approval approve <seq>` and
+`/approval reject <seq>` record an `ApprovalDecision` for a pending
+`ApprovalRequest` but do **not** resume the underlying tool. The Manual path is
 test-only and is never reachable through any production or user-visible code
 path.
 
@@ -1261,8 +1263,9 @@ path.
 > `ToolPolicyEngine` sets `approval_requirement`, and `ToolEventRunner` already
 > evaluates the `ApprovalGate` after `ToolPolicy` on the allow path (returning
 > `None`, and so emitting no `ApprovalRequest`, for production read-only tools).
-> What is deferred to a future task is the approve/reject resolution flow, an
-> interactive approval UI, and any approval-requiring (write/shell) tool.
+> What is deferred to a future task is resuming tool execution after an
+> approval decision, an interactive approval UI, and any approval-requiring
+> (write/shell) tool.
 
 ### `/approval status`
 
