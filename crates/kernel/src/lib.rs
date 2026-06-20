@@ -20,6 +20,7 @@ pub mod transcript;
 
 pub use approval::{
     ApprovalDecision, ApprovalDecisionRecord, ApprovalGate, ApprovalRequest, ApprovalRequirement,
+    ParsedApprovalRequest,
 };
 pub use approval_queue::{ApprovalQueue, PendingApproval, ResolvedApproval};
 pub use commands::{

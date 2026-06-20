@@ -9,6 +9,7 @@
 //! approval-requiring (write/shell) tool.
 
 use crate::events::EventSeq;
+use crate::tool::registry::ToolRequest;
 
 /// Whether a tool invocation requires human approval before it may proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +93,100 @@ pub struct ApprovalRequest {
     pub path: String,
     pub risk: String,
     pub reason: String,
+}
+
+/// A parsed representation of an `ApprovalRequest` event detail string.
+///
+/// The detail string is produced by `format_approval_request_detail` using Rust's
+/// `{:?}` Debug format for the path, so the path may be quoted and may contain
+/// spaces or `=` characters. Use [`ParsedApprovalRequest::parse_detail`] to
+/// decode it safely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedApprovalRequest {
+    pub tool: String,
+    pub path: String,
+    pub risk: String,
+    pub reason: String,
+}
+
+impl ParsedApprovalRequest {
+    /// Parses an `ApprovalRequest` event detail string into a [`ParsedApprovalRequest`].
+    ///
+    /// The expected format is:
+    /// `tool=<tool> path=<debug-quoted-or-bare-path> risk=<risk> reason=<reason>`
+    ///
+    /// Uses a label-aware fixed-order scan rather than a naive whitespace split so
+    /// that paths containing spaces or `=` (e.g. `path="dir/a b.txt"`) are handled
+    /// correctly. Returns `None` for any malformed input; never panics.
+    pub fn parse_detail(detail: &str) -> Option<Self> {
+        // Require "tool=" prefix and read tool value up to " path=".
+        let rest = detail.strip_prefix("tool=")?;
+        let path_label_pos = rest.find(" path=")?;
+        let tool = rest[..path_label_pos].to_string();
+        let rest = &rest[path_label_pos + " path=".len()..];
+
+        // Parse path value: quoted (Debug-style) or unquoted.
+        let (path, rest) = if rest.starts_with('"') {
+            parse_debug_quoted_path(&rest[1..])?
+        } else {
+            let pos = rest.find(" risk=")?;
+            (rest[..pos].to_string(), &rest[pos..])
+        };
+
+        // Require " risk=" and read risk value up to " reason=".
+        let rest = rest.strip_prefix(" risk=")?;
+        let reason_pos = rest.find(" reason=")?;
+        let risk = rest[..reason_pos].to_string();
+        let reason = rest[reason_pos + " reason=".len()..].to_string();
+
+        Some(ParsedApprovalRequest {
+            tool,
+            path,
+            risk,
+            reason,
+        })
+    }
+
+    /// Converts this parsed request into a [`ToolRequest`], if the tool name is
+    /// recognised. Returns `None` for unsupported tool names.
+    ///
+    /// This method is pure: it does not access the filesystem or canonicalize paths.
+    pub fn to_tool_request(&self) -> Option<ToolRequest> {
+        match self.tool.as_str() {
+            "read_file" => Some(ToolRequest::ReadFile {
+                path: self.path.clone(),
+            }),
+            "list_files" => Some(ToolRequest::ListFiles {
+                path: self.path.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Consumes a Rust Debug-quoted string from `s` (the content after the opening `"`).
+///
+/// Decodes `\"` → `"` and `\\` → `\`. Returns the decoded string and the remaining
+/// slice (starting with the character after the closing `"`). Returns `None` if the
+/// closing `"` is never found or an unrecognised escape sequence is encountered.
+fn parse_debug_quoted_path(s: &str) -> Option<(String, &str)> {
+    let mut result = String::new();
+    let mut chars = s.char_indices();
+    loop {
+        let (i, c) = chars.next()?;
+        match c {
+            '"' => return Some((result, &s[i + 1..])),
+            '\\' => {
+                let (_, escaped) = chars.next()?;
+                match escaped {
+                    '"' => result.push('"'),
+                    '\\' => result.push('\\'),
+                    _ => return None,
+                }
+            }
+            _ => result.push(c),
+        }
+    }
 }
 
 /// Evaluates whether a tool invocation needs approval.
@@ -287,5 +382,138 @@ mod tests {
         assert_eq!(parsed.request_seq, original.request_seq);
         assert_eq!(parsed.decision, original.decision);
         assert_eq!(parsed.reason, original.reason);
+    }
+
+    // --- ParsedApprovalRequest tests ---
+
+    #[test]
+    fn parsed_approval_request_canonical_read_file() {
+        let detail =
+            r#"tool=read_file path="README.md" risk=read_only reason=test_manual_approval"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.tool, "read_file");
+        assert_eq!(parsed.path, "README.md");
+        assert_eq!(parsed.risk, "read_only");
+        assert_eq!(parsed.reason, "test_manual_approval");
+    }
+
+    #[test]
+    fn parsed_approval_request_canonical_list_files() {
+        let detail = r#"tool=list_files path="." risk=read_only reason=browse"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.tool, "list_files");
+        assert_eq!(parsed.path, ".");
+        assert_eq!(parsed.risk, "read_only");
+        assert_eq!(parsed.reason, "browse");
+    }
+
+    #[test]
+    fn parsed_approval_request_missing_tool_returns_none() {
+        let detail = r#"path="README.md" risk=read_only reason=test"#;
+        assert!(ParsedApprovalRequest::parse_detail(detail).is_none());
+    }
+
+    #[test]
+    fn parsed_approval_request_missing_path_returns_none() {
+        let detail = "tool=read_file risk=read_only reason=test";
+        assert!(ParsedApprovalRequest::parse_detail(detail).is_none());
+    }
+
+    #[test]
+    fn parsed_approval_request_missing_risk_returns_none() {
+        let detail = r#"tool=read_file path="README.md" reason=test"#;
+        assert!(ParsedApprovalRequest::parse_detail(detail).is_none());
+    }
+
+    #[test]
+    fn parsed_approval_request_missing_reason_returns_none() {
+        let detail = r#"tool=read_file path="README.md" risk=read_only"#;
+        assert!(ParsedApprovalRequest::parse_detail(detail).is_none());
+    }
+
+    #[test]
+    fn parsed_approval_request_malformed_input_returns_none() {
+        assert!(ParsedApprovalRequest::parse_detail("").is_none());
+        assert!(ParsedApprovalRequest::parse_detail("not valid at all").is_none());
+        assert!(ParsedApprovalRequest::parse_detail("tool=x").is_none());
+    }
+
+    #[test]
+    fn parsed_approval_request_debug_quoted_path_stripped_to_bare() {
+        // Path value is Debug-quoted: quotes are removed, bare path is returned.
+        let detail = r#"tool=read_file path="src/main.rs" risk=read_only reason=check"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.path, "src/main.rs");
+    }
+
+    #[test]
+    fn parsed_approval_request_quoted_path_with_space() {
+        let detail = r#"tool=read_file path="dir/a b.txt" risk=read_only reason=check"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.path, "dir/a b.txt");
+    }
+
+    #[test]
+    fn parsed_approval_request_quoted_path_with_equals() {
+        let detail = r#"tool=read_file path="a=b.txt" risk=read_only reason=check"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.path, "a=b.txt");
+    }
+
+    #[test]
+    fn parsed_approval_request_quoted_path_with_escaped_quote() {
+        // The raw detail string contains: path="dir/quote\"file.txt"
+        // which decodes to the path: dir/quote"file.txt
+        let detail = "tool=read_file path=\"dir/quote\\\"file.txt\" risk=read_only reason=check";
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.path, "dir/quote\"file.txt");
+    }
+
+    #[test]
+    fn parsed_approval_request_empty_path() {
+        let detail = r#"tool=read_file path="" risk=read_only reason=check"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.path, "");
+    }
+
+    #[test]
+    fn parsed_approval_request_reason_with_spaces_captured_in_full() {
+        let detail =
+            r#"tool=read_file path="file.txt" risk=read_only reason=this is the full reason"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert_eq!(parsed.reason, "this is the full reason");
+    }
+
+    #[test]
+    fn parsed_approval_request_to_tool_request_read_file() {
+        let detail = r#"tool=read_file path="README.md" risk=read_only reason=test"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        let request = parsed.to_tool_request().expect("should convert");
+        assert_eq!(
+            request,
+            ToolRequest::ReadFile {
+                path: "README.md".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parsed_approval_request_to_tool_request_list_files() {
+        let detail = r#"tool=list_files path="." risk=read_only reason=browse"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        let request = parsed.to_tool_request().expect("should convert");
+        assert_eq!(
+            request,
+            ToolRequest::ListFiles {
+                path: ".".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn parsed_approval_request_to_tool_request_unsupported_tool_returns_none() {
+        let detail = r#"tool=write_file path="output.txt" risk=high reason=test"#;
+        let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
+        assert!(parsed.to_tool_request().is_none());
     }
 }
