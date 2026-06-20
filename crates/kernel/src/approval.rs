@@ -164,6 +164,41 @@ impl ParsedApprovalRequest {
     }
 }
 
+/// A projection that ties a parsed approval request to its approval/decision
+/// sequence numbers so a later step can resume it.
+///
+/// The `request_detail` field carries the original event detail string verbatim
+/// so the `/approval status` display can stay faithful to the recorded event
+/// rather than re-serialising parsed fields.
+pub struct ApprovalResumePlan {
+    pub request_seq: EventSeq,
+    pub decision_seq: EventSeq,
+    pub request_detail: String,
+    pub request: ParsedApprovalRequest,
+}
+
+impl ApprovalResumePlan {
+    /// Converts the inner [`ParsedApprovalRequest`] into a [`ToolRequest`].
+    ///
+    /// Delegates to [`ParsedApprovalRequest::to_tool_request`] and returns
+    /// `None` for unsupported tool names.
+    pub fn to_tool_request(&self) -> Option<ToolRequest> {
+        self.request.to_tool_request()
+    }
+
+    /// Returns the `/tool` command string the operator should run to replay
+    /// this request, or `None` if the tool is not supported.
+    ///
+    /// Uses the bare (unquoted) path from `self.request.path`.
+    pub fn suggested_command(&self) -> Option<String> {
+        match self.request.tool.as_str() {
+            "read_file" => Some(format!("/tool read {}", self.request.path)),
+            "list_files" => Some(format!("/tool list {}", self.request.path)),
+            _ => None,
+        }
+    }
+}
+
 /// Consumes a Rust Debug-quoted string from `s` (the content after the opening `"`).
 ///
 /// Decodes `\"` → `"` and `\\` → `\`. Returns the decoded string and the remaining
@@ -515,5 +550,51 @@ mod tests {
         let detail = r#"tool=write_file path="output.txt" risk=high reason=test"#;
         let parsed = ParsedApprovalRequest::parse_detail(detail).expect("should parse");
         assert!(parsed.to_tool_request().is_none());
+    }
+
+    // --- ApprovalResumePlan tests ---
+
+    fn make_approval_resume_plan(tool: &str, path: &str) -> ApprovalResumePlan {
+        let detail = format!("tool={} path=\"{}\" risk=read_only reason=test", tool, path);
+        let request = ParsedApprovalRequest::parse_detail(&detail).expect("should parse");
+        ApprovalResumePlan {
+            request_seq: EventSeq(10),
+            decision_seq: EventSeq(11),
+            request_detail: detail,
+            request,
+        }
+    }
+
+    #[test]
+    fn approval_resume_plan_to_tool_request_delegates_read_file() {
+        let plan = make_approval_resume_plan("read_file", "README.md");
+        let request = plan.to_tool_request().expect("should convert");
+        assert_eq!(
+            request,
+            ToolRequest::ReadFile {
+                path: "README.md".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn approval_resume_plan_suggested_command_read_file() {
+        let plan = make_approval_resume_plan("read_file", "src/main.rs");
+        assert_eq!(
+            plan.suggested_command(),
+            Some("/tool read src/main.rs".to_string())
+        );
+    }
+
+    #[test]
+    fn approval_resume_plan_suggested_command_list_files() {
+        let plan = make_approval_resume_plan("list_files", ".");
+        assert_eq!(plan.suggested_command(), Some("/tool list .".to_string()));
+    }
+
+    #[test]
+    fn approval_resume_plan_suggested_command_unsupported_returns_none() {
+        let plan = make_approval_resume_plan("write_file", "output.txt");
+        assert!(plan.suggested_command().is_none());
     }
 }
