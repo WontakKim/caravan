@@ -1,5 +1,5 @@
 use super::super::App;
-use kernel::EventKind;
+use kernel::{ApprovalDecision, ApprovalDecisionRecord, EventKind};
 
 #[test]
 fn approval_status_no_pending_logs_none() {
@@ -209,4 +209,125 @@ fn approval_subcommands_are_unknown() {
             "expected 'Unknown command:' in log for input: {input}"
         );
     }
+}
+
+#[test]
+fn approval_status_excludes_resolved_request() {
+    let mut app = App::new();
+    let request_detail = "tool=read_file path=\"README.md\" risk=read_only reason=test_resolved";
+    let seq1 = app
+        .event_log
+        .append(EventKind::ApprovalRequest, request_detail);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq1,
+        decision: ApprovalDecision::Approved,
+        reason: "test_approved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' for a fully resolved queue"
+    );
+    assert!(
+        !app.log.iter().any(|l| l.contains(&format!("seq={seq1}"))),
+        "log must not contain a rendered line for the resolved request seq1"
+    );
+}
+
+#[test]
+fn approval_status_shows_only_unresolved_when_mixed() {
+    let mut app = App::new();
+    let detail1 = "tool=read_file path=\"README.md\" risk=read_only reason=test_resolved";
+    let seq1 = app.event_log.append(EventKind::ApprovalRequest, detail1);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq1,
+        decision: ApprovalDecision::Approved,
+        reason: "approved_first".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    let detail2 = "tool=read_file path=\"src/main.rs\" risk=read_only reason=test_pending";
+    let seq2 = app.event_log.append(EventKind::ApprovalRequest, detail2);
+
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: 1"),
+        "log must contain '- pending: 1' when one request is unresolved"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("- seq={seq2} {detail2}")),
+        "log must contain the rendered line for the unresolved request seq2"
+    );
+    assert!(
+        !app.log.iter().any(|l| l.contains(&format!("seq={seq1}"))),
+        "log must not contain a rendered line for the resolved request seq1"
+    );
+}
+
+#[test]
+fn approval_status_does_not_append_approval_decision() {
+    let mut app = App::new();
+    let seq1 = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=read_file path=\"README.md\" risk=read_only reason=test_resolved",
+    );
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq1,
+        decision: ApprovalDecision::Approved,
+        reason: "test_approved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    let event_len_before = app.event_log.len();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert_eq!(
+        app.event_log.len(),
+        event_len_before + 1,
+        "expected exactly one new event appended by /approval status"
+    );
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "the single new event must be SlashCommand"
+    );
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalDecision),
+        "must not append an ApprovalDecision event"
+    );
+}
+
+#[test]
+fn production_tool_list_emits_no_approval_events() {
+    let mut app = App::new();
+    app.input = "/tool list .".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalRequest),
+        "production /tool list . must not emit ApprovalRequest"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalDecision),
+        "production /tool list . must not emit ApprovalDecision"
+    );
 }
