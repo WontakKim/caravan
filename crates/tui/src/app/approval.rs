@@ -7,6 +7,18 @@ impl super::App {
             ApprovalCommand::Status => {
                 let queue = ApprovalQueue::from_event_log(&self.event_log);
                 self.log.extend(queue.render_status_lines());
+                let plans = queue.resume_plans();
+                self.log
+                    .push(format!("- approved resume plans: {}", plans.len()));
+                for plan in &plans {
+                    self.log.push(format!(
+                        "- seq={} {}",
+                        plan.request_seq, plan.request_detail
+                    ));
+                    if let Some(cmd) = plan.suggested_command() {
+                        self.log.push(format!("- suggested: {cmd}"));
+                    }
+                }
             }
             ApprovalCommand::Approve { seq } => {
                 let is_pending = {

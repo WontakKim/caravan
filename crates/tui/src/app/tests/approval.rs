@@ -234,9 +234,20 @@ fn approval_status_excludes_resolved_request() {
         app.log.iter().any(|l| l == "- pending: none"),
         "log must contain '- pending: none' for a fully resolved queue"
     );
+    // The resolved request must not appear in the *pending* portion of the log.
+    // Split at the "- approved resume plans:" marker so approved plans listed
+    // after it do not falsely trigger this assertion.
+    let pending_lines: Vec<&str> = app
+        .log
+        .iter()
+        .take_while(|l| !l.starts_with("- approved resume plans:"))
+        .map(|s| s.as_str())
+        .collect();
     assert!(
-        !app.log.iter().any(|l| l.contains(&format!("seq={seq1}"))),
-        "log must not contain a rendered line for the resolved request seq1"
+        !pending_lines
+            .iter()
+            .any(|l| l.contains(&format!("seq={seq1}"))),
+        "pending portion must not contain a rendered line for the resolved request seq1"
     );
 }
 
@@ -270,9 +281,20 @@ fn approval_status_shows_only_unresolved_when_mixed() {
             .any(|l| *l == format!("- seq={seq2} {detail2}")),
         "log must contain the rendered line for the unresolved request seq2"
     );
+    // The resolved request must not appear in the *pending* portion of the log.
+    // Split at the "- approved resume plans:" marker so approved plans listed
+    // after it do not falsely trigger this assertion.
+    let pending_lines: Vec<&str> = app
+        .log
+        .iter()
+        .take_while(|l| !l.starts_with("- approved resume plans:"))
+        .map(|s| s.as_str())
+        .collect();
     assert!(
-        !app.log.iter().any(|l| l.contains(&format!("seq={seq1}"))),
-        "log must not contain a rendered line for the resolved request seq1"
+        !pending_lines
+            .iter()
+            .any(|l| l.contains(&format!("seq={seq1}"))),
+        "pending portion must not contain a rendered line for the resolved request seq1"
     );
 }
 
@@ -570,5 +592,116 @@ fn production_tool_list_emits_no_approval_events() {
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ApprovalDecision),
         "production /tool list . must not emit ApprovalDecision"
+    );
+}
+
+#[test]
+fn approval_status_approved_shows_resume_plan_lines() {
+    let mut app = App::new();
+    let request_detail = "tool=read_file path=\"README.md\" risk=read_only reason=test";
+    let seq = app
+        .event_log
+        .append(EventKind::ApprovalRequest, request_detail);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq,
+        decision: ApprovalDecision::Approved,
+        reason: "test_approved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- approved resume plans: 1"),
+        "log must contain '- approved resume plans: 1' after approving a supported request"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "- suggested: /tool read README.md"),
+        "log must contain the suggested /tool read command"
+    );
+}
+
+#[test]
+fn approval_status_rejected_shows_zero_resume_plans() {
+    let mut app = App::new();
+    let request_detail = "tool=read_file path=\"README.md\" risk=read_only reason=test";
+    let seq = app
+        .event_log
+        .append(EventKind::ApprovalRequest, request_detail);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq,
+        decision: ApprovalDecision::Rejected,
+        reason: "test_rejected".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- approved resume plans: 0"),
+        "log must contain '- approved resume plans: 0' after rejecting a request"
+    );
+    assert!(
+        !app.log.iter().any(|l| l.starts_with("- suggested:")),
+        "log must not contain a suggested line when the request was rejected"
+    );
+}
+
+#[test]
+fn approval_status_with_approved_plans_mutates_log_by_exactly_one_slash_command() {
+    let mut app = App::new();
+    let request_detail = "tool=read_file path=\"README.md\" risk=read_only reason=test";
+    let seq = app
+        .event_log
+        .append(EventKind::ApprovalRequest, request_detail);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq,
+        decision: ApprovalDecision::Approved,
+        reason: "test_approved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    let event_len_before = app.event_log.len();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert_eq!(
+        app.event_log.len(),
+        event_len_before + 1,
+        "expected exactly one new event appended by /approval status"
+    );
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "the single new event must be SlashCommand"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolCall),
+        "must not append ToolCall"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolResult),
+        "must not append ToolResult"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolError),
+        "must not append ToolError"
+    );
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalDecision),
+        "must not append ApprovalDecision"
     );
 }
