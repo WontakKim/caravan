@@ -23,7 +23,7 @@ The workspace contains three crates under `crates/`:
 ```
 crates/kernel/src/
 ├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest / ApprovalDecision / ApprovalDecisionRecord (pure data; ApprovalDecision is the governance trace that resolves a referenced ApprovalRequest; ApprovalDecisionRecord formats and parses the decision detail string; evaluated by ToolEventRunner after ToolPolicy — no user-facing approve/reject command in this POC)
-├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; /approval status shows only the pending list
+├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no valid matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; a decision is valid when it parses via ApprovalDecisionRecord, references an existing ApprovalRequest seq, and its own seq > request seq (greatest decision seq wins on ties); /approval status shows only the pending list
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput

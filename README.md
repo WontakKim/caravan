@@ -1270,9 +1270,13 @@ path.
 
 Shows the **pending** approval queue. The queue is the `ApprovalQueue` projection —
 a read-only view over the `EventLog` that collects `ApprovalRequest` events and
-partitions them into `pending` (no matching `ApprovalDecision`) and `resolved`
+partitions them into `pending` (no valid matching `ApprovalDecision`) and `resolved`
 (a valid `ApprovalDecision` event references the request seq). Only **pending**
 requests are shown; requests resolved by a recorded `ApprovalDecision` are excluded.
+A `ApprovalDecision` is **valid** for a request when it parses via
+`ApprovalDecisionRecord`, references an existing `ApprovalRequest` seq, and its own
+event seq is greater than that request seq; if several valid decisions reference the
+same request, the one with the greatest decision seq wins.
 
 This command is **observe-only**:
 
