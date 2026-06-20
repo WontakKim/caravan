@@ -18,7 +18,9 @@ pub mod storage;
 pub mod tool;
 pub mod transcript;
 
-pub use approval::{ApprovalDecision, ApprovalGate, ApprovalRequest, ApprovalRequirement};
+pub use approval::{
+    ApprovalDecision, ApprovalDecisionRecord, ApprovalGate, ApprovalRequest, ApprovalRequirement,
+};
 pub use approval_queue::{ApprovalQueue, PendingApproval};
 pub use commands::{
     ApprovalCommand, Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand,

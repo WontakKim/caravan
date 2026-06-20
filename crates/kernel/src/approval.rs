@@ -8,6 +8,8 @@
 //! future task is the approve/reject resolution flow, an approval UI, and any
 //! approval-requiring (write/shell) tool.
 
+use crate::events::EventSeq;
+
 /// Whether a tool invocation requires human approval before it may proceed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalRequirement {
@@ -18,11 +20,69 @@ pub enum ApprovalRequirement {
 }
 
 /// The outcome of a human approval decision.
-#[allow(dead_code)] // variants wired in a future approval-flow task
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApprovalDecision {
     Approved,
     Rejected,
+}
+
+/// A recorded approval decision referencing an [`ApprovalRequest`] event.
+///
+/// The detail string format is key=value (NOT JSON):
+/// `request_seq=<u64> decision=<approved|rejected> reason=<text>`
+///
+/// The detail MUST NOT include secrets, API keys, auth headers, or file content.
+pub struct ApprovalDecisionRecord {
+    pub request_seq: EventSeq,
+    pub decision: ApprovalDecision,
+    pub reason: String,
+}
+
+impl ApprovalDecisionRecord {
+    /// Formats this record as an EventLog detail string.
+    ///
+    /// Output: `request_seq=<seq> decision=<approved|rejected> reason=<reason>`
+    pub fn detail(&self) -> String {
+        let decision_str = match self.decision {
+            ApprovalDecision::Approved => "approved",
+            ApprovalDecision::Rejected => "rejected",
+        };
+        format!(
+            "request_seq={} decision={} reason={}",
+            self.request_seq, decision_str, self.reason
+        )
+    }
+
+    /// Parses an EventLog detail string into an [`ApprovalDecisionRecord`].
+    ///
+    /// Returns `None` for any malformed input; never panics.
+    pub fn parse_detail(detail: &str) -> Option<Self> {
+        let mut tokens = detail.splitn(3, ' ');
+
+        let seq_token = tokens.next()?;
+        let seq_val = seq_token.strip_prefix("request_seq=")?;
+        let seq: u64 = seq_val.parse().ok()?;
+
+        let decision_token = tokens.next()?;
+        let decision_val = decision_token.strip_prefix("decision=")?;
+        let decision = match decision_val {
+            "approved" => ApprovalDecision::Approved,
+            "rejected" => ApprovalDecision::Rejected,
+            _ => return None,
+        };
+
+        let reason_token = tokens.next()?;
+        let reason = reason_token.strip_prefix("reason=")?.to_string();
+        if reason.is_empty() {
+            return None;
+        }
+
+        Some(ApprovalDecisionRecord {
+            request_seq: EventSeq(seq),
+            decision,
+            reason,
+        })
+    }
 }
 
 /// A pending approval request surfaced to the operator.
@@ -124,5 +184,108 @@ mod tests {
         } else {
             panic!("expected Manual variant");
         }
+    }
+
+    // --- ApprovalDecisionRecord tests ---
+
+    #[test]
+    fn detail_approved_formats_exact_string() {
+        let record = ApprovalDecisionRecord {
+            request_seq: EventSeq(42),
+            decision: ApprovalDecision::Approved,
+            reason: "looks good".to_string(),
+        };
+        assert_eq!(
+            record.detail(),
+            "request_seq=42 decision=approved reason=looks good"
+        );
+    }
+
+    #[test]
+    fn detail_rejected_formats_exact_string() {
+        let record = ApprovalDecisionRecord {
+            request_seq: EventSeq(7),
+            decision: ApprovalDecision::Rejected,
+            reason: "too risky".to_string(),
+        };
+        assert_eq!(
+            record.detail(),
+            "request_seq=7 decision=rejected reason=too risky"
+        );
+    }
+
+    #[test]
+    fn parse_detail_valid_approved() {
+        let record =
+            ApprovalDecisionRecord::parse_detail("request_seq=1 decision=approved reason=ok")
+                .expect("should parse");
+        assert_eq!(record.request_seq, EventSeq(1));
+        assert_eq!(record.decision, ApprovalDecision::Approved);
+        assert_eq!(record.reason, "ok");
+    }
+
+    #[test]
+    fn parse_detail_valid_rejected() {
+        let record = ApprovalDecisionRecord::parse_detail(
+            "request_seq=99 decision=rejected reason=not safe",
+        )
+        .expect("should parse");
+        assert_eq!(record.request_seq, EventSeq(99));
+        assert_eq!(record.decision, ApprovalDecision::Rejected);
+        assert_eq!(record.reason, "not safe");
+    }
+
+    #[test]
+    fn parse_detail_returns_none_for_empty_string() {
+        assert!(ApprovalDecisionRecord::parse_detail("").is_none());
+    }
+
+    #[test]
+    fn parse_detail_returns_none_for_missing_request_seq() {
+        assert!(ApprovalDecisionRecord::parse_detail("decision=approved reason=ok").is_none());
+    }
+
+    #[test]
+    fn parse_detail_returns_none_for_non_numeric_request_seq() {
+        assert!(
+            ApprovalDecisionRecord::parse_detail("request_seq=abc decision=approved reason=ok")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parse_detail_returns_none_for_bad_decision_value() {
+        assert!(
+            ApprovalDecisionRecord::parse_detail("request_seq=1 decision=maybe reason=ok")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parse_detail_returns_none_for_missing_reason() {
+        assert!(ApprovalDecisionRecord::parse_detail("request_seq=1 decision=approved").is_none());
+    }
+
+    #[test]
+    fn parse_detail_returns_none_for_empty_reason() {
+        assert!(
+            ApprovalDecisionRecord::parse_detail("request_seq=1 decision=approved reason=")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn detail_parse_detail_round_trip() {
+        let original = ApprovalDecisionRecord {
+            request_seq: EventSeq(55),
+            decision: ApprovalDecision::Approved,
+            reason: "all clear".to_string(),
+        };
+        let detail = original.detail();
+        let parsed =
+            ApprovalDecisionRecord::parse_detail(&detail).expect("round-trip should parse");
+        assert_eq!(parsed.request_seq, original.request_seq);
+        assert_eq!(parsed.decision, original.decision);
+        assert_eq!(parsed.reason, original.reason);
     }
 }
