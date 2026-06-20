@@ -21,6 +21,8 @@ pub enum RequestCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApprovalCommand {
     Status,
+    Approve { seq: u64 },
+    Reject { seq: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

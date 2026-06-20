@@ -316,6 +316,247 @@ fn approval_status_does_not_append_approval_decision() {
 }
 
 #[test]
+fn approval_approve_pending_appends_decision_and_logs() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=read_file path=\"README.md\" risk=read_only reason=test",
+    );
+    let len_before = app.event_log.len();
+
+    app.input = format!("/approval approve {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        2,
+        "expected exactly two new events (SlashCommand + ApprovalDecision)"
+    );
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "first new event must be SlashCommand"
+    );
+    assert_eq!(
+        new_events[1].kind,
+        EventKind::ApprovalDecision,
+        "second new event must be ApprovalDecision"
+    );
+    assert_eq!(
+        new_events[1].detail,
+        format!("request_seq={request_seq} decision=approved reason=operator_approved")
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("Approved approval request seq={request_seq}")),
+        "log must contain 'Approved approval request seq=...'"
+    );
+}
+
+#[test]
+fn approval_reject_pending_appends_decision_and_logs() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=write_file path=\"/etc/hosts\" risk=high reason=test",
+    );
+    let len_before = app.event_log.len();
+
+    app.input = format!("/approval reject {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        2,
+        "expected exactly two new events (SlashCommand + ApprovalDecision)"
+    );
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "first new event must be SlashCommand"
+    );
+    assert_eq!(
+        new_events[1].kind,
+        EventKind::ApprovalDecision,
+        "second new event must be ApprovalDecision"
+    );
+    assert_eq!(
+        new_events[1].detail,
+        format!("request_seq={request_seq} decision=rejected reason=operator_rejected")
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("Rejected approval request seq={request_seq}")),
+        "log must contain 'Rejected approval request seq=...'"
+    );
+}
+
+#[test]
+fn approval_approve_non_pending_appends_only_slash_command() {
+    let mut app = App::new();
+    let len_before = app.event_log.len();
+
+    // seq=9999 was never requested
+    app.input = "/approval approve 9999".to_string();
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalDecision),
+        "must not append ApprovalDecision for non-pending seq"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "No pending approval for seq=9999"),
+        "log must contain 'No pending approval for seq=9999'"
+    );
+}
+
+#[test]
+fn approval_approve_already_resolved_appends_only_slash_command() {
+    let mut app = App::new();
+    let request_detail = "tool=read_file path=\"README.md\" risk=read_only reason=test_resolved";
+    let seq1 = app
+        .event_log
+        .append(EventKind::ApprovalRequest, request_detail);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq: seq1,
+        decision: ApprovalDecision::Approved,
+        reason: "already_resolved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+    let len_before = app.event_log.len();
+
+    app.input = format!("/approval approve {seq1}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only) for already-resolved seq"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalDecision),
+        "must not append ApprovalDecision for already-resolved seq"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("No pending approval for seq={seq1}")),
+        "log must contain 'No pending approval for seq=...'"
+    );
+}
+
+#[test]
+fn approval_status_logs_pending_none_after_approve() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=read_file path=\"README.md\" risk=read_only reason=test",
+    );
+
+    app.input = format!("/approval approve {request_seq}");
+    app.submit();
+
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' after approve"
+    );
+}
+
+#[test]
+fn approval_status_logs_pending_none_after_reject() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=write_file path=\"/etc/hosts\" risk=high reason=test",
+    );
+
+    app.input = format!("/approval reject {request_seq}");
+    app.submit();
+
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' after reject"
+    );
+}
+
+#[test]
+fn approval_approve_does_not_mutate_pending_state() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=read_file path=\"README.md\" risk=read_only reason=test",
+    );
+
+    app.input = format!("/approval approve {request_seq}");
+    app.submit();
+
+    assert!(
+        app.pending_model_tool_request.is_none(),
+        "pending_model_tool_request must remain None after approve"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must remain None after approve"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must remain None after approve"
+    );
+}
+
+#[test]
+fn approval_reject_does_not_mutate_pending_state() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=write_file path=\"/etc/hosts\" risk=high reason=test",
+    );
+
+    app.input = format!("/approval reject {request_seq}");
+    app.submit();
+
+    assert!(
+        app.pending_model_tool_request.is_none(),
+        "pending_model_tool_request must remain None after reject"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must remain None after reject"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must remain None after reject"
+    );
+}
+
+#[test]
 fn production_tool_list_emits_no_approval_events() {
     let mut app = App::new();
     app.input = "/tool list .".to_string();

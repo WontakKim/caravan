@@ -39,6 +39,22 @@ pub fn parse_input(input: &str) -> ParsedInput {
                     _ => Command::Unknown(input.to_string()),
                 }
             }
+            // Handles /approval approve <seq> and /approval reject <seq>.
+            t if t.starts_with("/approval ") => {
+                let remainder = t["/approval ".len()..].trim();
+                let tokens: Vec<&str> = remainder.split_whitespace().collect();
+                match tokens.as_slice() {
+                    ["approve", seq_str] => match seq_str.parse::<u64>() {
+                        Ok(seq) => Command::Approval(ApprovalCommand::Approve { seq }),
+                        Err(_) => Command::Unknown(input.to_string()),
+                    },
+                    ["reject", seq_str] => match seq_str.parse::<u64>() {
+                        Ok(seq) => Command::Approval(ApprovalCommand::Reject { seq }),
+                        Err(_) => Command::Unknown(input.to_string()),
+                    },
+                    _ => Command::Unknown(input.to_string()),
+                }
+            }
             // Carry the raw (untrimmed) input so the recorded event detail is
             // exactly what the user typed.
             _ => Command::Unknown(input.to_string()),

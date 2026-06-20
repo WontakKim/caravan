@@ -352,3 +352,103 @@ fn approval_unknown_is_unknown() {
         ParsedInput::SlashCommand(Command::Unknown(_))
     ));
 }
+
+#[test]
+fn approval_approve_seq_parses_correctly() {
+    assert_eq!(
+        parse_input("/approval approve 12"),
+        ParsedInput::SlashCommand(Command::Approval(ApprovalCommand::Approve { seq: 12 }))
+    );
+}
+
+#[test]
+fn approval_reject_seq_parses_correctly() {
+    assert_eq!(
+        parse_input("/approval reject 12"),
+        ParsedInput::SlashCommand(Command::Approval(ApprovalCommand::Reject { seq: 12 }))
+    );
+}
+
+#[test]
+fn approval_approve_u64_max_parses_correctly() {
+    assert_eq!(
+        parse_input("/approval approve 18446744073709551615"),
+        ParsedInput::SlashCommand(Command::Approval(ApprovalCommand::Approve {
+            seq: u64::MAX
+        }))
+    );
+}
+
+#[test]
+fn approval_approve_leading_zeros_normalizes() {
+    assert_eq!(
+        parse_input("/approval approve 00012"),
+        ParsedInput::SlashCommand(Command::Approval(ApprovalCommand::Approve { seq: 12 }))
+    );
+}
+
+#[test]
+fn approval_approve_abc_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval approve abc"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_reject_abc_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval reject abc"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_approve_extra_token_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval approve 12 because"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_reject_extra_token_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval reject 12 because"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_approve_negative_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval approve -1"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_approve_decimal_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval approve 12.0"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_approve_overflow_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval approve 18446744073709551616"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_approve_abc_raw_untrimmed_payload() {
+    match parse_input("/approval approve abc  ") {
+        ParsedInput::SlashCommand(Command::Unknown(s)) => {
+            assert_eq!(s, "/approval approve abc  ")
+        }
+        other => panic!("expected SlashCommand(Unknown), got {:?}", other),
+    }
+}
