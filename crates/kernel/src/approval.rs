@@ -270,15 +270,18 @@ impl ApprovalResumeRecord {
         let tool = rest[..path_label_pos].to_string();
         let rest = &rest[path_label_pos + " path=".len()..];
 
-        // Parse path value: quoted (Debug-style) or unquoted.
-        let (path, rest) = if rest.starts_with('"') {
-            parse_debug_quoted_path(&rest[1..])?
-        } else {
-            let pos = rest.find(" risk=")?;
-            (rest[..pos].to_string(), &rest[pos..])
-        };
+        // Parse path value. `detail()` always Debug-quotes the path, so the value
+        // MUST start with a quote. A bare (unquoted) path is malformed for this
+        // event format and is rejected (returns None), keeping the projection's
+        // "malformed detail → ignore" rule precise.
+        if !rest.starts_with('"') {
+            return None;
+        }
+        let (path, rest) = parse_debug_quoted_path(&rest[1..])?;
 
-        // Require " risk=" and read risk value up to " reason=".
+        // Require " risk=" immediately after the closing quote (this also rejects
+        // any trailing junk between the closing quote and " risk="), then read the
+        // risk value up to " reason=".
         let rest = rest.strip_prefix(" risk=")?;
         let reason_pos = rest.find(" reason=")?;
         let risk = rest[..reason_pos].to_string();
@@ -779,5 +782,48 @@ mod tests {
         assert_eq!(parsed.path, "README.md");
         assert_eq!(parsed.risk, "read_only");
         assert_eq!(parsed.reason, "test_manual_approval");
+    }
+
+    #[test]
+    fn approval_resume_record_parse_detail_rejects_bare_path() {
+        // detail() always Debug-quotes the path, so a bare path is malformed.
+        assert!(
+            ApprovalResumeRecord::parse_detail(
+                "request_seq=1 decision_seq=2 tool=read_file path=notes.txt risk=low reason=ok"
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn approval_resume_record_parse_detail_rejects_trailing_junk_after_quote() {
+        assert!(
+            ApprovalResumeRecord::parse_detail(
+                r#"request_seq=1 decision_seq=2 tool=read_file path="notes.txt"x risk=low reason=ok"#
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn approval_resume_record_parse_detail_rejects_unterminated_quote() {
+        assert!(
+            ApprovalResumeRecord::parse_detail(
+                r#"request_seq=1 decision_seq=2 tool=read_file path="unterminated risk=low reason=ok"#
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn approval_resume_record_debug_escaped_path_round_trip() {
+        // Paths containing a quote or backslash must round-trip via Debug escaping.
+        for raw in [r#"dir/"quoted"/notes.txt"#, r"dir\notes.txt"] {
+            let original = make_approval_resume_record(raw);
+            let detail = original.detail();
+            let parsed = ApprovalResumeRecord::parse_detail(&detail)
+                .expect("debug-escaped path should round-trip");
+            assert_eq!(parsed.path, raw);
+        }
     }
 }
