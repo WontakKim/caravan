@@ -1,7 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::approval::{
-    ApprovalDecision, ApprovalDecisionRecord, ApprovalResumePlan, ParsedApprovalRequest,
+    ApprovalDecision, ApprovalDecisionRecord, ApprovalResumePlan, ApprovalResumeRecord,
+    ParsedApprovalRequest,
 };
 use crate::events::{AppEvent, EventKind, EventLog, EventSeq};
 
@@ -27,6 +28,8 @@ pub struct ResolvedApproval {
 pub struct ApprovalQueue {
     pub pending: Vec<PendingApproval>,
     pub resolved: Vec<ResolvedApproval>,
+    /// Request seqs that have been consumed by a valid `ApprovalResume` event.
+    pub resumed: BTreeSet<EventSeq>,
 }
 
 impl ApprovalQueue {
@@ -98,7 +101,42 @@ impl ApprovalQueue {
             }
         }
 
-        ApprovalQueue { pending, resolved }
+        // Build a map from request_seq → decision_seq for approved resolved requests.
+        let approved_decision_seqs: BTreeMap<EventSeq, EventSeq> = resolved
+            .iter()
+            .filter(|r| r.decision == ApprovalDecision::Approved)
+            .map(|r| (r.request_seq, r.decision_seq))
+            .collect();
+
+        // Scan `ApprovalResume` events and mark valid ones as consumed.
+        let mut resumed: BTreeSet<EventSeq> = BTreeSet::new();
+        for event in events {
+            if event.kind != EventKind::ApprovalResume {
+                continue;
+            }
+            let Some(record) = ApprovalResumeRecord::parse_detail(&event.detail) else {
+                continue;
+            };
+            // The resume must reference a known approved resolved request.
+            let Some(&plan_decision_seq) = approved_decision_seqs.get(&record.request_seq) else {
+                continue;
+            };
+            // The parsed decision_seq must match the plan's actual decision_seq.
+            if record.decision_seq != plan_decision_seq {
+                continue;
+            }
+            // The resume event must come strictly after the decision.
+            if event.seq <= record.decision_seq {
+                continue;
+            }
+            resumed.insert(record.request_seq);
+        }
+
+        ApprovalQueue {
+            pending,
+            resolved,
+            resumed,
+        }
     }
 
     /// Builds a queue from an `EventLog` by delegating to `from_events`.
@@ -132,6 +170,7 @@ impl ApprovalQueue {
         self.resolved
             .iter()
             .filter(|r| r.decision == ApprovalDecision::Approved)
+            .filter(|r| !self.resumed.contains(&r.request_seq))
             .filter_map(|r| {
                 let request = ParsedApprovalRequest::parse_detail(&r.request_detail)?;
                 request.to_tool_request()?;
@@ -168,7 +207,7 @@ impl ApprovalQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::approval::{ApprovalDecision, ApprovalDecisionRecord};
+    use crate::approval::{ApprovalDecision, ApprovalDecisionRecord, ApprovalResumeRecord};
     use crate::events::{AppEvent, EventKind, EventLog, EventSeq};
 
     // --- helpers ---
@@ -502,6 +541,158 @@ mod tests {
         ];
         let queue = ApprovalQueue::from_events(&events);
         assert_eq!(queue.resolved.len(), 0);
+        assert_eq!(queue.resume_plans().len(), 0);
+    }
+
+    // --- ApprovalResume consumption tests ---
+
+    /// Appends an `ApprovalResume` event built from `record` at the given seq.
+    fn make_resume_event(seq: u64, record: &ApprovalResumeRecord) -> AppEvent {
+        AppEvent {
+            seq: EventSeq(seq),
+            kind: EventKind::ApprovalResume,
+            detail: record.detail(),
+        }
+    }
+
+    #[test]
+    fn resume_plans_excludes_plan_consumed_by_valid_approval_resume() {
+        // request at seq=1, approved at seq=2, resumed at seq=3 → plan is consumed.
+        let record = ApprovalResumeRecord {
+            request_seq: EventSeq(1),
+            decision_seq: EventSeq(2),
+            tool: "read_file".to_string(),
+            path: "README.md".to_string(),
+            risk: "read_only".to_string(),
+            reason: "test".to_string(),
+        };
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+            make_resume_event(3, &record),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert!(queue.resumed.contains(&EventSeq(1)));
+        assert_eq!(queue.resume_plans().len(), 0);
+    }
+
+    #[test]
+    fn resume_plans_keeps_not_yet_resumed_approved_plan() {
+        // Approved plan with no corresponding ApprovalResume → still in resume_plans.
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert!(queue.resumed.is_empty());
+        assert_eq!(queue.resume_plans().len(), 1);
+    }
+
+    #[test]
+    fn resume_plans_ignores_malformed_approval_resume_detail() {
+        // Malformed detail → ApprovalResumeRecord::parse_detail returns None → ignored.
+        let malformed_resume = AppEvent {
+            seq: EventSeq(3),
+            kind: EventKind::ApprovalResume,
+            detail: "this is not valid resume detail".to_string(),
+        };
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+            malformed_resume,
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert!(queue.resumed.is_empty());
+        assert_eq!(queue.resume_plans().len(), 1);
+    }
+
+    #[test]
+    fn resume_plans_ignores_approval_resume_with_unknown_request_seq() {
+        // ApprovalResume references request_seq=99, which has no known ApprovalRequest.
+        let record = ApprovalResumeRecord {
+            request_seq: EventSeq(99),
+            decision_seq: EventSeq(2),
+            tool: "read_file".to_string(),
+            path: "README.md".to_string(),
+            risk: "read_only".to_string(),
+            reason: "test".to_string(),
+        };
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+            make_resume_event(3, &record),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert!(queue.resumed.is_empty());
+        assert_eq!(queue.resume_plans().len(), 1);
+    }
+
+    #[test]
+    fn resume_plans_ignores_approval_resume_whose_event_seq_not_exceeding_decision_seq() {
+        // event.seq (2) == decision_seq (2) → not strictly greater → ignored.
+        let record = ApprovalResumeRecord {
+            request_seq: EventSeq(1),
+            decision_seq: EventSeq(2),
+            tool: "read_file".to_string(),
+            path: "README.md".to_string(),
+            risk: "read_only".to_string(),
+            reason: "test".to_string(),
+        };
+        // Construct events manually so the resume event seq == decision_seq.
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+            make_resume_event(2, &record),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert!(queue.resumed.is_empty());
+        assert_eq!(queue.resume_plans().len(), 1);
+    }
+
+    /// decision_seq mismatch: plan was approved at decision_seq=20 but the resume
+    /// claims decision_seq=1 → the plan must NOT be consumed.
+    #[test]
+    fn resume_plans_ignores_approval_resume_with_decision_seq_mismatch() {
+        // Request at seq=1, approved at seq=20; the ApprovalResume carries decision_seq=1
+        // (stale/bogus) which does not match the plan's decision_seq=20 → ignored.
+        let record = ApprovalResumeRecord {
+            request_seq: EventSeq(1),
+            decision_seq: EventSeq(1), // mismatch: actual decision_seq is 20
+            tool: "read_file".to_string(),
+            path: "README.md".to_string(),
+            risk: "read_only".to_string(),
+            reason: "test".to_string(),
+        };
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(20, 1, ApprovalDecision::Approved, "ok"),
+            make_resume_event(30, &record),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        // The plan should NOT be consumed due to the decision_seq mismatch.
+        assert!(queue.resumed.is_empty());
+        assert_eq!(queue.resume_plans().len(), 1);
+    }
+
+    #[test]
+    fn resume_plans_stays_consumed_when_multiple_resume_events_for_same_request_seq() {
+        // Two ApprovalResume events for the same request_seq=1 → still consumed once.
+        let record = ApprovalResumeRecord {
+            request_seq: EventSeq(1),
+            decision_seq: EventSeq(2),
+            tool: "read_file".to_string(),
+            path: "README.md".to_string(),
+            risk: "read_only".to_string(),
+            reason: "test".to_string(),
+        };
+        let events = [
+            make_request_event(1, SUPPORTED_DETAIL),
+            make_decision_event(2, 1, ApprovalDecision::Approved, "ok"),
+            make_resume_event(3, &record),
+            make_resume_event(4, &record),
+        ];
+        let queue = ApprovalQueue::from_events(&events);
+        assert!(queue.resumed.contains(&EventSeq(1)));
         assert_eq!(queue.resume_plans().len(), 0);
     }
 }
