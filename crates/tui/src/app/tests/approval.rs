@@ -1,4 +1,6 @@
 use super::super::App;
+use super::common::TempDir;
+use kernel::storage::EventStore;
 use kernel::{ApprovalDecision, ApprovalDecisionRecord, EventKind};
 
 #[test]
@@ -187,6 +189,7 @@ fn approval_subcommands_are_unknown() {
         "/approval",
         "/approval approve",
         "/approval reject",
+        "/approval resume",
         "/approval clear",
         "/approval run",
         "/approval unknown",
@@ -652,6 +655,400 @@ fn approval_status_rejected_shows_zero_resume_plans() {
     assert!(
         !app.log.iter().any(|l| l.starts_with("- suggested:")),
         "log must not contain a suggested line when the request was rejected"
+    );
+}
+
+// --- /approval resume handler tests ---
+
+/// Seed an ApprovalRequest + approving ApprovalDecision into the event log.
+/// Returns the request_seq (EventSeq) of the seeded request.
+fn seed_approved_request(app: &mut App, detail: &str) -> kernel::events::EventSeq {
+    let request_seq = app.event_log.append(EventKind::ApprovalRequest, detail);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq,
+        decision: ApprovalDecision::Approved,
+        reason: "test_approved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+    request_seq
+}
+
+#[test]
+fn approval_resume_read_file_success() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("notes.txt"), "hello world").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=read_file path=\"notes.txt\" risk=read_only reason=test_resume",
+    );
+    let event_len_before = app.event_log.len();
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        5,
+        "expected exactly 5 new events (SlashCommand, ApprovalResume, ToolPolicy, ToolCall, ToolResult)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert_eq!(new_events[1].kind, EventKind::ApprovalResume);
+    assert_eq!(new_events[2].kind, EventKind::ToolPolicy);
+    assert_eq!(new_events[3].kind, EventKind::ToolCall);
+    assert_eq!(new_events[4].kind, EventKind::ToolResult);
+
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be Some after successful resume"
+    );
+    assert!(
+        app.log.iter().any(|l| {
+            l == "Run /context attach-last-tool to include this tool output in the next prompt."
+        }),
+        "log must contain the exact attach-hint line"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must remain None"
+    );
+    assert!(
+        app.pending_model_tool_request.is_none(),
+        "pending_model_tool_request must remain None"
+    );
+}
+
+#[test]
+fn approval_resume_list_files_success() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=list_files path=\".\" risk=read_only reason=test_resume",
+    );
+    let event_len_before = app.event_log.len();
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        5,
+        "expected exactly 5 new events (SlashCommand, ApprovalResume, ToolPolicy, ToolCall, ToolResult)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert_eq!(new_events[1].kind, EventKind::ApprovalResume);
+    assert_eq!(new_events[2].kind, EventKind::ToolPolicy);
+    assert_eq!(new_events[3].kind, EventKind::ToolCall);
+    assert_eq!(new_events[4].kind, EventKind::ToolResult);
+}
+
+#[test]
+fn approval_resume_tool_error_missing_path() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Seed a request for a file that does not exist in the workspace.
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=read_file path=\"missing.txt\" risk=read_only reason=test_resume",
+    );
+    let event_len_before = app.event_log.len();
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        5,
+        "expected exactly 5 new events (SlashCommand, ApprovalResume, ToolPolicy, ToolCall, ToolError)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert_eq!(new_events[1].kind, EventKind::ApprovalResume);
+    assert_eq!(new_events[2].kind, EventKind::ToolPolicy);
+    assert_eq!(new_events[3].kind, EventKind::ToolCall);
+    assert_eq!(new_events[4].kind, EventKind::ToolError);
+
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must remain None after tool error"
+    );
+}
+
+#[test]
+fn approval_resume_pending_request_no_decision() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=read_file path=\"notes.txt\" risk=read_only reason=test_resume",
+    );
+    let event_len_before = app.event_log.len();
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalResume),
+        "must not emit ApprovalResume for a pending (undecided) request"
+    );
+}
+
+#[test]
+fn approval_resume_rejected_request() {
+    let mut app = App::new();
+    let request_seq = app.event_log.append(
+        EventKind::ApprovalRequest,
+        "tool=read_file path=\"notes.txt\" risk=read_only reason=test_resume",
+    );
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq,
+        decision: ApprovalDecision::Rejected,
+        reason: "test_rejected".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+    let event_len_before = app.event_log.len();
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalResume),
+        "must not emit ApprovalResume for a rejected request"
+    );
+}
+
+#[test]
+fn approval_resume_unknown_seq() {
+    let mut app = App::new();
+    let event_len_before = app.event_log.len();
+
+    app.input = "/approval resume 9999".to_string();
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalResume),
+        "must not emit ApprovalResume for an unknown seq"
+    );
+}
+
+#[test]
+fn approval_resume_unsupported_tool_write_file() {
+    let mut app = App::new();
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=write_file path=\"output.txt\" risk=high reason=test",
+    );
+    let event_len_before = app.event_log.len();
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only) for unsupported tool"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalResume),
+        "must not emit ApprovalResume for an unsupported tool"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+        "must not emit ToolPolicy for an unsupported tool"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolCall),
+        "must not emit ToolCall for an unsupported tool"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolResult),
+        "must not emit ToolResult for an unsupported tool"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolError),
+        "must not emit ToolError for an unsupported tool"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("No approved resume plan for seq={request_seq}")),
+        "log must contain 'No approved resume plan for seq=...' for unsupported tool"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must remain None"
+    );
+}
+
+#[test]
+fn approval_resume_status_not_listed_after_success() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("notes.txt"), "hello world").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=read_file path=\"notes.txt\" risk=read_only reason=test_resume",
+    );
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    // Clear log to make assertions simpler.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- approved resume plans: 0"),
+        "after successful resume, /approval status must show 0 approved resume plans"
+    );
+}
+
+#[test]
+fn approval_resume_status_not_listed_after_error() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Use a path that doesn't exist → tool error, but ApprovalResume is still appended.
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=read_file path=\"missing.txt\" risk=read_only reason=test_resume",
+    );
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    // Clear log to make assertions simpler.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- approved resume plans: 0"),
+        "after failed resume, /approval status must show 0 approved resume plans"
+    );
+}
+
+#[test]
+fn approval_resume_attach_last_tool_after_success() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("notes.txt"), "hello world").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let request_seq = seed_approved_request(
+        &mut app,
+        "tool=read_file path=\"notes.txt\" risk=read_only reason=test_resume",
+    );
+
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be Some before attach"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must be None before attach"
+    );
+
+    app.input = "/context attach-last-tool".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be Some after attach-last-tool"
+    );
+
+    let events = app.event_log.events();
+    assert!(
+        events
+            .iter()
+            .any(|e| e.kind == EventKind::ToolContextAttach),
+        "must emit ToolContextAttach after attach-last-tool"
     );
 }
 

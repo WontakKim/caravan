@@ -39,7 +39,7 @@ pub fn parse_input(input: &str) -> ParsedInput {
                     _ => Command::Unknown(input.to_string()),
                 }
             }
-            // Handles /approval approve <seq> and /approval reject <seq>.
+            // Handles /approval approve <seq>, /approval reject <seq>, and /approval resume <seq>.
             t if t.starts_with("/approval ") => {
                 let remainder = t["/approval ".len()..].trim();
                 let tokens: Vec<&str> = remainder.split_whitespace().collect();
@@ -50,6 +50,10 @@ pub fn parse_input(input: &str) -> ParsedInput {
                     },
                     ["reject", seq_str] => match seq_str.parse::<u64>() {
                         Ok(seq) => Command::Approval(ApprovalCommand::Reject { seq }),
+                        Err(_) => Command::Unknown(input.to_string()),
+                    },
+                    ["resume", seq_str] => match seq_str.parse::<u64>() {
+                        Ok(seq) => Command::Approval(ApprovalCommand::Resume { seq }),
                         Err(_) => Command::Unknown(input.to_string()),
                     },
                     _ => Command::Unknown(input.to_string()),

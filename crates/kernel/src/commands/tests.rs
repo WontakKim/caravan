@@ -452,3 +452,43 @@ fn approval_approve_abc_raw_untrimmed_payload() {
         other => panic!("expected SlashCommand(Unknown), got {:?}", other),
     }
 }
+
+#[test]
+fn approval_resume_seq_parses_correctly() {
+    assert_eq!(
+        parse_input("/approval resume 12"),
+        ParsedInput::SlashCommand(Command::Approval(ApprovalCommand::Resume { seq: 12 }))
+    );
+}
+
+#[test]
+fn approval_resume_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval resume"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_resume_abc_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval resume abc"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_resume_extra_token_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval resume 12 extra"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_run_is_unknown_no_regression() {
+    assert!(matches!(
+        parse_input("/approval run"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
