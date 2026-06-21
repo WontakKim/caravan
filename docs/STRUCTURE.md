@@ -244,6 +244,12 @@ constraints are enforced:
   the production path (`ToolPolicyEngine::read_only()`), `approval_requirement`
   is always `ApprovalRequirement::None`, so no `ApprovalRequest` event is
   emitted and tools run without an approval step.
+- **`/tool plan-write <path>`** exercises the mutation-intent → `ToolPolicy` →
+  `ApprovalRequest` path directly: it records a `workspace_write` mutation intent
+  and routes it through the approval gate, but performs no real file write and
+  produces no `ToolCall`/`ToolResult`/`ToolError`. Because no tool is executed,
+  there is no resume candidacy; the request is resolved only via
+  `/approval approve|reject <seq>`.
 - **TUI** reads from `EventLog` and `App` state to draw the screen. It writes
   to `App` state through `input::handle_key`. It never reaches into
   `model/openai/` internals or tool registry internals.

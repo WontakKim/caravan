@@ -51,6 +51,7 @@ cargo test --workspace
 | `/exit`              | Exit the application                                     |
 | `/tool list [path]`           | List files under the workspace root (or a sub-path)                      |
 | `/tool read <path>`           | Read a UTF-8 text file under the workspace root                          |
+| `/tool plan-write <path>`     | Approval-only skeleton: records a `workspace_write` mutation intent (`ToolPolicy` + `ApprovalRequest`) without writing any file and produces no `ToolCall`/`ToolResult`/`ToolError`; resolve via `/approval approve\|reject <seq>`; not resumable |
 | `/context attach-last-tool`   | Attach the latest read-only tool output to the next prompt (one-shot)    |
 | `/context clear`              | Clear pending manual tool context                                         |
 | `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
