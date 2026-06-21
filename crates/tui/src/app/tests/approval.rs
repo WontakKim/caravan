@@ -1,7 +1,7 @@
 use super::super::App;
 use super::common::TempDir;
 use kernel::storage::EventStore;
-use kernel::{ApprovalDecision, ApprovalDecisionRecord, EventKind};
+use kernel::{ApprovalDecision, ApprovalDecisionRecord, ApprovalQueue, EventKind};
 
 #[test]
 fn approval_status_no_pending_logs_none() {
@@ -1049,6 +1049,195 @@ fn approval_resume_attach_last_tool_after_success() {
             .iter()
             .any(|e| e.kind == EventKind::ToolContextAttach),
         "must emit ToolContextAttach after attach-last-tool"
+    );
+}
+
+// --- /tool plan-write approval-flow regression tests ---
+
+/// Real plan-write `ApprovalRequest` detail: `risk=workspace_write`, not the old `risk=high`.
+const PLAN_WRITE_APPROVAL_DETAIL: &str = "tool=write_file path=\"README.md\" risk=workspace_write reason=workspace_write_requires_approval";
+
+#[test]
+fn plan_write_approve_shows_pending_then_resolves() {
+    let mut app = App::new();
+
+    // Submit the plan-write command: emits SlashCommand, ToolPolicy, ApprovalRequest.
+    app.input = "/tool plan-write README.md".to_string();
+    app.submit();
+
+    // Extract the ApprovalRequest event seq (last event appended).
+    let events = app.event_log.events();
+    let approval_event = events
+        .iter()
+        .rev()
+        .find(|e| e.kind == EventKind::ApprovalRequest)
+        .expect("ApprovalRequest event must be present after /tool plan-write");
+    let approval_seq = approval_event.seq;
+
+    // /approval status must show 1 pending entry with the workspace_write detail.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: 1"),
+        "log must contain '- pending: 1' after plan-write"
+    );
+    assert!(
+        app.log.iter().any(|l| l.contains("workspace_write")),
+        "log must contain 'workspace_write' in the pending entry detail"
+    );
+
+    // /approval approve <seq> must append SlashCommand + ApprovalDecision and remove from pending.
+    let len_before = app.event_log.len();
+    app.input = format!("/approval approve {approval_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        2,
+        "expected exactly 2 new events (SlashCommand + ApprovalDecision)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert_eq!(new_events[1].kind, EventKind::ApprovalDecision);
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("Approved approval request seq={approval_seq}")),
+        "log must contain 'Approved approval request seq=...'"
+    );
+
+    // After approve, /approval status must show pending: none.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' after plan-write approve"
+    );
+}
+
+#[test]
+fn plan_write_reject_shows_pending_then_resolves() {
+    let mut app = App::new();
+
+    // Submit the plan-write command: emits SlashCommand, ToolPolicy, ApprovalRequest.
+    app.input = "/tool plan-write README.md".to_string();
+    app.submit();
+
+    // Extract the ApprovalRequest event seq.
+    let events = app.event_log.events();
+    let approval_event = events
+        .iter()
+        .rev()
+        .find(|e| e.kind == EventKind::ApprovalRequest)
+        .expect("ApprovalRequest event must be present after /tool plan-write");
+    let approval_seq = approval_event.seq;
+
+    // /approval reject <seq> must append SlashCommand + ApprovalDecision (rejected).
+    let len_before = app.event_log.len();
+    app.input = format!("/approval reject {approval_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        2,
+        "expected exactly 2 new events (SlashCommand + ApprovalDecision)"
+    );
+    assert_eq!(new_events[0].kind, EventKind::SlashCommand);
+    assert_eq!(new_events[1].kind, EventKind::ApprovalDecision);
+    assert_eq!(
+        new_events[1].detail,
+        format!("request_seq={approval_seq} decision=rejected reason=operator_rejected")
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("Rejected approval request seq={approval_seq}")),
+        "log must contain 'Rejected approval request seq=...'"
+    );
+
+    // After reject, /approval status must show pending: none.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' after plan-write reject"
+    );
+}
+
+#[test]
+fn plan_write_resume_is_noop() {
+    let mut app = App::new();
+
+    // Seed an approved plan-write request using the real workspace_write detail shape.
+    let request_seq = app
+        .event_log
+        .append(EventKind::ApprovalRequest, PLAN_WRITE_APPROVAL_DETAIL);
+    let decision_detail = ApprovalDecisionRecord {
+        request_seq,
+        decision: ApprovalDecision::Approved,
+        reason: "test_approved".to_string(),
+    }
+    .detail();
+    app.event_log
+        .append(EventKind::ApprovalDecision, &decision_detail);
+
+    // ApprovalQueue::resume_plans() must yield 0 plans: write_file to_tool_request returns None.
+    let queue = ApprovalQueue::from_event_log(&app.event_log);
+    let plans = queue.resume_plans();
+    assert_eq!(
+        plans.len(),
+        0,
+        "resume_plans must yield 0 plans for an approved write_file (workspace_write) request"
+    );
+
+    // /approval resume <seq> must append only a SlashCommand — no resume or tool events.
+    let event_len_before = app.event_log.len();
+    app.input = format!("/approval resume {request_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only) for plan-write resume"
+    );
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "the single new event must be SlashCommand"
+    );
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalResume),
+        "must not emit ApprovalResume for a plan-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+        "must not emit ToolPolicy for a plan-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolCall),
+        "must not emit ToolCall for a plan-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolResult),
+        "must not emit ToolResult for a plan-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolError),
+        "must not emit ToolError for a plan-write resume"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must remain None after plan-write resume"
     );
 }
 

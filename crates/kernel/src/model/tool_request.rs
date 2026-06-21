@@ -231,6 +231,24 @@ mod tests {
         assert_eq!(result, None);
     }
 
+    /// A `write_file` block must be skipped entirely; a subsequent valid block is returned.
+    /// This guards against the parser accidentally accepting `write_file` as a model tool.
+    #[test]
+    fn write_file_block_before_valid_read_file_is_skipped() {
+        let write_block = make_block("write_file", Some("output.txt"));
+        let read_block = make_block("read_file", Some("README.md"));
+        let text = format!("{}\n{}", write_block, read_block);
+        let result = parse_first_model_tool_request(&text);
+        assert_eq!(
+            result,
+            Some(ModelToolRequest {
+                kind: ModelToolRequestKind::ReadFile,
+                path: "README.md".to_string(),
+            }),
+            "write_file block must be skipped; the subsequent read_file block must be returned"
+        );
+    }
+
     #[test]
     fn malformed_block_no_closing_delimiter_returns_none() {
         let text = "CARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\n";
