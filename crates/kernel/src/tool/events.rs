@@ -58,6 +58,7 @@ impl ToolEventRunner {
         let (tool_name, tool_path) = match &request {
             ToolRequest::ListFiles { path } => ("list_files", path.clone()),
             ToolRequest::ReadFile { path } => ("read_file", path.clone()),
+            ToolRequest::PlanWrite { path } => ("write_file", path.clone()),
         };
 
         let outcome = self.policy.evaluate(&request);

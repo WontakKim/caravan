@@ -424,6 +424,66 @@ fn run_does_not_panic_for_path_with_quote_character() {
     );
 }
 
+// --- PlanWrite mutation-intent tests (T-1) ---
+
+#[test]
+fn plan_write_emits_only_tool_policy_and_approval_request() {
+    let dir = TempDir::new();
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::PlanWrite {
+            path: "README.md".to_string(),
+        },
+    );
+
+    // Exactly two events: ToolPolicy then ApprovalRequest.
+    assert_eq!(log.len(), 2, "expected exactly 2 events, got {}", log.len());
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ApprovalRequest);
+
+    // No ToolCall, ToolResult, or ToolError events appended.
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolCall),
+        "ToolCall must not be appended for PlanWrite"
+    );
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolResult),
+        "ToolResult must not be appended for PlanWrite"
+    );
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolError),
+        "ToolError must not be appended for PlanWrite"
+    );
+
+    // Returns Err(ApprovalRequired).
+    assert!(
+        matches!(result, Err(ToolError::ApprovalRequired { .. })),
+        "expected ApprovalRequired error, got {:?}",
+        result
+    );
+
+    // ToolPolicy detail.
+    let policy_detail = &log.get(0).unwrap().detail;
+    assert_eq!(
+        policy_detail,
+        r#"tool=write_file path="README.md" risk=workspace_write decision=allow reason=workspace_write_requires_approval"#,
+        "ToolPolicy detail mismatch: {policy_detail}"
+    );
+
+    // ApprovalRequest detail.
+    let approval_detail = &log.get(1).unwrap().detail;
+    assert_eq!(
+        approval_detail,
+        r#"tool=write_file path="README.md" risk=workspace_write reason=workspace_write_requires_approval"#,
+        "ApprovalRequest detail mismatch: {approval_detail}"
+    );
+}
+
 // --- ToolPolicy ordering and detail tests (Steps 6-7) ---
 
 #[test]

@@ -71,6 +71,7 @@ impl ToolPolicyEngine {
     pub fn evaluate(&self, request: &ToolRequest) -> ToolPolicyOutcome {
         let risk = match request {
             ToolRequest::ListFiles { .. } | ToolRequest::ReadFile { .. } => ToolRisk::ReadOnly,
+            ToolRequest::PlanWrite { .. } => ToolRisk::WorkspaceWrite,
         };
 
         if self.deny_all {
@@ -81,14 +82,23 @@ impl ToolPolicyEngine {
                 approval_requirement: ApprovalRequirement::None,
             }
         } else {
+            let reason = match risk {
+                ToolRisk::ReadOnly => "read_only_auto_allow".to_string(),
+                ToolRisk::WorkspaceWrite => "workspace_write_requires_approval".to_string(),
+            };
             let approval_requirement = match &self.manual_reason {
                 Some(r) => ApprovalRequirement::Manual { reason: r.clone() },
-                None => ApprovalRequirement::None,
+                None => match risk {
+                    ToolRisk::WorkspaceWrite => ApprovalRequirement::Manual {
+                        reason: "workspace_write_requires_approval".to_string(),
+                    },
+                    ToolRisk::ReadOnly => ApprovalRequirement::None,
+                },
             };
             ToolPolicyOutcome {
                 decision: ToolPolicyDecision::Allow,
                 risk,
-                reason: "read_only_auto_allow".to_string(),
+                reason,
                 approval_requirement,
             }
         }
@@ -203,5 +213,33 @@ mod tests {
                 reason: "needs review".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn evaluate_plan_write_returns_allow_workspace_write_with_manual_approval() {
+        let engine = ToolPolicyEngine::read_only();
+        let request = ToolRequest::PlanWrite {
+            path: "README.md".to_string(),
+        };
+        let outcome = engine.evaluate(&request);
+        assert_eq!(outcome.decision, ToolPolicyDecision::Allow);
+        assert_eq!(outcome.risk, ToolRisk::WorkspaceWrite);
+        assert_eq!(outcome.reason, "workspace_write_requires_approval");
+        assert_eq!(
+            outcome.approval_requirement,
+            ApprovalRequirement::Manual {
+                reason: "workspace_write_requires_approval".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn tool_risk_as_str_workspace_write() {
+        assert_eq!(ToolRisk::WorkspaceWrite.as_str(), "workspace_write");
+    }
+
+    #[test]
+    fn tool_risk_as_str_read_only() {
+        assert_eq!(ToolRisk::ReadOnly.as_str(), "read_only");
     }
 }

@@ -17,9 +17,10 @@ pub enum ToolName {
 }
 
 /// Risk classification for a tool.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ToolRisk {
     ReadOnly,
+    WorkspaceWrite,
 }
 
 impl ToolRisk {
@@ -27,6 +28,7 @@ impl ToolRisk {
     pub fn as_str(&self) -> &'static str {
         match self {
             ToolRisk::ReadOnly => "read_only",
+            ToolRisk::WorkspaceWrite => "workspace_write",
         }
     }
 }
@@ -42,6 +44,7 @@ pub struct ToolExecutionContext {
 pub enum ToolRequest {
     ListFiles { path: String },
     ReadFile { path: String },
+    PlanWrite { path: String },
 }
 
 /// Outputs produced by the tool harness.
@@ -90,6 +93,9 @@ impl ToolRegistry {
         match request {
             ToolRequest::ListFiles { path } => self.list_files(context, &path),
             ToolRequest::ReadFile { path } => self.read_file(context, &path),
+            ToolRequest::PlanWrite { .. } => Err(ToolError::ApprovalRequired {
+                reason: "workspace_write_requires_approval".to_string(),
+            }),
         }
     }
 
