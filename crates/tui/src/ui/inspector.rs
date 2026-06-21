@@ -38,6 +38,7 @@ fn inspector_text(selected: Option<&AppEvent>) -> String {
                 EventKind::ModelToolRequest => labeled("Model Tool Request"),
                 EventKind::ApprovalRequest => labeled("Approval Request"),
                 EventKind::ApprovalDecision => labeled("Approval Decision"),
+                EventKind::ApprovalResume => labeled("Approval Resume"),
                 _ => format!(
                     "seq: {}\nkind: {}\nmessage: {}",
                     ev.seq,
@@ -302,6 +303,24 @@ mod tests {
         );
         assert!(
             result.contains("request_seq=12 decision=approved reason=test_approval"),
+            "result should contain raw detail"
+        );
+    }
+
+    #[test]
+    fn inspector_text_approval_resume_uses_approval_resume_label() {
+        let ev = AppEvent {
+            seq: EventSeq(21),
+            kind: EventKind::ApprovalResume,
+            detail: "request_seq=20 resumed=true".to_string(),
+        };
+        let result = inspector_text(Some(&ev));
+        assert!(
+            result.contains("Approval Resume:"),
+            "ApprovalResume events should use 'Approval Resume:' label"
+        );
+        assert!(
+            result.contains("request_seq=20 resumed=true"),
             "result should contain raw detail"
         );
     }
