@@ -60,6 +60,7 @@ cargo test --workspace
 | `/approval status`            | Show the pending approval queue and approved resume plan summary: lists only **pending** (unresolved) `ApprovalRequest` events, then always prints the count of approved resume plans (`ApprovalQueue::resume_plans` — resolved `Approved` decisions for supported tools), a per-plan summary line (`seq=<n> <detail>`), and a suggested `/tool` command for each plan; observe-only, appends only a `SlashCommand` event; no resume execution happens in this step |
 | `/approval approve <seq>`     | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=approved reason=operator_approved`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
 | `/approval reject <seq>`      | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=rejected reason=operator_rejected`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
+| `/approval resume <seq>`      | Resume an approved `ApprovalResumePlan` identified by `<seq>` as a read-only tool execution; records `ApprovalResume` then `ToolPolicy → ToolCall → (ToolResult \| ToolError)`; does nothing for pending, rejected, or unknown seqs; the resume plan is **consumed on attempt** — even on tool error it is not retried and will no longer appear in `/approval status`; on success run `/context attach-last-tool` to attach the output to the next prompt (`pending_manual_tool_context` is not set automatically) |
 
 ### Header Context Indicator
 
@@ -157,6 +158,7 @@ not persisted to `.caravan/events.jsonl`.
 | `ToolPolicy`                 | Policy decision trace recorded immediately before the Approval Gate; carries the tool name, path, risk level, decision, and reason |
 | `ApprovalRequest`            | Emitted by the Approval Gate when `approval_requirement` is `Manual`; sits between `ToolPolicy` and `ToolCall`; never emitted on the production read-only-tool path; pending `ApprovalRequest` events can be observed via `/approval status` (the `ApprovalQueue` projection) |
 | `ApprovalDecision`           | Governance trace that resolves a referenced `ApprovalRequest`; carries `request_seq`, `decision` (`approved`\|`rejected`), and `reason` in its detail string (formatted by `ApprovalDecisionRecord`); when a valid `ApprovalDecision` event is recorded for a given `ApprovalRequest` seq, the `ApprovalQueue` projection moves that request from the `pending` list to the `resolved` list, so it no longer appears in `/approval status` output; appended by `/approval approve <seq>` (reason `operator_approved`) and `/approval reject <seq>` (reason `operator_rejected`) — neither command resumes tool execution or emits `ToolCall`/`ToolResult`/`ToolError` |
+| `ApprovalResume`             | Emitted by `/approval resume <seq>` immediately after the `SlashCommand` event, before the tool execution sequence (`ToolPolicy → ToolCall → ToolResult\|ToolError`); records that the resume attempt has started and that the `ApprovalResumePlan` is now consumed — even on tool error the plan is not retried and no longer appears in `/approval status`; detail string is formatted by `ApprovalResumeRecord` and carries `request_seq`, `decision_seq`, tool name, and path |
 
 ## Mock Run/Turn Flow
 
@@ -1369,7 +1371,31 @@ step could use them to resume execution. It carries:
 > `ApprovalResumePlan` are purely read-only projections. The suggested `/tool` command
 > from `suggested_command()` is surfaced as a screen-log hint by `/approval status`;
 > the tool is never invoked automatically and no `ToolCall`/`ToolResult`/`ToolError`
-> event is emitted. Resume execution is explicitly deferred to a future task.
+> event is emitted. Resume execution is handled by `/approval resume <seq>`.
+
+## `/approval resume` Behavior
+
+`/approval resume <seq>` resumes an approved `ApprovalResumePlan` by executing the
+underlying read-only tool. The plan identified by `<seq>` must exist in the
+`ApprovalQueue::resume_plans()` projection (i.e. it must correspond to an
+`ApprovalRequest` resolved with `Approved` and a supported tool). For pending,
+rejected, or unknown seqs the command does nothing.
+
+**Consume-on-attempt (no-retry) policy:** The resume plan is consumed the moment the
+`ApprovalResume` event is recorded — before the tool executes. Even if the tool
+returns an error (`ToolError`), the plan is **not** retried and will no longer
+appear in `/approval status`. A new `/approval approve <seq>` is required to
+re-queue the same request.
+
+**Event sequence on resume:**
+
+```
+SlashCommand → ApprovalResume → ToolPolicy → ToolCall → (ToolResult | ToolError)
+```
+
+**After a successful resume:** Run `/context attach-last-tool` to attach the tool
+output to the next prompt. `pending_manual_tool_context` is **not** set
+automatically — you must run the attach command manually.
 
 ## Manual Tool Commands
 

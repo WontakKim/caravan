@@ -22,8 +22,8 @@ The workspace contains three crates under `crates/`:
 
 ```
 crates/kernel/src/
-├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest / ApprovalDecision / ApprovalDecisionRecord / ParsedApprovalRequest / ApprovalResumePlan (pure data; ApprovalDecision is the governance trace that resolves a referenced ApprovalRequest; ApprovalDecisionRecord formats and parses the decision detail string; ParsedApprovalRequest parses an ApprovalRequest event detail string into tool/path/risk/reason fields and converts to ToolRequest; ApprovalResumePlan ties a ParsedApprovalRequest to its request_seq and decision_seq so a future step can resume execution — no resume execution happens in this step; evaluated by ToolEventRunner after ToolPolicy — /approval approve <seq> / /approval reject <seq> append an ApprovalDecision without resuming tool execution)
-├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no valid matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; a decision is valid when it parses via ApprovalDecisionRecord, references an existing ApprovalRequest seq, and its own seq > request seq (greatest decision seq wins on ties); /approval status shows the pending list and the resume_plans() projection; ApprovalQueue::resume_plans() is a read-only projection of resolved approvals whose decision is Approved and whose tool is supported (read_file / list_files) — each surviving entry is an ApprovalResumePlan carrying request_seq, decision_seq, request_detail, and the parsed ParsedApprovalRequest; no tool execution or resume is performed in this step
+├── approval.rs          # Approval gate types: ApprovalRequirement / ApprovalGate / ApprovalRequest / ApprovalDecision / ApprovalDecisionRecord / ParsedApprovalRequest / ApprovalResumePlan / ApprovalResumeRecord (pure data; ApprovalDecision is the governance trace that resolves a referenced ApprovalRequest; ApprovalDecisionRecord formats and parses the decision detail string; ParsedApprovalRequest parses an ApprovalRequest event detail string into tool/path/risk/reason fields and converts to ToolRequest; ApprovalResumePlan ties a ParsedApprovalRequest to its request_seq and decision_seq for resume execution; ApprovalResumeRecord formats and parses the ApprovalResume event detail string — resume_detail carries request_seq, decision_seq, tool name, and path; evaluated by ToolEventRunner after ToolPolicy — /approval approve <seq> / /approval reject <seq> append an ApprovalDecision without resuming tool execution; /approval resume <seq> records ApprovalResume then executes the tool)
+├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no valid matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; a decision is valid when it parses via ApprovalDecisionRecord, references an existing ApprovalRequest seq, and its own seq > request seq (greatest decision seq wins on ties); /approval status shows the pending list and the resume_plans() projection; ApprovalQueue::resume_plans() is a read-only projection of resolved approvals whose decision is Approved and whose tool is supported (read_file / list_files) — each surviving entry is an ApprovalResumePlan carrying request_seq, decision_seq, request_detail, and the parsed ParsedApprovalRequest; consumed plans (those whose request_seq has been referenced by a recorded ApprovalResume event) are excluded from resume_plans() — the plan is consumed on first attempt even if the tool fails and will not reappear in /approval status; no tool execution is performed in this step
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput
@@ -109,7 +109,7 @@ unchanged through the facades. Core adapter types (`ModelAdapter`,
 crates/tui/src/
 ├── app.rs          # App struct, constructors, high-level submit() dispatcher, and help_lines
 ├── app/
-│   ├── approval.rs  # handle_approval_command: /approval status, /approval approve <seq>, /approval reject <seq>
+│   ├── approval.rs  # handle_approval_command: /approval status, /approval approve <seq>, /approval reject <seq>, /approval resume <seq> (resume branch records ApprovalResume, consumes the plan, then runs ToolPolicy → ToolCall → ToolResult|ToolError)
 │   ├── context.rs   # handle_context_command: /context attach-last-tool, clear, status
 │   ├── logging.rs   # screen-log formatting helpers
 │   ├── request.rs   # handle_request_command: /request status, run, clear
@@ -189,7 +189,7 @@ constraints are enforced:
   `AppStart`, `UserMessage`, `RunCreate`, `TurnStart`, `PromptCompile`,
   `ModelRoute`, `ModelOutputChunk`, `AssistantMessage`, `ModelUsage`,
   `RunComplete`, `RunFail`, `ModelError`, `ModelToolRequest`, `ToolPolicy`,
-  `ApprovalRequest`, `ApprovalDecision`, `ToolCall`, `ToolResult`, `ToolError`,
+  `ApprovalRequest`, `ApprovalDecision`, `ApprovalResume`, `ToolCall`, `ToolResult`, `ToolError`,
   `ToolContextAttach`, `ToolContextClear`, `SlashCommand`, `HelpRequest`,
   `LogClear`, `ExitRequest`, `UnknownSlashCommand`.
 - **No UI selection, scroll, or focus events.** Events such as "user moved the
