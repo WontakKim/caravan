@@ -59,7 +59,10 @@ impl super::App {
             kernel::ToolError::PolicyDenied { reason } => {
                 format!("Tool error: policy denied ({})", reason)
             }
-            // production-unreachable: new_readonly() always yields ApprovalRequirement::None; kept for exhaustive match
+            // List/Read path only: new_readonly() yields ApprovalRequirement::None for
+            // ReadOnly risk, so this arm is unreachable for List/Read operations.
+            // WorkspaceWrite (PlanWrite) yields Manual approval and is handled by the
+            // PlanWrite early-return branch in tools.rs before reaching this path.
             kernel::ToolError::ApprovalRequired { reason } => {
                 format!("Tool error: approval required ({})", reason)
             }

@@ -35,7 +35,12 @@ pub fn parse_input(input: &str) -> ParsedInput {
                     "read" if !path.is_empty() => Command::Tool(ToolCommand::Read {
                         path: path.to_string(),
                     }),
-                    // Any other subcommand, or "read" with empty path
+                    "plan-write" if !path.is_empty() && !path.contains(char::is_whitespace) => {
+                        Command::Tool(ToolCommand::PlanWrite {
+                            path: path.to_string(),
+                        })
+                    }
+                    // Any other subcommand, or "read"/"plan-write" with empty/multi-token path
                     _ => Command::Unknown(input.to_string()),
                 }
             }

@@ -1,12 +1,36 @@
 use kernel::commands::ToolCommand;
 use kernel::manual_context::ManualToolContext;
-use kernel::{ToolEventRunner, ToolExecutionContext, ToolOutput, ToolRequest};
+use kernel::{ToolError, ToolEventRunner, ToolExecutionContext, ToolOutput, ToolRequest};
 
 impl super::App {
     pub(super) fn handle_tool_command(&mut self, tc: ToolCommand) {
         let ctx = ToolExecutionContext {
             workspace_root: self.workspace_root.clone(),
         };
+
+        // Early-return: PlanWrite records the write intent and emits approval-required
+        // guidance. It must NOT set last_tool_output_candidate, pending_manual_tool_context,
+        // or pending_model_tool_request, and must NOT write any file.
+        if let ToolCommand::PlanWrite { path } = tc {
+            let request = ToolRequest::PlanWrite { path };
+            match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
+                Ok(_) => unreachable!("PlanWrite gate always returns ApprovalRequired"),
+                Err(ToolError::ApprovalRequired { .. }) => {
+                    self.log.push("Write plan requires approval.".to_string());
+                    self.log
+                        .push("Use /approval status to inspect pending approvals.".to_string());
+                    self.log.push(
+                        "Use /approval approve <seq> or /approval reject <seq> to resolve."
+                            .to_string(),
+                    );
+                }
+                Err(error) => {
+                    self.push_tool_error_output(error);
+                }
+            }
+            return;
+        }
+
         let (request, display_path) = match tc {
             ToolCommand::List { path } => {
                 let dp = path.clone();
@@ -16,6 +40,7 @@ impl super::App {
                 let dp = path.clone();
                 (ToolRequest::ReadFile { path }, dp)
             }
+            ToolCommand::PlanWrite { .. } => unreachable!("handled above"),
         };
         match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
             Ok(ToolOutput::FileList { entries, .. }) => {

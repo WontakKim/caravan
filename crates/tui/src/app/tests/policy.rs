@@ -47,6 +47,35 @@ fn model_tool_request_detection_only_produces_no_tool_policy_event() {
     );
 }
 
+// --- PlanWrite ToolPolicy detail assertion ---
+
+#[test]
+fn tool_plan_write_emits_tool_policy_with_workspace_write_detail() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let store = kernel::storage::EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool plan-write README.md".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    let policy_event = events
+        .iter()
+        .find(|e| e.kind == EventKind::ToolPolicy)
+        .expect("ToolPolicy event must be present for plan-write");
+
+    assert_eq!(
+        policy_event.detail,
+        r#"tool=write_file path="README.md" risk=workspace_write decision=allow reason=workspace_write_requires_approval"#
+    );
+}
+
 // --- PolicyDenied arm test (T-5) ---
 
 #[test]

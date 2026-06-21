@@ -172,6 +172,32 @@ fn tool_write_is_unknown() {
 }
 
 #[test]
+fn tool_plan_write_with_path() {
+    assert_eq!(
+        parse_input("/tool plan-write README.md"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::PlanWrite {
+            path: "README.md".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_plan_write_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool plan-write"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_plan_write_extra_token_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool plan-write README.md extra"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
 fn regression_quit_is_unknown() {
     assert!(matches!(
         parse_input("/quit"),

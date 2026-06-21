@@ -292,6 +292,81 @@ fn tool_read_failure_does_not_update_candidate() {
 }
 
 #[test]
+fn tool_plan_write_appends_slash_tool_policy_approval_request_events() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    // Pre-create README.md in the workspace so the content-unchanged assertion is meaningful.
+    let readme_path = workspace_dir.path().join("README.md");
+    let readme_content = b"original readme content";
+    std::fs::write(&readme_path, readme_content).unwrap();
+    let readme_bytes_before = std::fs::read(&readme_path).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let event_len_before = app.event_log.len();
+    app.input = "/tool plan-write README.md".to_string();
+    app.submit();
+
+    // Event kind sequence must be: SlashCommand, ToolPolicy, ApprovalRequest (exactly 3 new events).
+    assert_eq!(app.event_log.len(), event_len_before + 3);
+    let events = app.event_log.events();
+    let n = events.len();
+    assert_eq!(events[n - 3].kind, EventKind::SlashCommand);
+    assert_eq!(events[n - 2].kind, EventKind::ToolPolicy);
+    assert_eq!(events[n - 1].kind, EventKind::ApprovalRequest);
+
+    // No ToolCall, ToolResult, or ToolError events must appear.
+    assert!(!events.iter().any(|e| e.kind == EventKind::ToolCall));
+    assert!(!events.iter().any(|e| e.kind == EventKind::ToolResult));
+    assert!(!events.iter().any(|e| e.kind == EventKind::ToolError));
+
+    // README.md must not be modified.
+    let readme_bytes_after = std::fs::read(&readme_path).unwrap();
+    assert_eq!(
+        readme_bytes_before, readme_bytes_after,
+        "README.md must not be modified by plan-write"
+    );
+
+    // State fields must remain None.
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must not be set by PlanWrite"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must not be set by PlanWrite"
+    );
+    assert!(
+        app.pending_model_tool_request.is_none(),
+        "pending_model_tool_request must not be set by PlanWrite"
+    );
+
+    // Screen log must contain the canonical 3-line approval guidance.
+    assert!(
+        app.log.iter().any(|l| l == "Write plan requires approval."),
+        "log must contain 'Write plan requires approval.'"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "Use /approval status to inspect pending approvals."),
+        "log must contain approval status guidance"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "Use /approval approve <seq> or /approval reject <seq> to resolve."),
+        "log must contain approval approve/reject guidance"
+    );
+}
+
+#[test]
 fn tool_success_does_not_auto_clear_pending_model_tool_request() {
     use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
 
