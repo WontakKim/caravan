@@ -197,6 +197,102 @@ impl ApprovalResumePlan {
             _ => None,
         }
     }
+
+    /// Returns the detail string for an `ApprovalResume` event.
+    ///
+    /// Builds an [`ApprovalResumeRecord`] from this plan's sequence numbers
+    /// and parsed request fields, then returns `record.detail()`.
+    pub fn resume_detail(&self) -> String {
+        let record = ApprovalResumeRecord {
+            request_seq: self.request_seq,
+            decision_seq: self.decision_seq,
+            tool: self.request.tool.clone(),
+            path: self.request.path.clone(),
+            risk: self.request.risk.clone(),
+            reason: self.request.reason.clone(),
+        };
+        record.detail()
+    }
+}
+
+/// A recorded approval resume event detail.
+///
+/// The detail string format is key=value (NOT JSON):
+/// `request_seq=<u64> decision_seq=<u64> tool=<tool> path=<debug-quoted-path> risk=<risk> reason=<reason>`
+///
+/// The path is Debug-quoted (via `{:?}`) so paths containing spaces or `=` are
+/// preserved correctly. Use [`ApprovalResumeRecord::parse_detail`] to decode safely.
+pub struct ApprovalResumeRecord {
+    pub request_seq: EventSeq,
+    pub decision_seq: EventSeq,
+    pub tool: String,
+    pub path: String,
+    pub risk: String,
+    pub reason: String,
+}
+
+impl ApprovalResumeRecord {
+    /// Formats this record as an EventLog detail string.
+    ///
+    /// Output: `request_seq={seq} decision_seq={seq} tool={tool} path={path:?} risk={risk} reason={reason}`
+    ///
+    /// The path is encoded with Rust Debug (`{:?}`) to produce the quoted form so it
+    /// round-trips correctly through [`Self::parse_detail`].
+    pub fn detail(&self) -> String {
+        format!(
+            "request_seq={} decision_seq={} tool={} path={:?} risk={} reason={}",
+            self.request_seq, self.decision_seq, self.tool, self.path, self.risk, self.reason
+        )
+    }
+
+    /// Parses an EventLog detail string into an [`ApprovalResumeRecord`].
+    ///
+    /// The expected format is:
+    /// `request_seq=<u64> decision_seq=<u64> tool=<tool> path=<debug-quoted-or-bare-path> risk=<risk> reason=<reason>`
+    ///
+    /// Uses a label-aware fixed-order positional scan (not `splitn`/whitespace split)
+    /// so that Debug-quoted paths containing spaces or `=` are handled correctly.
+    /// Returns `None` for any malformed input; never panics.
+    pub fn parse_detail(detail: &str) -> Option<Self> {
+        // Strip "request_seq=" and read value up to " decision_seq=".
+        let rest = detail.strip_prefix("request_seq=")?;
+        let decision_seq_label_pos = rest.find(" decision_seq=")?;
+        let request_seq: u64 = rest[..decision_seq_label_pos].parse().ok()?;
+        let rest = &rest[decision_seq_label_pos + " decision_seq=".len()..];
+
+        // Read decision_seq value up to " tool=".
+        let tool_label_pos = rest.find(" tool=")?;
+        let decision_seq: u64 = rest[..tool_label_pos].parse().ok()?;
+        let rest = &rest[tool_label_pos + " tool=".len()..];
+
+        // Read tool value up to " path=".
+        let path_label_pos = rest.find(" path=")?;
+        let tool = rest[..path_label_pos].to_string();
+        let rest = &rest[path_label_pos + " path=".len()..];
+
+        // Parse path value: quoted (Debug-style) or unquoted.
+        let (path, rest) = if rest.starts_with('"') {
+            parse_debug_quoted_path(&rest[1..])?
+        } else {
+            let pos = rest.find(" risk=")?;
+            (rest[..pos].to_string(), &rest[pos..])
+        };
+
+        // Require " risk=" and read risk value up to " reason=".
+        let rest = rest.strip_prefix(" risk=")?;
+        let reason_pos = rest.find(" reason=")?;
+        let risk = rest[..reason_pos].to_string();
+        let reason = rest[reason_pos + " reason=".len()..].to_string();
+
+        Some(ApprovalResumeRecord {
+            request_seq: EventSeq(request_seq),
+            decision_seq: EventSeq(decision_seq),
+            tool,
+            path,
+            risk,
+            reason,
+        })
+    }
 }
 
 /// Consumes a Rust Debug-quoted string from `s` (the content after the opening `"`).
@@ -596,5 +692,92 @@ mod tests {
     fn approval_resume_plan_suggested_command_unsupported_returns_none() {
         let plan = make_approval_resume_plan("write_file", "output.txt");
         assert!(plan.suggested_command().is_none());
+    }
+
+    // --- ApprovalResumeRecord tests ---
+
+    fn make_approval_resume_record(path: &str) -> ApprovalResumeRecord {
+        ApprovalResumeRecord {
+            request_seq: EventSeq(12),
+            decision_seq: EventSeq(15),
+            tool: "read_file".to_string(),
+            path: path.to_string(),
+            risk: "read_only".to_string(),
+            reason: "test_manual_approval".to_string(),
+        }
+    }
+
+    #[test]
+    fn approval_resume_record_detail_exact_string() {
+        let record = make_approval_resume_record("README.md");
+        assert_eq!(
+            record.detail(),
+            r#"request_seq=12 decision_seq=15 tool=read_file path="README.md" risk=read_only reason=test_manual_approval"#
+        );
+    }
+
+    #[test]
+    fn approval_resume_record_detail_parse_detail_round_trip() {
+        let original = make_approval_resume_record("src/main.rs");
+        let detail = original.detail();
+        let parsed = ApprovalResumeRecord::parse_detail(&detail).expect("round-trip should parse");
+        assert_eq!(parsed.request_seq, original.request_seq);
+        assert_eq!(parsed.decision_seq, original.decision_seq);
+        assert_eq!(parsed.tool, original.tool);
+        assert_eq!(parsed.path, original.path);
+        assert_eq!(parsed.risk, original.risk);
+        assert_eq!(parsed.reason, original.reason);
+    }
+
+    #[test]
+    fn approval_resume_record_path_with_spaces_round_trip() {
+        let original = make_approval_resume_record("dir/a b.txt");
+        let detail = original.detail();
+        let parsed =
+            ApprovalResumeRecord::parse_detail(&detail).expect("path-with-spaces should parse");
+        assert_eq!(parsed.path, "dir/a b.txt");
+    }
+
+    #[test]
+    fn approval_resume_record_parse_detail_malformed_returns_none() {
+        assert!(ApprovalResumeRecord::parse_detail("").is_none());
+        assert!(ApprovalResumeRecord::parse_detail("not valid at all").is_none());
+        assert!(
+            ApprovalResumeRecord::parse_detail(
+                "request_seq=abc decision_seq=1 tool=read_file path=\"f\" risk=low reason=x"
+            )
+            .is_none()
+        );
+        assert!(
+            ApprovalResumeRecord::parse_detail(
+                "request_seq=1 decision_seq=abc tool=read_file path=\"f\" risk=low reason=x"
+            )
+            .is_none()
+        );
+        assert!(ApprovalResumeRecord::parse_detail("request_seq=1 decision_seq=2").is_none());
+    }
+
+    #[test]
+    fn approval_resume_record_resume_detail_round_trip_all_fields_match() {
+        let plan = ApprovalResumePlan {
+            request_seq: EventSeq(12),
+            decision_seq: EventSeq(15),
+            request_detail: String::new(),
+            request: ParsedApprovalRequest {
+                tool: "read_file".to_string(),
+                path: "README.md".to_string(),
+                risk: "read_only".to_string(),
+                reason: "test_manual_approval".to_string(),
+            },
+        };
+        let detail = plan.resume_detail();
+        let parsed =
+            ApprovalResumeRecord::parse_detail(&detail).expect("resume_detail should parse");
+        assert_eq!(parsed.request_seq, EventSeq(12));
+        assert_eq!(parsed.decision_seq, EventSeq(15));
+        assert_eq!(parsed.tool, "read_file");
+        assert_eq!(parsed.path, "README.md");
+        assert_eq!(parsed.risk, "read_only");
+        assert_eq!(parsed.reason, "test_manual_approval");
     }
 }
