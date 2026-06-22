@@ -518,3 +518,51 @@ fn approval_run_is_unknown_no_regression() {
         ParsedInput::SlashCommand(Command::Unknown(_))
     ));
 }
+
+// --- help catalog parity tests ---
+
+#[test]
+fn help_catalog_has_16_entries_in_exact_order() {
+    let entries = command_help_entries();
+    let commands: Vec<&str> = entries.iter().map(|e| e.command).collect();
+    assert_eq!(
+        commands,
+        vec![
+            "/help",
+            "/clear",
+            "/exit",
+            "/tool list [path]",
+            "/tool read <path>",
+            "/tool plan-write <path>",
+            "/context attach-last-tool",
+            "/context clear",
+            "/context status",
+            "/request status",
+            "/request clear",
+            "/request run",
+            "/approval status",
+            "/approval approve <seq>",
+            "/approval reject <seq>",
+            "/approval resume <seq>",
+        ]
+    );
+}
+
+#[test]
+fn help_catalog_excludes_removed_commands() {
+    let commands: Vec<&str> = command_help_entries().iter().map(|e| e.command).collect();
+    for forbidden in &[
+        "/ask",
+        "/quit",
+        "/tool write",
+        "/approval run",
+        "/model",
+        "/agent",
+    ] {
+        assert!(
+            !commands.contains(forbidden),
+            "help catalog must not contain {:?}",
+            forbidden
+        );
+    }
+}
