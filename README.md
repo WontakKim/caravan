@@ -64,6 +64,8 @@ cargo test --workspace
 | `/approval reject <seq>`      | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=rejected reason=operator_rejected`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
 | `/approval resume <seq>`      | Resume an approved `ApprovalResumePlan` identified by `<seq>` as a read-only tool execution; records `ApprovalResume` then `ToolPolicy → ToolCall → (ToolResult \| ToolError)`; does nothing for pending, rejected, or unknown seqs; the resume plan is **consumed on attempt** — even on tool error it is not retried and will no longer appear in `/approval status`; on success run `/context attach-last-tool` to attach the output to the next prompt (`pending_manual_tool_context` is not set automatically) |
 
+> These commands match the in-app `/help` output.
+
 ### Header Context Indicator
 
 The TUI header includes a context indicator segment: it shows `| Context: pending`
