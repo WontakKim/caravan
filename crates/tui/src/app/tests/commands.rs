@@ -116,9 +116,9 @@ fn help_lines_exact_content() {
     let expected = vec![
         "Available commands:".to_string(),
         "  Type a message (no leading /) to send it as a user message".to_string(),
-        "  /help  - show this help".to_string(),
+        "  /help - show this help".to_string(),
         "  /clear - clear the log".to_string(),
-        "  /exit  - exit Caravan".to_string(),
+        "  /exit - exit Caravan".to_string(),
         "  /tool list [path] - list files under the workspace".to_string(),
         "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
         "  /tool plan-write <path> - approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file".to_string(),
@@ -132,8 +132,36 @@ fn help_lines_exact_content() {
         "  /approval status - show pending approval requests".to_string(),
         "  /approval approve <seq> - approve a pending approval request".to_string(),
         "  /approval reject <seq> - reject a pending approval request".to_string(),
+        "  /approval resume <seq> - resume an approved read-only tool plan (consumed on attempt)"
+            .to_string(),
     ];
     assert_eq!(App::help_lines(), expected);
+}
+
+#[test]
+fn help_lines_includes_resume_and_plan_write() {
+    let lines = App::help_lines();
+    assert!(
+        lines.iter().any(|l| l.contains("/approval resume <seq>")),
+        "help_lines should include /approval resume <seq>"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("/tool plan-write <path>")),
+        "help_lines should include /tool plan-write <path>"
+    );
+}
+
+#[test]
+fn help_lines_excludes_unsupported_commands() {
+    let lines = App::help_lines();
+    assert!(
+        !lines.iter().any(|l| l.contains("/ask")),
+        "help_lines should not reference /ask"
+    );
+    assert!(
+        !lines.iter().any(|l| l.contains("/quit")),
+        "help_lines should not reference /quit"
+    );
 }
 
 #[test]

@@ -161,25 +161,16 @@ impl App {
     }
 
     pub fn help_lines() -> Vec<String> {
-        vec![
-            "Available commands:".to_string(),
-            "  Type a message (no leading /) to send it as a user message".to_string(),
-            "  /help  - show this help".to_string(),
-            "  /clear - clear the log".to_string(),
-            "  /exit  - exit Caravan".to_string(),
-            "  /tool list [path] - list files under the workspace".to_string(),
-            "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
-            "  /tool plan-write <path> - approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file".to_string(),
-            "  /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
-            "  /context clear - clear pending manual tool context".to_string(),
-            "  /context status - show pending manual tool context and last tool output".to_string(),
-            "  /request status - show the pending model tool request".to_string(),
-            "  /request clear - clear the pending model tool request".to_string(),
-            "  /request run - execute the pending model tool request (read-only)".to_string(),
-            "  /approval status - show pending approval requests".to_string(),
-            "  /approval approve <seq> - approve a pending approval request".to_string(),
-            "  /approval reject <seq> - reject a pending approval request".to_string(),
-        ]
+        use kernel::commands::command_help_entries;
+        let mut lines = Vec::new();
+        lines.push("Available commands:".to_string());
+        lines.push("  Type a message (no leading /) to send it as a user message".to_string());
+        lines.extend(
+            command_help_entries()
+                .iter()
+                .map(|entry| format!("  {} - {}", entry.command, entry.description)),
+        );
+        lines
     }
 }
 
