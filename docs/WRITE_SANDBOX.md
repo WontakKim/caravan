@@ -25,8 +25,9 @@ The command writes **no file** and records **no** `ToolCall`, `ToolResult`, or
 short-circuits by returning `Err(ToolError::ApprovalRequired)` — the handler exists;
 only the write I/O is absent.
 
-**`/approval approve|reject`:** These commands record an `ApprovalDecision` event
-only. No execution or file I/O occurs.
+**`/approval approve|reject`:** After the generic `SlashCommand` event, these
+commands append exactly one approval-specific event — an `ApprovalDecision`. No
+execution or file I/O occurs.
 
 **`/approval resume`:** Can execute only an approved **read-only** resume plan.
 A `write_file` approval is **not** converted into an `ApprovalResumePlan`:
@@ -34,6 +35,14 @@ A `write_file` approval is **not** converted into an `ApprovalResumePlan`:
 `read_file` and `list_files`. A `write_file` approval is therefore
 **non-resumable** — `/approval resume` never routes it to execution; this is a
 structural property, not a no-op resume.
+
+**Model tool-request parser:** The `CARAVAN_TOOL_REQUEST` / `ModelToolRequest`
+parser accepts only `list_files` and `read_file`. Unsupported tool names —
+including `write_file`, `shell_exec`, `apply_patch`, `delete_file`, and any network
+tool — are rejected and never routed to execution. This parser rejection is the
+hard backstop that "not model-visible" alone does not provide: even an adversarial
+or accidental `CARAVAN_TOOL_REQUEST` block naming `write_file` is dropped. The
+parser performs no filesystem I/O and no path canonicalization.
 
 **Missing tools:** `shell_exec`, `apply_patch`, `delete_file`, and any network tool
 do not exist.
@@ -236,6 +245,10 @@ No new `EventKind` variant is required for the write POC. Specifically:
 - `write_file` is **not** model-visible today.
 - `write_file` must **not** be added to the Available Tools prompt section until
   safe execution is implemented and reviewed.
+- The `ModelToolRequest` parser rejects `write_file` (and every other unsupported
+  tool name); only `list_files` and `read_file` are accepted. "Not model-visible"
+  covers the prompt/schema surface; parser rejection is the separate hard backstop
+  against an unsupported `CARAVAN_TOOL_REQUEST` block reaching execution.
 - OpenAI function calling is not enabled.
 - MCP (Model Context Protocol) is not enabled.
 - Automatic tool execution from model output is not enabled.
@@ -276,3 +289,5 @@ Recommended implementation order:
 - Prefer atomic write (temp file + rename) over direct target write.
 - Keep `write_file` out of the model-visible tool schema until the implementation
   is safe and reviewed.
+- Keep `write_file` rejected by the model tool-request parser until a safe
+  implementation is reviewed.
