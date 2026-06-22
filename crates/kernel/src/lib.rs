@@ -17,6 +17,7 @@ pub mod runner;
 pub mod storage;
 pub mod tool;
 pub mod transcript;
+pub mod write_intent;
 
 pub use approval::{
     ApprovalDecision, ApprovalDecisionRecord, ApprovalGate, ApprovalRequest, ApprovalRequirement,
@@ -52,3 +53,7 @@ pub use tool::registry::{
 };
 pub use tool::schema::{ToolCatalog, ToolInputSpec, ToolSpec};
 pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};
+pub use write_intent::{
+    WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentError, WriteIntentMode, WriteIntentSource,
+    WriteIntentSummary,
+};

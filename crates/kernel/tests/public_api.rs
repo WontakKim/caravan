@@ -5,7 +5,8 @@ use kernel::{
     ModelProvider, ModelRequest, ModelResponse, ModelResult, ModelRoute, ModelRuntimeConfig,
     ModelUsage, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError, OpenAIHttpResult,
     ParsedInput, RunId, StubOpenAIHttpClient, TranscriptMessage, TranscriptRole, TurnId,
-    run_mock_turn,
+    WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentError, WriteIntentMode, WriteIntentSource,
+    WriteIntentSummary, run_mock_turn,
 };
 
 #[test]
@@ -105,6 +106,12 @@ fn importability_checks() {
     let _: Option<ConversationTranscript> = None;
     let _: Option<TranscriptMessage> = None;
     let _: Option<TranscriptRole> = None;
+    let _: Option<WriteIntent> = None;
+    let _: Option<WriteIntentMode> = None;
+    let _: Option<WriteIntentSource> = None;
+    let _: Option<WriteIntentSummary> = None;
+    let _: Option<WriteIntentError> = None;
+    let _ = WRITE_INTENT_PREVIEW_BYTES;
 
     fn _assert_adapter<T: ModelAdapter>() {}
     fn _assert_http_client<T: OpenAIHttpClient>() {}
