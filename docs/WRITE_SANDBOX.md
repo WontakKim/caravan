@@ -23,7 +23,8 @@ events in the EventLog:
 The command writes **no file** and records **no** `ToolCall`, `ToolResult`, or
 `ToolError`. The `PlanWrite` dispatch arm exists in `ToolRegistry::execute()` and
 short-circuits by returning `Err(ToolError::ApprovalRequired)` — the handler exists;
-only the write I/O is absent.
+only the write I/O is absent. In short, `/tool plan-write` writes no file and
+executes no tool — it does not write a file.
 
 **`/approval approve|reject`:** After the generic `SlashCommand` event, these
 commands append exactly one approval-specific event — an `ApprovalDecision`. No
