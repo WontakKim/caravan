@@ -48,6 +48,7 @@ crates/kernel/src/
 ├── runner.rs            # Turn execution orchestrator (run_mock_turn, MockRunOutput)
 ├── storage.rs           # EventStore: JSONL persistence for EventLog
 ├── transcript.rs        # ConversationTranscript / TranscriptMessage / TranscriptRole
+├── write_intent.rs      # Pure data model for a proposed file write: WriteIntent / WriteIntentMode / WriteIntentSource / WriteIntentSummary / WriteIntentError — performs NO file I/O, NO path canonicalization, NO sandbox check; no write execution exists yet
 │
 ├── model/               # Model family (canonical home; top-level model_* are facades into here)
 │   ├── mod.rs           # ModelAdapter trait + ModelRequest/Output/Error/Usage (core); submodule decls + root re-exports

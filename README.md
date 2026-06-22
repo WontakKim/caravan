@@ -14,7 +14,7 @@ and three crates under `crates/`:
 | `cli` | `crates/cli` | Binary entrypoint; produces the `caravan` binary (depends on `kernel` and `tui`) |
 
 See [docs/STRUCTURE.md](docs/STRUCTURE.md) for the internal module layout and refactor criteria.
-See [docs/WRITE_SANDBOX.md](docs/WRITE_SANDBOX.md) for the workspace mutation / write-sandbox safety design.
+See [docs/WRITE_SANDBOX.md](docs/WRITE_SANDBOX.md) for the workspace mutation / write-sandbox safety design. The `WriteIntent` data model (`crates/kernel/src/write_intent.rs`) has been added as the first step toward future write tooling, but no actual file write is performed yet.
 
 ## Public API
 

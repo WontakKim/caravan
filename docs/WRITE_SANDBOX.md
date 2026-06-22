@@ -258,8 +258,15 @@ No new `EventKind` variant is required for the write POC. Specifically:
 
 Recommended implementation order:
 
-1. **WriteIntent data model** — define the in-memory struct for a write request
-   (path, content, risk level, reason) with no I/O.
+1. **WriteIntent data model** ✓ **(implemented)** — `crates/kernel/src/write_intent.rs`
+   defines `WriteIntent`, `WriteIntentMode`, `WriteIntentSource`, `WriteIntentSummary`,
+   and `WriteIntentError` as a pure in-memory data model for a proposed file write. It
+   performs **NO file I/O**, **NO path canonicalization**, and **NO sandbox check**. The
+   actual write execution layer must revalidate workspace confinement before any I/O
+   occurs — `WriteIntent` carries only the caller-supplied path, never a canonicalized
+   one. `WriteIntentSummary` is a bounded metadata snapshot of a `WriteIntent`; it
+   exists so the EventLog never stores full file content — only the summary detail string
+   is safe for logging.
 2. **`write_file` dry-run / diff preview only** — compute and display the diff
    without writing anything.
 3. **Approval request with diff summary** — record an `ApprovalRequest` that
