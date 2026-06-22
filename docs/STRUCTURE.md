@@ -28,6 +28,7 @@ crates/kernel/src/
 ├── commands/            # commands submodule
 │   ├── types.rs         # Command enum + ParsedInput
 │   ├── parse.rs         # Command parsing logic
+│   ├── help.rs          # Command help catalog: canonical help text for each command, used for /help rendering and parity tests
 │   └── tests.rs         # Unit tests
 ├── events.rs            # Facade: re-exports from events/ submodule
 ├── events/              # events submodule
@@ -87,6 +88,9 @@ crates/kernel/src/
 The `commands/` sub-directory follows the same facade pattern as `events/`:
 `commands.rs` re-exports from `commands/types.rs` (Command enum + ParsedInput),
 `commands/parse.rs` (parsing logic), and `commands/tests.rs` (unit tests).
+`commands/help.rs` is the help catalog — the single source of truth for `/help`
+text and parity tests. It is not a parser generator; command parsing remains in
+`commands/parse.rs`.
 
 The `tool/` and `model/openai/` sub-directories were introduced in this POC to
 give each family a private namespace and prevent flat-file sprawl at the
@@ -309,6 +313,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `model/gateway` production split once gateway routing grows | `model/gateway.rs` currently holds `ModelGateway`, `ModelResponse`, and `ModelRoute` in a single file. A production split makes sense once gateway routing logic grows (e.g. per-provider dispatch, fallback logic, or load-balancing); defer until the routing grows enough to justify a subdir. |
 | `model/openai/http` production split once async/streaming/client variants are added | `http.rs` currently contains `StubOpenAIHttpClient` and `BlockingOpenAIHttpClient` as a synchronous stub and blocking client in one file. When async or streaming variants are introduced, split into dedicated modules (e.g. `async.rs`, `streaming.rs`, `client.rs`). Defer until those variants exist. |
 | `write_file` execution and sandbox | Safety design documented in [docs/WRITE_SANDBOX.md](WRITE_SANDBOX.md); `write_file` execution and the filesystem sandbox are not yet implemented. Defer until the mutation path is ready for end-to-end wiring. |
+| Catalog-driven command completion and docs generation | `commands/help.rs` is the single source of truth for command help text, but command completion (tab-complete in the prompt bar) and automated docs generation from the catalog are not yet implemented. Defer until the command set stabilises and the TUI input handler is ready to consume catalog entries for completion. |
 
 ---
 
