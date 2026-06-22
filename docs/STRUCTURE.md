@@ -308,6 +308,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `model/runtime_config` production split into error/env/parser | `model/runtime_config.rs` mixes error types, environment-variable loading, and config parsing. A future split into `error.rs`, `env.rs`, and `parser.rs` sub-modules would give each responsibility a clean home. Defer until the module grows large enough that the boundaries are unambiguous. |
 | `model/gateway` production split once gateway routing grows | `model/gateway.rs` currently holds `ModelGateway`, `ModelResponse`, and `ModelRoute` in a single file. A production split makes sense once gateway routing logic grows (e.g. per-provider dispatch, fallback logic, or load-balancing); defer until the routing grows enough to justify a subdir. |
 | `model/openai/http` production split once async/streaming/client variants are added | `http.rs` currently contains `StubOpenAIHttpClient` and `BlockingOpenAIHttpClient` as a synchronous stub and blocking client in one file. When async or streaming variants are introduced, split into dedicated modules (e.g. `async.rs`, `streaming.rs`, `client.rs`). Defer until those variants exist. |
+| `write_file` execution and sandbox | Safety design documented in [docs/WRITE_SANDBOX.md](WRITE_SANDBOX.md); `write_file` execution and the filesystem sandbox are not yet implemented. Defer until the mutation path is ready for end-to-end wiring. |
 
 ---
 
