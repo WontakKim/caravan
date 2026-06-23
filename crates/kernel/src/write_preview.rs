@@ -24,6 +24,27 @@ use crate::write_intent::{WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentSu
 /// Maximum number of lines emitted in a [`WriteDiffSummary::preview`].
 pub const WRITE_DIFF_PREVIEW_LINES: usize = 40;
 
+/// Maximum number of bytes retained per emitted preview line. A single very long
+/// line is truncated (UTF-8-safe) so the bounded preview cannot leak an arbitrarily
+/// large amount of content even within the [`WRITE_DIFF_PREVIEW_LINES`] line cap.
+const MAX_PREVIEW_LINE_BYTES: usize = 256;
+
+/// Renders one diff line for display: strips the trailing line terminator(s) so
+/// the preview entry is a single physical line, then bounds it to
+/// [`MAX_PREVIEW_LINE_BYTES`] on a UTF-8 character boundary.
+fn render_preview_line(prefix: char, raw_line: &str) -> String {
+    let trimmed = raw_line.strip_suffix('\n').unwrap_or(raw_line);
+    let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+    if trimmed.len() <= MAX_PREVIEW_LINE_BYTES {
+        return format!("{prefix} {trimmed}");
+    }
+    let mut cut = MAX_PREVIEW_LINE_BYTES;
+    while cut > 0 && !trimmed.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{prefix} {}…", &trimmed[..cut])
+}
+
 /// Classifies how a [`WriteIntent`] would affect the target path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WritePreviewKind {
@@ -353,6 +374,18 @@ pub fn preview_write_intent(
 /// `old_content` is `None` for new files and `Some(existing)` for replacements.
 /// `additions` and `removals` are the TOTAL counts over the full comparison;
 /// only `preview` is truncated at [`WRITE_DIFF_PREVIEW_LINES`].
+///
+/// Lines are tokenized with `split_inclusive('\n')` so that line terminators are
+/// preserved: a byte-level change that `str::lines()` would hide — such as a
+/// trailing-newline-only edit (`"a"` vs `"a\n"`) or a line-ending change
+/// (`"a\r\n"` vs `"a\n"`) — still produces a visible diff entry. Because
+/// `split_inclusive` is lossless, any byte difference yields at least one differing
+/// token, so a `ReplaceExisting` preview is never empty.
+///
+/// This is a deliberately simple positional (index-by-index) comparison, NOT a
+/// minimal-edit diff: a line inserted near the top shifts subsequent lines and is
+/// reported as several changed lines. Per the design, a bounded, deterministic,
+/// dependency-free preview is preferred over an exact semantic diff.
 fn build_diff(
     kind: WritePreviewKind,
     old_content: Option<&str>,
@@ -377,8 +410,12 @@ fn build_diff(
         };
     }
 
-    let old_vec: Vec<&str> = old_content.map(|s| s.lines().collect()).unwrap_or_default();
-    let new_vec: Vec<&str> = new_content.lines().collect();
+    // Terminator-preserving tokenization so trailing-newline / line-ending-only
+    // differences are detected (see the function doc comment).
+    let old_vec: Vec<&str> = old_content
+        .map(|s| s.split_inclusive('\n').collect())
+        .unwrap_or_default();
+    let new_vec: Vec<&str> = new_content.split_inclusive('\n').collect();
 
     let max_idx = old_vec.len().max(new_vec.len());
     let mut additions = 0usize;
@@ -399,12 +436,12 @@ fn build_diff(
                 removals += 1;
                 additions += 1;
                 if preview.len() < WRITE_DIFF_PREVIEW_LINES {
-                    preview.push(format!("- {o}"));
+                    preview.push(render_preview_line('-', o));
                 } else {
                     truncated = true;
                 }
                 if preview.len() < WRITE_DIFF_PREVIEW_LINES {
-                    preview.push(format!("+ {n}"));
+                    preview.push(render_preview_line('+', n));
                 } else {
                     truncated = true;
                 }
@@ -413,7 +450,7 @@ fn build_diff(
                 // New content has more lines: pure addition.
                 additions += 1;
                 if preview.len() < WRITE_DIFF_PREVIEW_LINES {
-                    preview.push(format!("+ {n}"));
+                    preview.push(render_preview_line('+', n));
                 } else {
                     truncated = true;
                 }
@@ -422,7 +459,7 @@ fn build_diff(
                 // Old content has more lines: pure removal.
                 removals += 1;
                 if preview.len() < WRITE_DIFF_PREVIEW_LINES {
-                    preview.push(format!("- {o}"));
+                    preview.push(render_preview_line('-', o));
                 } else {
                     truncated = true;
                 }
@@ -648,12 +685,67 @@ mod tests {
         let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
 
         assert_eq!(preview.kind, WritePreviewKind::ReplaceExisting);
-        assert_eq!(preview.diff.old_lines, preview.diff.old_lines);
-        // Both have 1 line via .lines()
+        // Both have 1 logical line via .lines()
         assert_eq!(preview.diff.old_lines, Some(1));
         assert_eq!(preview.diff.new_lines, 1);
         // But byte counts differ
         assert_ne!(preview.diff.old_bytes.unwrap(), preview.diff.new_bytes);
+        // A ReplaceExisting must surface the change: the terminator-preserving
+        // tokenizer reports a non-empty preview and non-zero change counts even
+        // though the logical line counts are equal.
+        assert!(
+            preview.diff.additions + preview.diff.removals > 0,
+            "trailing-newline-only change must be counted"
+        );
+        assert!(
+            !preview.diff.preview.is_empty(),
+            "ReplaceExisting preview must not be empty"
+        );
+    }
+
+    // (i2) Line-ending-only difference (\r\n vs \n) -> ReplaceExisting with a
+    //      non-empty preview and non-zero change counts (regression guard: a
+    //      str::lines() based comparison would wrongly report no change).
+    #[test]
+    fn line_ending_only_difference_is_replace_existing() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("crlf.txt"), "alpha\r\nbeta\r\n").expect("write file");
+        let ctx = make_context(dir.path());
+        let intent = make_intent("crlf.txt", "alpha\nbeta\n");
+
+        let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+
+        assert_eq!(preview.kind, WritePreviewKind::ReplaceExisting);
+        assert!(
+            preview.diff.additions + preview.diff.removals > 0,
+            "line-ending-only change must be counted"
+        );
+        assert!(
+            !preview.diff.preview.is_empty(),
+            "ReplaceExisting preview must not be empty"
+        );
+    }
+
+    // (i3) A single very long preview line is byte-bounded (UTF-8-safe) so the
+    //      bounded preview cannot leak arbitrarily large content even within the
+    //      line-count cap.
+    #[test]
+    fn long_preview_line_is_byte_bounded() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let huge_line = "x".repeat(10_000);
+        let intent = make_intent("huge_line.txt", &huge_line);
+
+        let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+
+        assert_eq!(preview.kind, WritePreviewKind::NewFile);
+        for line in &preview.diff.preview {
+            assert!(
+                line.len() <= MAX_PREVIEW_LINE_BYTES + 8,
+                "preview line must be byte-bounded, got {} bytes",
+                line.len()
+            );
+        }
     }
 
     // (j) Directory target -> NotAFile.
