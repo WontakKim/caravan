@@ -18,6 +18,7 @@ pub mod storage;
 pub mod tool;
 pub mod transcript;
 pub mod write_intent;
+pub mod write_preview;
 
 pub use approval::{
     ApprovalDecision, ApprovalDecisionRecord, ApprovalGate, ApprovalRequest, ApprovalRequirement,
@@ -56,4 +57,8 @@ pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};
 pub use write_intent::{
     WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentError, WriteIntentMode, WriteIntentSource,
     WriteIntentSummary,
+};
+pub use write_preview::{
+    WRITE_DIFF_PREVIEW_LINES, WriteDiffSummary, WritePreview, WritePreviewError, WritePreviewKind,
+    preview_write_intent,
 };
