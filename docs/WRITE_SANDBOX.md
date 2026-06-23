@@ -234,7 +234,10 @@ an `EventKind` variant.
 
 No new `EventKind` variant is required for the write POC. Specifically:
 
-- Do not add `WritePreview` until a real implementation needs it.
+- The `WritePreview` **struct** in `crates/kernel/src/write_preview.rs` is the
+  implemented dry-run/diff-preview foundation (see the Future POC Roadmap). A
+  `WritePreview` **EventKind variant** is not needed and must not be added until
+  a real implementation requires a dedicated event for the preview stage.
 - Do not add separate `ApprovalApprove` / `ApprovalReject` variants; `ApprovalDecision`
   already captures both outcomes.
 
@@ -267,8 +270,29 @@ Recommended implementation order:
    one. `WriteIntentSummary` is a bounded metadata snapshot of a `WriteIntent`; it
    exists so the EventLog never stores full file content — only the summary detail string
    is safe for logging.
-2. **`write_file` dry-run / diff preview only** — compute and display the diff
-   without writing anything.
+2. **`write_file` dry-run / diff preview only** ✓ **(foundation implemented)** —
+   `crates/kernel/src/write_preview.rs` defines `WritePreview`, `WriteDiffSummary`,
+   `WritePreviewKind`, and `preview_write_intent()` as a **read-only** preview layer.
+   `WritePreview` performs **NO write**, creates **NO temp file**, and appends
+   **NOTHING to the EventLog**. It validates a `WriteIntent` against the current
+   workspace and produces a **bounded** deterministic line-diff preview — not a full
+   diff engine (it uses a simple positional index-by-index comparison, not a
+   minimal-edit algorithm).
+
+   **Path safety note:** The preview stage validates workspace confinement for its
+   own read operations. A future actual-write execution layer **MUST re-run path
+   safety** independently — the preview-stage check does **not** substitute for the
+   write-stage check.
+
+   **Content-exposure and logging policy:**
+   - `WriteDiffSummary.preview` is a bounded rendering of diff lines and **MAY**
+     legitimately contain file content and therefore **secrets**. It is **NEVER**
+     auto-logged to the EventLog.
+   - `WritePreview::detail()` is a content-free key=value summary safe for logging
+     and future `ApprovalRequest` summaries. It **MUST NOT** contain any preview
+     lines or proposed/existing file content. Use `detail()` for any log or event
+     payload; use `preview` only for display to the user. This distinction is
+     critical: future code must never treat `WriteDiffSummary.preview` as log-safe.
 3. **Approval request with diff summary** — record an `ApprovalRequest` that
    includes a bounded diff summary in its detail.
 4. **Approval resume executes text write with atomic write** — implement
