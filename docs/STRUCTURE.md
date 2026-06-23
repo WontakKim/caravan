@@ -49,6 +49,7 @@ crates/kernel/src/
 ├── storage.rs           # EventStore: JSONL persistence for EventLog
 ├── transcript.rs        # ConversationTranscript / TranscriptMessage / TranscriptRole
 ├── write_intent.rs      # Pure data model for a proposed file write: WriteIntent / WriteIntentMode / WriteIntentSource / WriteIntentSummary / WriteIntentError — performs NO file I/O, NO path canonicalization, NO sandbox check; no write execution exists yet
+├── write_preview.rs     # Read-only dry-run / bounded diff preview layer for future mutation tooling: computes a bounded diff (line count, changed-line preview) between the current target file state and a proposed WriteIntent without performing any write; reads target file state read-only and never writes; no actual write execution exists yet
 │
 ├── model/               # Model family (canonical home; top-level model_* are facades into here)
 │   ├── mod.rs           # ModelAdapter trait + ModelRequest/Output/Error/Usage (core); submodule decls + root re-exports
@@ -314,6 +315,7 @@ POC pass. Each entry includes the reason it was left for a later iteration.
 | `model/gateway` production split once gateway routing grows | `model/gateway.rs` currently holds `ModelGateway`, `ModelResponse`, and `ModelRoute` in a single file. A production split makes sense once gateway routing logic grows (e.g. per-provider dispatch, fallback logic, or load-balancing); defer until the routing grows enough to justify a subdir. |
 | `model/openai/http` production split once async/streaming/client variants are added | `http.rs` currently contains `StubOpenAIHttpClient` and `BlockingOpenAIHttpClient` as a synchronous stub and blocking client in one file. When async or streaming variants are introduced, split into dedicated modules (e.g. `async.rs`, `streaming.rs`, `client.rs`). Defer until those variants exist. |
 | `write_file` execution and sandbox | Safety design documented in [docs/WRITE_SANDBOX.md](WRITE_SANDBOX.md); `write_file` execution and the filesystem sandbox are not yet implemented. Defer until the mutation path is ready for end-to-end wiring. |
+| `write_preview.rs` path-safety helper commonization | `write_preview.rs` duplicates a small workspace path-safety check inline because `resolve_in_workspace` is `pub(super)` to `tool/registry/` and cannot be called to validate not-yet-existing target paths. Commonize this check into a shared helper once the actual-write execution path is built. |
 | Catalog-driven command completion and docs generation | `commands/help.rs` is the single source of truth for command help text, but command completion (tab-complete in the prompt bar) and automated docs generation from the catalog are not yet implemented. Defer until the command set stabilises and the TUI input handler is ready to consume catalog entries for completion. |
 
 ---
