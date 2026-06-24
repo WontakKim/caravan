@@ -380,7 +380,7 @@ Recommended implementation order:
      critical: future code must never treat `WriteDiffSummary.preview` as log-safe.
 3. **Approval request with diff summary** ✓ **(implemented)** — `/tool propose-write`
    records a preview-backed `ApprovalRequest` that carries the content-free
-   `WritePreview::detail()` summary in its detail. It performs **no actual write**
+   `WritePreview::approval_summary()` summary in its detail. It performs **no actual write**
    and stores no full content or diff lines in any event payload (summary-only /
    content-free). The resulting `write_file` approval is non-resumable; see the
    `/tool propose-write` entry in the **Current State** section above.
