@@ -26,6 +26,29 @@ short-circuits by returning `Err(ToolError::ApprovalRequired)` — the handler e
 only the write I/O is absent. In short, `/tool plan-write` writes no file and
 executes no tool — it does not write a file.
 
+**`/tool preview-write <path>`:** Submitting this command runs a dry-run diff
+preview using the latest read-only tool output candidate as proposed content and
+the `preview_write_intent()` function read-only. It emits the standard read-only
+tool event sequence on success:
+
+```
+SlashCommand, ToolPolicy, ToolCall, ToolResult
+```
+
+On preview error (e.g. no tool output candidate available, path out of workspace,
+or unreadable target file):
+
+```
+SlashCommand, ToolPolicy, ToolCall, ToolError
+```
+
+The `ToolResult` stores **only** the content-free `WritePreview::detail()` summary
+(a key=value string carrying metadata such as path, mode, line counts, and
+change counts). It **never** stores any diff lines or file content — those are
+shown to the operator in the screen log but are not written to the EventLog. The
+command performs **no file write**, creates **no** `ApprovalRequest`, and adds
+**no new `EventKind`** variant.
+
 **`/approval approve|reject`:** After the generic `SlashCommand` event, these
 commands append exactly one approval-specific event — an `ApprovalDecision`. No
 execution or file I/O occurs.

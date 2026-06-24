@@ -26,7 +26,7 @@ crates/kernel/src/
 ├── approval_queue.rs    # ApprovalQueue projection over the EventLog: pending (ApprovalRequest events with no valid matching ApprovalDecision) and resolved (ApprovalRequest events resolved by a valid ApprovalDecision event) partitions; a decision is valid when it parses via ApprovalDecisionRecord, references an existing ApprovalRequest seq, and its own seq > request seq (greatest decision seq wins on ties); /approval status shows the pending list and the resume_plans() projection; ApprovalQueue::resume_plans() is a read-only projection of resolved approvals whose decision is Approved and whose tool is supported (read_file / list_files) — each surviving entry is an ApprovalResumePlan carrying request_seq, decision_seq, request_detail, and the parsed ParsedApprovalRequest; consumed plans (those whose request_seq has been referenced by a recorded ApprovalResume event) are excluded from resume_plans() — the plan is consumed on first attempt even if the tool fails and will not reappear in /approval status; no tool execution is performed in this step
 ├── commands.rs          # Facade: re-exports from commands/ submodule
 ├── commands/            # commands submodule
-│   ├── types.rs         # Command enum + ParsedInput
+│   ├── types.rs         # Command enum (including ToolCommand::PreviewWrite for /tool preview-write) + ParsedInput
 │   ├── parse.rs         # Command parsing logic
 │   ├── help.rs          # Command help catalog: canonical help text for each command, used for /help rendering and parity tests
 │   └── tests.rs         # Unit tests
@@ -133,7 +133,7 @@ crates/tui/src/
 │   │   ├── request.rs     # /request command handler tests
 │   │   ├── policy.rs      # Tool-policy decision tests
 │   │   └── approval.rs    # /approval status, approve command tests, and reject command tests
-│   └── tools.rs     # handle_tool_command: /tool list, /tool read
+│   └── tools.rs     # handle_tool_command: /tool list, /tool read, /tool preview-write (dry-run diff preview, no write)
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
 ├── ui.rs           # Layout-orchestration root: draw() calls each widget's render helper; Nav and Main panel blocks remain inline in draw()
 └── ui/
