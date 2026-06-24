@@ -31,6 +31,9 @@ pub(super) fn format_tool_result_detail(
         ToolOutput::FileContent { content, .. } => {
             format!("tool={} path={:?} bytes={}", tool_name, path, content.len())
         }
+        ToolOutput::WritePreview { preview, .. } => {
+            format!("tool={} {}", tool_name, preview.detail())
+        }
     }
 }
 

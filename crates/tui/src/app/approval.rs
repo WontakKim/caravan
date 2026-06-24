@@ -107,6 +107,9 @@ impl super::App {
                                     "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
                                 );
                             }
+                            Ok(ToolOutput::WritePreview { .. }) => unreachable!(
+                                "preview-write is operator-only; never produced by /approval resume"
+                            ),
                             Err(error) => {
                                 self.push_tool_error_output(error);
                             }

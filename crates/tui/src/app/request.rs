@@ -53,6 +53,9 @@ impl super::App {
                                 "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
                             );
                         }
+                        Ok(ToolOutput::WritePreview { .. }) => unreachable!(
+                            "preview-write is operator-only; never produced by /request run"
+                        ),
                         Err(error) => {
                             self.push_tool_error_output(error);
                             // Keep pending_model_tool_request unchanged on failure.

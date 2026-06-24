@@ -3,6 +3,7 @@ pub enum ToolCommand {
     List { path: String },
     Read { path: String },
     PlanWrite { path: String },
+    PreviewWrite { path: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

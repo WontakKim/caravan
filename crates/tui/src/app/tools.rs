@@ -31,6 +31,34 @@ impl super::App {
             return;
         }
 
+        // Early-return: PreviewWrite runs the dry-run diff preview using
+        // last_tool_output_candidate as proposed content. It performs NO file write,
+        // creates NO ApprovalRequest, and does NOT update last_tool_output_candidate,
+        // pending_manual_tool_context, or pending_model_tool_request.
+        if let ToolCommand::PreviewWrite { path } = tc {
+            let Some(candidate) = self.last_tool_output_candidate.as_ref() else {
+                self.log.push(
+                    "No latest tool output to preview. Run /tool read <path> or /tool list [path] first.".to_string(),
+                );
+                return;
+            };
+            let content = candidate.content.clone();
+            let request = ToolRequest::PreviewWrite {
+                path: path.clone(),
+                content,
+            };
+            match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
+                Ok(ToolOutput::WritePreview { preview, .. }) => {
+                    self.push_tool_write_preview_output(&path, &preview);
+                }
+                Ok(_) => unreachable!("PreviewWrite only produces WritePreview output"),
+                Err(error) => {
+                    self.push_tool_error_output(error);
+                }
+            }
+            return;
+        }
+
         let (request, display_path) = match tc {
             ToolCommand::List { path } => {
                 let dp = path.clone();
@@ -41,6 +69,7 @@ impl super::App {
                 (ToolRequest::ReadFile { path }, dp)
             }
             ToolCommand::PlanWrite { .. } => unreachable!("handled above"),
+            ToolCommand::PreviewWrite { .. } => unreachable!("handled above"),
         };
         match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
             Ok(ToolOutput::FileList { entries, .. }) => {
@@ -52,6 +81,9 @@ impl super::App {
                 self.last_tool_output_candidate =
                     Some(ManualToolContext::from_read_file(&display_path, &content));
                 self.push_tool_read_output(&display_path, &content);
+            }
+            Ok(ToolOutput::WritePreview { .. }) => {
+                unreachable!("handled in PreviewWrite early-return")
             }
             Err(error) => {
                 self.push_tool_error_output(error);

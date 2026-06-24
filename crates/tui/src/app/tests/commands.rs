@@ -122,6 +122,7 @@ fn help_lines_exact_content() {
         "  /tool list [path] - list files under the workspace".to_string(),
         "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
         "  /tool plan-write <path> - approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file".to_string(),
+        "  /tool preview-write <path> - read-only dry-run diff preview of a proposed write using the latest tool output as content; performs no write".to_string(),
         "  /context attach-last-tool - attach the latest read-only tool output to the next prompt"
             .to_string(),
         "  /context clear - clear pending manual tool context".to_string(),

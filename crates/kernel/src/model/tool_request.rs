@@ -408,4 +408,36 @@ mod tests {
             }
         );
     }
+
+    // Model-visibility rejection: the parser must NOT accept preview_write,
+    // preview-write, or write_file as valid tool names. They must all return None.
+    #[test]
+    fn preview_write_snake_case_is_rejected_by_model_parser() {
+        let text = make_block("preview_write", Some("README.md"));
+        let result = parse_first_model_tool_request(&text);
+        assert_eq!(
+            result, None,
+            "preview_write must not be accepted by the model tool-call parser"
+        );
+    }
+
+    #[test]
+    fn preview_write_kebab_case_is_rejected_by_model_parser() {
+        let text = make_block("preview-write", Some("README.md"));
+        let result = parse_first_model_tool_request(&text);
+        assert_eq!(
+            result, None,
+            "preview-write must not be accepted by the model tool-call parser"
+        );
+    }
+
+    #[test]
+    fn write_file_is_rejected_by_model_parser() {
+        let text = make_block("write_file", Some("output.txt"));
+        let result = parse_first_model_tool_request(&text);
+        assert_eq!(
+            result, None,
+            "write_file must not be accepted by the model tool-call parser"
+        );
+    }
 }

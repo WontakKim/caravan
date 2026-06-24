@@ -9,6 +9,9 @@ use std::fs;
 
 use path::resolve_in_workspace;
 
+use crate::write_intent::{WriteIntentMode, WriteIntentSource, new_text};
+use crate::write_preview::{WritePreview, preview_write_intent};
+
 /// Identifies a tool by name.
 #[derive(Debug, PartialEq)]
 pub enum ToolName {
@@ -45,6 +48,7 @@ pub enum ToolRequest {
     ListFiles { path: String },
     ReadFile { path: String },
     PlanWrite { path: String },
+    PreviewWrite { path: String, content: String },
 }
 
 /// Outputs produced by the tool harness.
@@ -52,6 +56,7 @@ pub enum ToolRequest {
 pub enum ToolOutput {
     FileList { path: String, entries: Vec<String> },
     FileContent { path: String, content: String },
+    WritePreview { path: String, preview: WritePreview },
 }
 
 /// Structured error taxonomy for tool execution failures.
@@ -96,6 +101,9 @@ impl ToolRegistry {
             ToolRequest::PlanWrite { .. } => Err(ToolError::ApprovalRequired {
                 reason: "workspace_write_requires_approval".to_string(),
             }),
+            ToolRequest::PreviewWrite { path, content } => {
+                self.preview_write(context, path, content)
+            }
         }
     }
 
@@ -135,6 +143,43 @@ impl ToolRegistry {
             path: requested.to_string(),
             entries,
         })
+    }
+
+    /// Runs a dry-run diff preview of a proposed write against the workspace.
+    ///
+    /// No file is written, no temp file is created, and no `ApprovalRequest` is
+    /// recorded. All path validation and workspace-boundary checks are delegated
+    /// to [`preview_write_intent`].
+    fn preview_write(
+        &self,
+        context: &ToolExecutionContext,
+        path: String,
+        content: String,
+    ) -> Result<ToolOutput, ToolError> {
+        use crate::write_preview::WritePreviewError;
+
+        let intent = new_text(
+            &path,
+            content,
+            WriteIntentMode::CreateOrReplace,
+            WriteIntentSource::Operator,
+        )
+        .map_err(|_| ToolError::WorkspaceViolation { path: path.clone() })?;
+
+        preview_write_intent(context, &intent)
+            .map(|preview| ToolOutput::WritePreview { path, preview })
+            .map_err(|e| match e {
+                WritePreviewError::WorkspaceViolation { path } => {
+                    ToolError::WorkspaceViolation { path }
+                }
+                WritePreviewError::ParentNotFound { path } => ToolError::NotFound { path },
+                WritePreviewError::NotAFile { path } => ToolError::NotAFile { path },
+                WritePreviewError::NonUtf8 { path } => ToolError::NonUtf8 { path },
+                WritePreviewError::TooLarge { path, max_bytes } => {
+                    ToolError::TooLarge { path, max_bytes }
+                }
+                WritePreviewError::Io { message } => ToolError::Io { message },
+            })
     }
 
     /// Reads a file's UTF-8 contents, capping at [`MAX_READ_FILE_BYTES`].

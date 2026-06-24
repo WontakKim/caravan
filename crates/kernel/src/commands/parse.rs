@@ -40,7 +40,12 @@ pub fn parse_input(input: &str) -> ParsedInput {
                             path: path.to_string(),
                         })
                     }
-                    // Any other subcommand, or "read"/"plan-write" with empty/multi-token path
+                    "preview-write" if !path.is_empty() && !path.contains(char::is_whitespace) => {
+                        Command::Tool(ToolCommand::PreviewWrite {
+                            path: path.to_string(),
+                        })
+                    }
+                    // Any other subcommand, or "read"/"plan-write"/"preview-write" with empty/multi-token path
                     _ => Command::Unknown(input.to_string()),
                 }
             }

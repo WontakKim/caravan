@@ -519,10 +519,64 @@ fn approval_run_is_unknown_no_regression() {
     ));
 }
 
+// --- /tool preview-write parsing tests ---
+
+#[test]
+fn tool_preview_write_with_path() {
+    assert_eq!(
+        parse_input("/tool preview-write README.md"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::PreviewWrite {
+            path: "README.md".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_preview_write_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool preview-write"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_preview_write_extra_token_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool preview-write README.md extra"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+// --- Explicit Unknown regressions ---
+
+#[test]
+fn tool_write_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool write"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_apply_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool apply patch.diff"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn approval_execute_is_unknown() {
+    assert!(matches!(
+        parse_input("/approval execute"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
 // --- help catalog parity tests ---
 
 #[test]
-fn help_catalog_has_16_entries_in_exact_order() {
+fn help_catalog_has_17_entries_in_exact_order() {
     let entries = command_help_entries();
     let commands: Vec<&str> = entries.iter().map(|e| e.command).collect();
     assert_eq!(
@@ -534,6 +588,7 @@ fn help_catalog_has_16_entries_in_exact_order() {
             "/tool list [path]",
             "/tool read <path>",
             "/tool plan-write <path>",
+            "/tool preview-write <path>",
             "/context attach-last-tool",
             "/context clear",
             "/context status",

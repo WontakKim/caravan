@@ -1,6 +1,9 @@
+use std::collections::BTreeSet;
+
 use super::super::*;
 use super::common::*;
 use kernel::events::EventKind;
+use kernel::manual_context::ManualToolContext;
 use kernel::storage::EventStore;
 
 #[test]
@@ -363,6 +366,345 @@ fn tool_plan_write_appends_slash_tool_policy_approval_request_events() {
             .iter()
             .any(|l| l == "Use /approval approve <seq> or /approval reject <seq> to resolve."),
         "log must contain approval approve/reject guidance"
+    );
+}
+
+// --- /tool preview-write tests ---
+
+/// Unique sentinel used in preview-write tests to assert no content leaks into events.
+const PREVIEW_PROPOSED_SENTINEL: &str = "PREVIEW_PROPOSED_CONTENT_SENTINEL_TUI_7654321";
+
+// (a) No candidate: submitting /tool preview-write emits only SlashCommand and the
+//     no-candidate screen-log line. No ToolPolicy/ToolCall/ToolResult/ToolError/ApprovalRequest.
+#[test]
+fn tool_preview_write_no_candidate_emits_only_slash_command_and_guidance() {
+    let mut app = App::new();
+    assert!(app.last_tool_output_candidate.is_none());
+
+    let event_len_before = app.event_log.len();
+    let log_len_before = app.log.len();
+    app.input = "/tool preview-write NOTES.md".to_string();
+    app.submit();
+
+    // Exactly one new event: SlashCommand.
+    assert_eq!(app.event_log.len(), event_len_before + 1);
+    let events = app.event_log.events();
+    let n = events.len();
+    assert_eq!(events[n - 1].kind, EventKind::SlashCommand);
+
+    // No tool machinery events.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+        "no ToolPolicy must appear when candidate is absent"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolCall),
+        "no ToolCall must appear when candidate is absent"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolResult),
+        "no ToolResult must appear when candidate is absent"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolError),
+        "no ToolError must appear when candidate is absent"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must appear for preview-write"
+    );
+
+    // The no-candidate guidance line must appear in the screen log.
+    assert!(
+        app.log.len() > log_len_before,
+        "log must have grown with the guidance line"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l.contains("No latest tool output to preview")),
+        "log must contain the no-candidate guidance"
+    );
+}
+
+// (b) With a candidate, /tool preview-write yields SlashCommand, ToolPolicy, ToolCall,
+//     ToolResult; no ApprovalRequest; bounded diff preview in screen log; ToolResult
+//     detail does NOT contain the proposed-content sentinel.
+#[test]
+fn tool_preview_write_with_candidate_emits_policy_call_result_events() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    // Source file for /tool read.
+    std::fs::write(
+        workspace_dir.path().join("source.txt"),
+        PREVIEW_PROPOSED_SENTINEL,
+    )
+    .unwrap();
+    // Separate target with different content.
+    std::fs::write(
+        workspace_dir.path().join("target.txt"),
+        "old content line\n",
+    )
+    .unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Set up candidate via /tool read.
+    app.input = "/tool read source.txt".to_string();
+    app.submit();
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "candidate must be set after /tool read"
+    );
+
+    let event_len_before = app.event_log.len();
+    app.input = "/tool preview-write target.txt".to_string();
+    app.submit();
+
+    // Four new events: SlashCommand, ToolPolicy, ToolCall, ToolResult.
+    assert_eq!(app.event_log.len(), event_len_before + 4);
+    let events = app.event_log.events();
+    let n = events.len();
+    assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+    assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
+    assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+    assert_eq!(events[n - 1].kind, EventKind::ToolResult);
+
+    // No ApprovalRequest.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must appear for preview-write"
+    );
+
+    // ToolResult detail must NOT contain the proposed-content sentinel.
+    let result_detail = &events[n - 1].detail;
+    assert!(
+        !result_detail.contains(PREVIEW_PROPOSED_SENTINEL),
+        "ToolResult detail must not contain proposed-content sentinel: {result_detail}"
+    );
+
+    // Screen log must contain the bounded diff preview header.
+    assert!(
+        app.log.iter().any(|l| l.contains("Write preview for")),
+        "screen log must contain 'Write preview for'"
+    );
+}
+
+// (c) No-change candidate: renders "No changes." exactly once in screen log.
+#[test]
+fn tool_preview_write_no_change_renders_no_changes_exactly_once() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let identical_content = "identical content for no-change test\n";
+    std::fs::write(workspace_dir.path().join("same.txt"), identical_content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Read the file so the candidate content equals the target.
+    app.input = "/tool read same.txt".to_string();
+    app.submit();
+
+    app.input = "/tool preview-write same.txt".to_string();
+    app.submit();
+
+    let no_change_count = app.log.iter().filter(|l| *l == "No changes.").count();
+    assert_eq!(
+        no_change_count, 1,
+        "\"No changes.\" must appear exactly once in the screen log, got {no_change_count}"
+    );
+}
+
+// (d) Workspace-violation target: yields SlashCommand, ToolPolicy, ToolCall, ToolError;
+//     no ApprovalRequest.
+#[test]
+fn tool_preview_write_workspace_violation_emits_policy_call_error_events() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("source.txt"), "proposed content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Set up candidate.
+    app.input = "/tool read source.txt".to_string();
+    app.submit();
+
+    let event_len_before = app.event_log.len();
+    app.input = "/tool preview-write ../escape.txt".to_string();
+    app.submit();
+
+    assert_eq!(app.event_log.len(), event_len_before + 4);
+    let events = app.event_log.events();
+    let n = events.len();
+    assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+    assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
+    assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+    assert_eq!(events[n - 1].kind, EventKind::ToolError);
+
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must appear for workspace-violation preview"
+    );
+}
+
+// (e) After a successful /tool preview-write, last_tool_output_candidate,
+//     pending_manual_tool_context, and pending_model_tool_request are unchanged.
+#[test]
+fn tool_preview_write_does_not_mutate_state_fields() {
+    use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("source.txt"), "original content").unwrap();
+    std::fs::write(workspace_dir.path().join("target.txt"), "existing content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Set up candidate.
+    app.input = "/tool read source.txt".to_string();
+    app.submit();
+    let candidate_before = app.last_tool_output_candidate.clone();
+    assert!(candidate_before.is_some());
+
+    // Set up a pending model tool request.
+    let pending_req = ModelToolRequest {
+        kind: ModelToolRequestKind::ReadFile,
+        path: "notes.txt".to_string(),
+    };
+    app.pending_model_tool_request = Some(pending_req.clone());
+
+    // Run preview-write.
+    app.input = "/tool preview-write target.txt".to_string();
+    app.submit();
+
+    // Candidate must be unchanged.
+    let candidate_after = app.last_tool_output_candidate.as_ref().unwrap();
+    let candidate_before_ref = candidate_before.as_ref().unwrap();
+    assert_eq!(
+        candidate_after.content, candidate_before_ref.content,
+        "last_tool_output_candidate.content must be unchanged after preview-write"
+    );
+
+    // pending_manual_tool_context must remain None.
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must not be set by preview-write"
+    );
+
+    // pending_model_tool_request must remain set to the same value.
+    assert_eq!(
+        app.pending_model_tool_request,
+        Some(pending_req),
+        "pending_model_tool_request must not be cleared by preview-write"
+    );
+}
+
+// (f) DRY-RUN regression: existing target file bytes are byte-for-byte unchanged
+//     after /tool preview-write; no temp/sidecar file is created; nonexistent
+//     target is NOT created on disk.
+#[test]
+fn tool_preview_write_dry_run_does_not_modify_existing_file_byte_for_byte() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let original_bytes = b"original content that must never be changed by a dry-run preview";
+    let target_path = workspace_dir.path().join("target.txt");
+    std::fs::write(&target_path, original_bytes).unwrap();
+
+    // Record directory entries before the preview.
+    let entries_before: BTreeSet<String> = std::fs::read_dir(workspace_dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Seed candidate directly with DIFFERENT proposed content.
+    app.last_tool_output_candidate = Some(ManualToolContext::from_read_file(
+        "target.txt",
+        PREVIEW_PROPOSED_SENTINEL,
+    ));
+
+    // Run preview-write against the existing target.
+    app.input = "/tool preview-write target.txt".to_string();
+    app.submit();
+
+    // Target file bytes must be unchanged.
+    let bytes_after = std::fs::read(&target_path).unwrap();
+    assert_eq!(
+        bytes_after, original_bytes,
+        "preview-write must not alter the target file's byte content"
+    );
+
+    // Directory entry set must be unchanged (no temp/sidecar files created).
+    let entries_after: BTreeSet<String> = std::fs::read_dir(workspace_dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    assert_eq!(
+        entries_before, entries_after,
+        "preview-write must not create any new files in the workspace directory"
+    );
+}
+
+#[test]
+fn tool_preview_write_dry_run_does_not_create_nonexistent_target() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let nonexistent_path = workspace_dir.path().join("will_not_exist.txt");
+    assert!(
+        !nonexistent_path.exists(),
+        "target must not exist before preview"
+    );
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Seed candidate with proposed content.
+    app.last_tool_output_candidate = Some(ManualToolContext::from_read_file(
+        "will_not_exist.txt",
+        "proposed content for new file",
+    ));
+
+    app.input = "/tool preview-write will_not_exist.txt".to_string();
+    app.submit();
+
+    assert!(
+        !nonexistent_path.exists(),
+        "preview-write must not create the target file"
     );
 }
 

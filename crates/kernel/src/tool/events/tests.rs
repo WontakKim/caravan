@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 use crate::events::{EventKind, EventLog};
 use crate::storage::EventStore;
-use crate::tool::registry::ToolExecutionContext;
+use crate::tool::registry::{ToolExecutionContext, ToolOutput};
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -718,5 +718,210 @@ fn approval_request_event_survives_persistence_round_trip() {
     assert!(
         !log2.get(1).unwrap().detail.is_empty(),
         "ApprovalRequest detail must be non-empty after reload"
+    );
+}
+
+// --- PreviewWrite tests ---
+
+const PROPOSED_CONTENT_SENTINEL: &str = "PROPOSED_CONTENT_SENTINEL_XYZ_9182736";
+const OLD_TARGET_CONTENT_SENTINEL: &str = "OLD_TARGET_CONTENT_SENTINEL_ABC_1234567";
+
+// (a) PreviewWrite success — event sequence ToolPolicy, ToolCall, ToolResult;
+//     ToolResult detail starts with "tool=preview_write path=" and contains exactly
+//     one "path=" token (path-duplication guard) and a "kind=" token.
+#[test]
+fn preview_write_success_emits_policy_call_result_events() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("target.txt"), OLD_TARGET_CONTENT_SENTINEL).expect("write");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::PreviewWrite {
+            path: "target.txt".to_string(),
+            content: PROPOSED_CONTENT_SENTINEL.to_string(),
+        },
+    );
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert_eq!(log.len(), 3);
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+    assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
+
+    let result_detail = &log.get(2).unwrap().detail;
+    assert!(
+        result_detail.starts_with("tool=preview_write path="),
+        "ToolResult detail must start with 'tool=preview_write path=': {result_detail}"
+    );
+
+    // Exactly one "path=" token (path-duplication guard).
+    let path_count = result_detail.matches("path=").count();
+    assert_eq!(
+        path_count, 1,
+        "ToolResult detail must contain exactly one 'path=' token, got {path_count}: {result_detail}"
+    );
+
+    assert!(
+        result_detail.contains("kind="),
+        "ToolResult detail must contain 'kind=': {result_detail}"
+    );
+}
+
+// (b) Content-leak guard: no event detail must contain the proposed or existing
+//     content sentinels; no ApprovalRequest event must appear.
+#[test]
+fn preview_write_success_no_content_leak_in_events() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("secret.txt"), OLD_TARGET_CONTENT_SENTINEL).expect("write");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner
+        .run(
+            &mut log,
+            &ctx,
+            ToolRequest::PreviewWrite {
+                path: "secret.txt".to_string(),
+                content: PROPOSED_CONTENT_SENTINEL.to_string(),
+            },
+        )
+        .ok();
+
+    for event in log.events() {
+        assert!(
+            !event.detail.contains(PROPOSED_CONTENT_SENTINEL),
+            "event detail must not contain proposed content sentinel: {:?}",
+            event.detail
+        );
+        assert!(
+            !event.detail.contains(OLD_TARGET_CONTENT_SENTINEL),
+            "event detail must not contain existing content sentinel: {:?}",
+            event.detail
+        );
+        assert!(
+            !event
+                .detail
+                .contains(&format!("+{PROPOSED_CONTENT_SENTINEL}")),
+            "event detail must not contain +sentinel: {:?}",
+            event.detail
+        );
+        assert!(
+            !event
+                .detail
+                .contains(&format!("-{OLD_TARGET_CONTENT_SENTINEL}")),
+            "event detail must not contain -sentinel: {:?}",
+            event.detail
+        );
+    }
+
+    assert!(
+        !log.events()
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must be emitted for PreviewWrite"
+    );
+}
+
+// (c) Workspace-violation path produces ToolPolicy, ToolCall, ToolError with
+//     error=workspace_violation; no ApprovalRequest; no content sentinel leak.
+#[test]
+fn preview_write_workspace_violation_emits_policy_call_error_events() {
+    let dir = TempDir::new();
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::PreviewWrite {
+            path: "../escape.txt".to_string(),
+            content: PROPOSED_CONTENT_SENTINEL.to_string(),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::WorkspaceViolation { .. })),
+        "expected WorkspaceViolation, got {:?}",
+        result
+    );
+    assert_eq!(log.len(), 3);
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+    assert_eq!(log.get(2).unwrap().kind, EventKind::ToolError);
+
+    let error_detail = &log.get(2).unwrap().detail;
+    assert!(
+        error_detail.contains("error=workspace_violation"),
+        "ToolError detail must contain error=workspace_violation: {error_detail}"
+    );
+
+    assert!(
+        !log.events()
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must be emitted for a workspace-violation preview"
+    );
+
+    for event in log.events() {
+        assert!(
+            !event.detail.contains(PROPOSED_CONTENT_SENTINEL),
+            "event detail must not contain proposed content sentinel: {:?}",
+            event.detail
+        );
+    }
+}
+
+// (d) Error-mapping coverage — ParentNotFound maps to NotFound.
+#[test]
+fn preview_write_missing_parent_maps_to_not_found() {
+    let dir = TempDir::new();
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::PreviewWrite {
+            path: "nonexistent_dir/child.txt".to_string(),
+            content: "proposed content".to_string(),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::NotFound { .. })),
+        "expected NotFound, got {:?}",
+        result
+    );
+}
+
+// (d) Error-mapping coverage — NotAFile maps to NotAFile.
+#[test]
+fn preview_write_directory_target_maps_to_not_a_file() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::PreviewWrite {
+            path: "subdir".to_string(),
+            content: "proposed content".to_string(),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::NotAFile { .. })),
+        "expected NotAFile, got {:?}",
+        result
     );
 }

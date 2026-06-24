@@ -29,6 +29,10 @@ static HELP_ENTRIES: &[CommandHelpEntry] = &[
         description: "approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file",
     },
     CommandHelpEntry {
+        command: "/tool preview-write <path>",
+        description: "read-only dry-run diff preview of a proposed write using the latest tool output as content; performs no write",
+    },
+    CommandHelpEntry {
         command: "/context attach-last-tool",
         description: "attach the latest read-only tool output to the next prompt",
     },

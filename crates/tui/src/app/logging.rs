@@ -1,3 +1,5 @@
+use kernel::{WRITE_DIFF_PREVIEW_LINES, WritePreview, WritePreviewKind};
+
 impl super::App {
     /// Pushes a sorted directory listing to the screen log, capped at
     /// [`super::TOOL_LIST_PREVIEW_ENTRIES`] lines plus an overflow trailer.
@@ -29,6 +31,32 @@ impl super::App {
         self.log.push(preview.to_string());
         if content.len() > limit {
             self.log.push("... [truncated]".to_string());
+        }
+    }
+
+    /// Pushes a bounded diff preview of a proposed write to the screen log.
+    ///
+    /// For [`WritePreviewKind::NoChange`], emits the single literal line `"No changes."`
+    /// and does NOT iterate `preview.diff.preview` (which already contains the sentinel
+    /// to avoid double-printing). For other kinds, emits each bounded preview line
+    /// (already capped at [`WRITE_DIFF_PREVIEW_LINES`]) followed by `"... [truncated]"`
+    /// when the diff was truncated.
+    pub(super) fn push_tool_write_preview_output(&mut self, path: &str, preview: &WritePreview) {
+        self.log.push(format!("Write preview for {}:", path));
+        self.log.push(preview.detail());
+        match preview.kind {
+            WritePreviewKind::NoChange => {
+                self.log.push("No changes.".to_string());
+            }
+            _ => {
+                self.log.push("Diff preview:".to_string());
+                for line in preview.diff.preview.iter().take(WRITE_DIFF_PREVIEW_LINES) {
+                    self.log.push(line.clone());
+                }
+                if preview.diff.truncated {
+                    self.log.push("... [truncated]".to_string());
+                }
+            }
         }
     }
 

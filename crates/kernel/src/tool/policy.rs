@@ -70,7 +70,9 @@ impl ToolPolicyEngine {
     /// Evaluates a tool request and returns the policy outcome.
     pub fn evaluate(&self, request: &ToolRequest) -> ToolPolicyOutcome {
         let risk = match request {
-            ToolRequest::ListFiles { .. } | ToolRequest::ReadFile { .. } => ToolRisk::ReadOnly,
+            ToolRequest::ListFiles { .. }
+            | ToolRequest::ReadFile { .. }
+            | ToolRequest::PreviewWrite { .. } => ToolRisk::ReadOnly,
             ToolRequest::PlanWrite { .. } => ToolRisk::WorkspaceWrite,
         };
 
@@ -241,5 +243,19 @@ mod tests {
     #[test]
     fn tool_risk_as_str_read_only() {
         assert_eq!(ToolRisk::ReadOnly.as_str(), "read_only");
+    }
+
+    #[test]
+    fn evaluate_preview_write_returns_allow_read_only_auto_allow_no_approval() {
+        let engine = ToolPolicyEngine::read_only();
+        let request = ToolRequest::PreviewWrite {
+            path: "README.md".to_string(),
+            content: "proposed content".to_string(),
+        };
+        let outcome = engine.evaluate(&request);
+        assert_eq!(outcome.decision, ToolPolicyDecision::Allow);
+        assert_eq!(outcome.risk, ToolRisk::ReadOnly);
+        assert_eq!(outcome.reason, "read_only_auto_allow");
+        assert_eq!(outcome.approval_requirement, ApprovalRequirement::None);
     }
 }
