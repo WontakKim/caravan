@@ -1291,3 +1291,278 @@ fn approval_status_with_approved_plans_mutates_log_by_exactly_one_slash_command(
         "must not append ApprovalDecision"
     );
 }
+
+// --- /tool propose-write approval-flow regression tests ---
+
+/// Writes a source file into `workspace_dir`, seeds the candidate via `/tool read`,
+/// then drives `/tool propose-write <target>` and returns the `ApprovalRequest` event
+/// seq. Each test that exercises the full propose-write command must call this helper
+/// to ensure `last_tool_output_candidate` is populated before the command runs;
+/// omitting the seed step silently hits the no-candidate path and produces a false green.
+fn seed_propose_write_approval(
+    app: &mut App,
+    workspace_dir: &TempDir,
+    target: &str,
+) -> kernel::events::EventSeq {
+    std::fs::write(
+        workspace_dir.path().join("pw_source.txt"),
+        "candidate content for propose-write approval test\n",
+    )
+    .unwrap();
+
+    app.input = "/tool read pw_source.txt".to_string();
+    app.submit();
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "candidate must be seeded by /tool read before propose-write"
+    );
+
+    app.input = format!("/tool propose-write {target}");
+    app.submit();
+
+    let events = app.event_log.events();
+    events
+        .iter()
+        .rev()
+        .find(|e| e.kind == EventKind::ApprovalRequest)
+        .expect("ApprovalRequest must be present after /tool propose-write")
+        .seq
+}
+
+/// Step 1 — `/tool propose-write` emits a pending `ApprovalRequest` visible in
+/// `/approval status` output with the `workspace_write` risk detail.
+#[test]
+fn approval_propose_write_status_shows_pending() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let store = kernel::storage::EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    seed_propose_write_approval(&mut app, &workspace_dir, "output.txt");
+
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: 1"),
+        "log must contain '- pending: 1' after propose-write"
+    );
+    assert!(
+        app.log.iter().any(|l| l.contains("workspace_write")),
+        "log must contain 'workspace_write' in the pending entry detail"
+    );
+}
+
+/// Step 2a — `/approval approve <seq>` appends `SlashCommand` + `ApprovalDecision`
+/// and leaves the request no longer pending.
+#[test]
+fn approval_propose_write_approve_appends_decision() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let store = kernel::storage::EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let approval_seq = seed_propose_write_approval(&mut app, &workspace_dir, "output.txt");
+    let len_before = app.event_log.len();
+
+    app.input = format!("/approval approve {approval_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        2,
+        "expected exactly 2 new events (SlashCommand + ApprovalDecision)"
+    );
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "first new event must be SlashCommand"
+    );
+    assert_eq!(
+        new_events[1].kind,
+        EventKind::ApprovalDecision,
+        "second new event must be ApprovalDecision"
+    );
+    assert_eq!(
+        new_events[1].detail,
+        format!("request_seq={approval_seq} decision=approved reason=operator_approved")
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("Approved approval request seq={approval_seq}")),
+        "log must contain 'Approved approval request seq=...'"
+    );
+
+    // After approve, /approval status must show pending: none.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' after propose-write approve"
+    );
+}
+
+/// Step 2b — `/approval reject <seq>` appends `SlashCommand` + `ApprovalDecision`
+/// (rejected) and leaves the request no longer pending.
+#[test]
+fn approval_propose_write_reject_appends_decision() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let store = kernel::storage::EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let approval_seq = seed_propose_write_approval(&mut app, &workspace_dir, "output.txt");
+    let len_before = app.event_log.len();
+
+    app.input = format!("/approval reject {approval_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[len_before..];
+    assert_eq!(
+        new_events.len(),
+        2,
+        "expected exactly 2 new events (SlashCommand + ApprovalDecision)"
+    );
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "first new event must be SlashCommand"
+    );
+    assert_eq!(
+        new_events[1].kind,
+        EventKind::ApprovalDecision,
+        "second new event must be ApprovalDecision"
+    );
+    assert_eq!(
+        new_events[1].detail,
+        format!("request_seq={approval_seq} decision=rejected reason=operator_rejected")
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("Rejected approval request seq={approval_seq}")),
+        "log must contain 'Rejected approval request seq=...'"
+    );
+
+    // After reject, /approval status must show pending: none.
+    app.log.clear();
+    app.input = "/approval status".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "- pending: none"),
+        "log must contain '- pending: none' after propose-write reject"
+    );
+}
+
+/// Step 3 — An approved propose-write approval yields zero `ApprovalQueue::resume_plans()`
+/// because `ParsedApprovalRequest::to_tool_request()` returns `None` for `write_file`.
+#[test]
+fn approval_propose_write_approved_not_resumable() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let store = kernel::storage::EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let approval_seq = seed_propose_write_approval(&mut app, &workspace_dir, "output.txt");
+
+    // Approve the propose-write request.
+    app.input = format!("/approval approve {approval_seq}");
+    app.submit();
+
+    // resume_plans() must yield 0: write_file has no to_tool_request() mapping.
+    let queue = ApprovalQueue::from_event_log(&app.event_log);
+    let plans = queue.resume_plans();
+    assert_eq!(
+        plans.len(),
+        0,
+        "resume_plans must yield 0 plans for an approved propose-write (write_file is not resumable)"
+    );
+}
+
+/// Step 4 — `/approval resume <seq>` for an approved propose-write appends only a
+/// `SlashCommand` event and appends no `ApprovalResume`, `ToolPolicy`, `ToolCall`,
+/// `ToolResult`, or `ToolError` event.
+#[test]
+fn approval_propose_write_resume_is_noop() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let store = kernel::storage::EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let approval_seq = seed_propose_write_approval(&mut app, &workspace_dir, "output.txt");
+
+    // Approve the propose-write request.
+    app.input = format!("/approval approve {approval_seq}");
+    app.submit();
+
+    // /approval resume <seq> must append only a SlashCommand — no resume or tool events.
+    let event_len_before = app.event_log.len();
+    app.input = format!("/approval resume {approval_seq}");
+    app.submit();
+
+    let new_events = &app.event_log.events()[event_len_before..];
+    assert_eq!(
+        new_events.len(),
+        1,
+        "expected exactly one new event (SlashCommand only) for propose-write resume"
+    );
+    assert_eq!(
+        new_events[0].kind,
+        EventKind::SlashCommand,
+        "the single new event must be SlashCommand"
+    );
+    assert!(
+        !new_events
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalResume),
+        "must not emit ApprovalResume for a propose-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolPolicy),
+        "must not emit ToolPolicy for a propose-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolCall),
+        "must not emit ToolCall for a propose-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolResult),
+        "must not emit ToolResult for a propose-write resume"
+    );
+    assert!(
+        !new_events.iter().any(|e| e.kind == EventKind::ToolError),
+        "must not emit ToolError for a propose-write resume"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| *l == format!("No approved resume plan for seq={approval_seq}")),
+        "log must contain 'No approved resume plan for seq=...' for propose-write resume"
+    );
+}
