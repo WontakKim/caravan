@@ -54,6 +54,7 @@ cargo test --workspace
 | `/tool read <path>`           | Read a UTF-8 text file under the workspace root                          |
 | `/tool plan-write <path>`     | Approval-only skeleton: records a `workspace_write` mutation intent (`ToolPolicy` + `ApprovalRequest`) without writing any file and produces no `ToolCall`/`ToolResult`/`ToolError`; resolve via `/approval approve\|reject <seq>`; not resumable; see [write-sandbox safety design](docs/WRITE_SANDBOX.md) |
 | `/tool preview-write <path>`  | Dry-run diff preview: renders a bounded line-diff preview of what a write to `<path>` would produce, using the latest read-only tool output candidate as proposed content; performs **no write**, creates **no** `ApprovalRequest`, and emits `SlashCommand, ToolPolicy, ToolCall, ToolResult` on success (or `... ToolError` on preview error); the `ToolResult` stores only the content-free `WritePreview::detail()` summary — never any file content or diff lines |
+| `/tool propose-write <path>`  | Preview-backed approval request: shows a bounded diff preview and records a `workspace_write` `ApprovalRequest` using the latest tool output as content; performs **no write** |
 | `/context attach-last-tool`   | Attach the latest read-only tool output to the next prompt (one-shot)    |
 | `/context clear`              | Clear pending manual tool context                                         |
 | `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |

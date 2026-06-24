@@ -33,6 +33,10 @@ static HELP_ENTRIES: &[CommandHelpEntry] = &[
         description: "read-only dry-run diff preview of a proposed write using the latest tool output as content; performs no write",
     },
     CommandHelpEntry {
+        command: "/tool propose-write <path>",
+        description: "preview-backed approval request: shows a bounded diff preview and records a workspace_write ApprovalRequest using the latest tool output as content; performs no write",
+    },
+    CommandHelpEntry {
         command: "/context attach-last-tool",
         description: "attach the latest read-only tool output to the next prompt",
     },
