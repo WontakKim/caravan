@@ -261,7 +261,7 @@ commands from plain-text user messages. For plain text it appends the
 `UserMessage` event to the log and updates the screen log, then delegates all
 Run/Turn event assembly to `crates/kernel/src/runner.rs`.
 
-`runner::run_mock_turn(event_log, message, project_memory, gateway, manual_tool_context)` owns the full Run/Turn lifecycle.
+`runner::run_mock_turn(event_log, message, gateway, manual_tool_context, project_memory)` owns the full Run/Turn lifecycle.
 It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
 ModelRoute → ModelOutputChunk* → AssistantMessage → RunComplete` to the event log (but **not**
 `UserMessage`, which `App::submit()` has already recorded). It returns a `MockRunOutput` value that
@@ -306,7 +306,7 @@ Respond to the current user message.
 ```
 
 `compile_prompt(message)` renders the empty-history case shown above. It
-delegates to `compile_prompt_with_context(message, project_memory, history, manual_tool_context)`, which fills the
+delegates to `compile_prompt_with_context(message, history, manual_tool_context, project_memory)`, which fills the
 `Conversation:` section from recent transcript messages and injects `project_memory`
 into the `Project Memory:` section — see
 [Prompt Context Window](#prompt-context-window). The result is stored in the
@@ -420,7 +420,7 @@ active profile — the gateway reads `active_profile.provider`, `.model`, and
 
 `App` owns the `ModelGateway` (constructed at startup with the default
 `ModelConfig`/`ModelProfile`) and injects it into
-`runner::run_mock_turn(event_log, message, project_memory, gateway, manual_tool_context)` on every call.
+`runner::run_mock_turn(event_log, message, gateway, manual_tool_context, project_memory)` on every call.
 
 > **This is NOT a real LLM integration.** There is no API key, no provider
 > configuration, no network call, and no external service dependency. The
@@ -1060,7 +1060,7 @@ appears only under `Current User:` and is never duplicated into `Conversation:`.
 - **Window:** capped at the last `DEFAULT_PROMPT_HISTORY_MESSAGES` (6) messages.
   When there is no prior history, the section reads `No prior conversation
   context.`.
-- **Helper:** `compile_prompt_with_context(current_user_message, project_memory, history, manual_tool_context)` owns
+- **Helper:** `compile_prompt_with_context(current_user_message, history, manual_tool_context, project_memory)` owns
   both the formatting and the window cap; `compile_prompt(message)` is its
   empty-history case.
 - **`/clear`:** clears only the on-screen log, not the event log, so it is
