@@ -34,7 +34,8 @@ pub fn run_mock_turn(
     // survives the subsequent PromptCompile append.
     let transcript = crate::transcript::ConversationTranscript::from_event_log(event_log);
     let history = transcript.without_trailing_user_message();
-    let prompt = crate::prompt::compile_prompt_with_context(message, history, manual_tool_context);
+    let prompt =
+        crate::prompt::compile_prompt_with_context(message, history, manual_tool_context, None);
     event_log.append(EventKind::PromptCompile, prompt.clone());
     let request = ModelRequest {
         prompt,
