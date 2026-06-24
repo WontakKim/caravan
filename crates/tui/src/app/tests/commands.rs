@@ -116,26 +116,33 @@ fn help_lines_exact_content() {
     let expected = vec![
         "Available commands:".to_string(),
         "  Type a message (no leading /) to send it as a user message".to_string(),
-        "  /help - show this help".to_string(),
-        "  /clear - clear the log".to_string(),
-        "  /exit - exit Caravan".to_string(),
-        "  /tool list [path] - list files under the workspace".to_string(),
-        "  /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
-        "  /tool plan-write <path> - approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file".to_string(),
-        "  /tool preview-write <path> - read-only dry-run diff preview of a proposed write using the latest tool output as content; performs no write".to_string(),
-        "  /tool propose-write <path> - preview-backed approval request: shows a bounded diff preview and records a workspace_write ApprovalRequest using the latest tool output as content; performs no write".to_string(),
-        "  /context attach-last-tool - attach the latest read-only tool output to the next prompt"
-            .to_string(),
-        "  /context clear - clear pending manual tool context".to_string(),
-        "  /context status - show pending manual tool context and last tool output".to_string(),
-        "  /request status - show the pending model tool request".to_string(),
-        "  /request clear - clear the pending model tool request".to_string(),
-        "  /request run - execute the pending model tool request (read-only)".to_string(),
-        "  /approval status - show pending approval requests".to_string(),
-        "  /approval approve <seq> - approve a pending approval request".to_string(),
-        "  /approval reject <seq> - reject a pending approval request".to_string(),
-        "  /approval resume <seq> - resume an approved read-only tool plan (consumed on attempt)"
-            .to_string(),
+        "  Claude-like core commands:".to_string(),
+        "    /help - show this help".to_string(),
+        "    /clear - clear the log".to_string(),
+        "    /exit - exit Caravan".to_string(),
+        "    /reset - reset the session (clears screen log and pending state)".to_string(),
+        "    /new - start a new session (alias for /reset)".to_string(),
+        "    /quit - quit Caravan (alias for /exit)".to_string(),
+        "    /permissions - show the current permission posture".to_string(),
+        "    /allowed-tools - list the tools that are currently allowed".to_string(),
+        "  Experimental Caravan harness commands:".to_string(),
+        "    /tool list [path] - list files under the workspace".to_string(),
+        "    /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
+        "    /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
+        "    /context clear - clear pending manual tool context".to_string(),
+        "    /context status - show pending manual tool context and last tool output".to_string(),
+        "  Advanced experimental harness commands:".to_string(),
+        "    /request status - show the pending model tool request".to_string(),
+        "    /request clear - clear the pending model tool request".to_string(),
+        "    /request run - execute the pending model tool request (read-only)".to_string(),
+        "    /approval status - show pending approval requests".to_string(),
+        "    /approval approve <seq> - approve a pending approval request".to_string(),
+        "    /approval reject <seq> - reject a pending approval request".to_string(),
+        "    /approval resume <seq> - resume an approved read-only tool plan (consumed on attempt)".to_string(),
+        "  Write/sandbox experimental commands:".to_string(),
+        "    /tool plan-write <path> - approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file".to_string(),
+        "    /tool preview-write <path> - read-only dry-run diff preview of a proposed write using the latest tool output as content; performs no write".to_string(),
+        "    /tool propose-write <path> - preview-backed approval request: shows a bounded diff preview and records a workspace_write ApprovalRequest using the latest tool output as content; performs no write".to_string(),
     ];
     assert_eq!(App::help_lines(), expected);
 }
@@ -156,13 +163,22 @@ fn help_lines_includes_resume_and_plan_write() {
 #[test]
 fn help_lines_excludes_unsupported_commands() {
     let lines = App::help_lines();
+    // /quit is now an implemented exit alias and intentionally appears in help output.
     assert!(
         !lines.iter().any(|l| l.contains("/ask")),
         "help_lines should not reference /ask"
     );
     assert!(
-        !lines.iter().any(|l| l.contains("/quit")),
-        "help_lines should not reference /quit"
+        !lines.iter().any(|l| l.contains("/model")),
+        "help_lines should not reference /model"
+    );
+    assert!(
+        !lines.iter().any(|l| l.contains("/plan")),
+        "help_lines should not reference /plan"
+    );
+    assert!(
+        !lines.iter().any(|l| l.contains("/diff")),
+        "help_lines should not reference /diff"
     );
 }
 

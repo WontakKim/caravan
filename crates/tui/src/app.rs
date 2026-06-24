@@ -180,15 +180,21 @@ impl App {
     }
 
     pub fn help_lines() -> Vec<String> {
-        use kernel::commands::command_help_entries;
+        use kernel::commands::command_help_sections;
+        // Sections rendered in order:
+        //   "Claude-like core commands"
+        //   "Experimental Caravan harness commands"
+        //   "Advanced experimental harness commands"
+        //   "Write/sandbox experimental commands"
         let mut lines = Vec::new();
         lines.push("Available commands:".to_string());
         lines.push("  Type a message (no leading /) to send it as a user message".to_string());
-        lines.extend(
-            command_help_entries()
-                .iter()
-                .map(|entry| format!("  {} - {}", entry.command, entry.description)),
-        );
+        for section in command_help_sections() {
+            lines.push(format!("  {}:", section.header));
+            for entry in section.entries {
+                lines.push(format!("    {} - {}", entry.command, entry.description));
+            }
+        }
         lines
     }
 }
