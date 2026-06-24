@@ -1,6 +1,7 @@
 //! Read-only loader for the workspace-root `CLAUDE.md` project memory file.
 
-use std::io::ErrorKind;
+use std::fs::File;
+use std::io::{ErrorKind, Read};
 
 pub const PROJECT_MEMORY_MAX_BYTES: usize = 32 * 1024;
 
@@ -50,8 +51,8 @@ impl ProjectMemory {
 pub fn load_project_memory(workspace_root: &std::path::Path) -> ProjectMemory {
     let path = workspace_root.join("CLAUDE.md");
 
-    let raw = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
+    let file = match File::open(&path) {
+        Ok(file) => file,
         Err(err) if err.kind() == ErrorKind::NotFound => return ProjectMemory::missing(),
         Err(err) => {
             return ProjectMemory {
@@ -64,8 +65,24 @@ pub fn load_project_memory(workspace_root: &std::path::Path) -> ProjectMemory {
         }
     };
 
-    let file_size = raw.len();
-    let truncated = file_size > PROJECT_MEMORY_MAX_BYTES;
+    // Bound the actual read, not just the returned content: pull at most
+    // `PROJECT_MEMORY_MAX_BYTES + 1` bytes. The extra byte only signals that
+    // the file is larger than the limit; a huge CLAUDE.md is never fully read.
+    let mut raw = Vec::with_capacity(PROJECT_MEMORY_MAX_BYTES + 1);
+    if let Err(err) = file
+        .take((PROJECT_MEMORY_MAX_BYTES + 1) as u64)
+        .read_to_end(&mut raw)
+    {
+        return ProjectMemory {
+            source: ProjectMemorySource::Error {
+                message: format!("failed to read CLAUDE.md: {err}"),
+            },
+            content: String::new(),
+            truncated: false,
+        };
+    }
+
+    let truncated = raw.len() > PROJECT_MEMORY_MAX_BYTES;
     let slice = if truncated {
         &raw[..PROJECT_MEMORY_MAX_BYTES]
     } else {
@@ -74,6 +91,15 @@ pub fn load_project_memory(workspace_root: &std::path::Path) -> ProjectMemory {
 
     let content = match std::str::from_utf8(slice) {
         Ok(s) => s.to_string(),
+        // Truncation can split a multi-byte codepoint at the byte boundary.
+        // When the only problem is an incomplete trailing sequence
+        // (`error_len() == None`) of a truncated read, keep the valid prefix
+        // instead of failing an otherwise-valid file.
+        Err(err) if truncated && err.error_len().is_none() => {
+            // Bytes up to `valid_up_to()` are guaranteed valid UTF-8, so the
+            // lossy conversion never substitutes a replacement character.
+            String::from_utf8_lossy(&slice[..err.valid_up_to()]).into_owned()
+        }
         Err(err) => {
             return ProjectMemory {
                 source: ProjectMemorySource::Error {
@@ -185,5 +211,25 @@ mod tests {
         assert_eq!(pm.source, ProjectMemorySource::Missing);
         assert_eq!(pm.content, "No CLAUDE.md project memory found.");
         assert!(!pm.truncated);
+    }
+
+    // (f) When truncation splits a multi-byte codepoint at the limit, the
+    // valid prefix is kept (truncated File), not reported as an error.
+    #[test]
+    fn truncation_at_codepoint_boundary_keeps_valid_prefix() {
+        let dir = make_temp_dir();
+        // (MAX - 1) ASCII bytes, then a 2-byte 'é' (0xC3 0xA9) so byte index
+        // MAX lands inside the multi-byte char; total = MAX + 1 bytes.
+        let mut bytes = vec![b'a'; PROJECT_MEMORY_MAX_BYTES - 1];
+        bytes.extend_from_slice("é".as_bytes());
+        assert_eq!(bytes.len(), PROJECT_MEMORY_MAX_BYTES + 1);
+        write_file(&dir, "CLAUDE.md", &bytes);
+        let pm = load_project_memory(&dir);
+        assert!(matches!(pm.source, ProjectMemorySource::File { .. }));
+        assert!(pm.truncated);
+        // The split codepoint is dropped, leaving only the valid prefix.
+        assert_eq!(pm.content.len(), PROJECT_MEMORY_MAX_BYTES - 1);
+        assert!(pm.content.bytes().all(|b| b == b'a'));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
