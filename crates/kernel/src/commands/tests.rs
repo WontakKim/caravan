@@ -43,12 +43,11 @@ fn unknown_slash_command() {
 }
 
 #[test]
-fn quit_parses_as_unknown() {
-    // `/quit` was removed in favour of `/exit`; it must fall through to
-    // Command::Unknown so that typing `/quit` does NOT exit the application.
+fn quit_parses_as_exit() {
+    // `/quit` is an alias for `/exit`.
     assert!(matches!(
         parse_input("/quit"),
-        ParsedInput::SlashCommand(Command::Unknown(_))
+        ParsedInput::SlashCommand(Command::Exit)
     ));
 }
 
@@ -198,10 +197,10 @@ fn tool_plan_write_extra_token_is_unknown() {
 }
 
 #[test]
-fn regression_quit_is_unknown() {
+fn regression_quit_is_exit_alias() {
     assert!(matches!(
         parse_input("/quit"),
-        ParsedInput::SlashCommand(Command::Unknown(_))
+        ParsedInput::SlashCommand(Command::Exit)
     ));
 }
 
@@ -209,6 +208,66 @@ fn regression_quit_is_unknown() {
 fn regression_ask_hello_is_unknown() {
     assert!(matches!(
         parse_input("/ask hello"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+// --- Session-command parsing tests ---
+
+#[test]
+fn reset_parses_as_reset_session() {
+    assert!(matches!(
+        parse_input("/reset"),
+        ParsedInput::SlashCommand(Command::ResetSession)
+    ));
+}
+
+#[test]
+fn new_parses_as_reset_session() {
+    assert!(matches!(
+        parse_input("/new"),
+        ParsedInput::SlashCommand(Command::ResetSession)
+    ));
+}
+
+#[test]
+fn permissions_parses_correctly() {
+    assert!(matches!(
+        parse_input("/permissions"),
+        ParsedInput::SlashCommand(Command::Permissions)
+    ));
+}
+
+#[test]
+fn allowed_tools_parses_correctly() {
+    assert!(matches!(
+        parse_input("/allowed-tools"),
+        ParsedInput::SlashCommand(Command::AllowedTools)
+    ));
+}
+
+// --- Unsupported commands remain Unknown ---
+
+#[test]
+fn model_is_unknown() {
+    assert!(matches!(
+        parse_input("/model"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn plan_is_unknown() {
+    assert!(matches!(
+        parse_input("/plan"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn diff_is_unknown() {
+    assert!(matches!(
+        parse_input("/diff"),
         ParsedInput::SlashCommand(Command::Unknown(_))
     ));
 }

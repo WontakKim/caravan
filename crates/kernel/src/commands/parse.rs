@@ -11,7 +11,10 @@ pub fn parse_input(input: &str) -> ParsedInput {
         return ParsedInput::SlashCommand(match trimmed {
             "/help" => Command::Help,
             "/clear" => Command::Clear,
-            "/exit" => Command::Exit,
+            "/exit" | "/quit" => Command::Exit,
+            "/reset" | "/new" => Command::ResetSession,
+            "/permissions" => Command::Permissions,
+            "/allowed-tools" => Command::AllowedTools,
             "/context attach-last-tool" => Command::Context(ContextCommand::AttachLastTool),
             "/context clear" => Command::Context(ContextCommand::Clear),
             "/context status" => Command::Context(ContextCommand::Status),

@@ -125,6 +125,22 @@ impl App {
                             .append(EventKind::ExitRequest, "Exit requested");
                         self.should_exit = true;
                     }
+                    Command::ResetSession => {
+                        self.event_log.append(EventKind::LogClear, "Session reset");
+                        self.log.clear();
+                        self.last_tool_output_candidate = None;
+                        self.pending_manual_tool_context = None;
+                        self.pending_model_tool_request = None;
+                    }
+                    Command::Permissions => {
+                        self.log.push(
+                            "Permission posture: read-only (no write tools active)".to_string(),
+                        );
+                    }
+                    Command::AllowedTools => {
+                        self.log
+                            .push("Allowed tools: list_files, read_file".to_string());
+                    }
                     Command::Tool(tc) => self.handle_tool_command(tc),
                     Command::Context(cc) => self.handle_context_command(cc),
                     Command::Request(rc) => self.handle_request_command(rc),

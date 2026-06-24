@@ -58,7 +58,7 @@ fn input_routing_through_root_types() {
     ));
     assert!(matches!(
         kernel::commands::parse_input("/quit"),
-        ParsedInput::SlashCommand(Command::Unknown(_))
+        ParsedInput::SlashCommand(Command::Exit)
     ));
     assert!(matches!(
         kernel::commands::parse_input("/ask hello"),
