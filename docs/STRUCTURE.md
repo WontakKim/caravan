@@ -133,7 +133,7 @@ crates/tui/src/
 │   │   ├── request.rs     # /request command handler tests
 │   │   ├── policy.rs      # Tool-policy decision tests
 │   │   └── approval.rs    # /approval status, approve command tests, and reject command tests
-│   └── tools.rs     # handle_tool_command: /tool list, /tool read, /tool preview-write (dry-run diff preview, no write)
+│   └── tools.rs     # handle_tool_command: /tool list, /tool read, /tool preview-write (dry-run diff preview, no write), /tool propose-write (preview + approval request, no write)
 ├── input.rs        # Key-event handler: maps crossterm KeyEvents → App mutations
 ├── ui.rs           # Layout-orchestration root: draw() calls each widget's render helper; Nav and Main panel blocks remain inline in draw()
 └── ui/
@@ -256,6 +256,11 @@ constraints are enforced:
   produces no `ToolCall`/`ToolResult`/`ToolError`. Because no tool is executed,
   there is no resume candidacy; the request is resolved only via
   `/approval approve|reject <seq>`.
+- **`/tool propose-write <path>`** runs a preview dry-run and then records a
+  `ToolPolicy` (write_file workspace_write) and an `ApprovalRequest` carrying
+  the content-free preview summary. It performs **no actual write** and stores no
+  full content or diff lines in any event payload. The resulting `write_file`
+  approval is non-resumable (`/approval resume` is a no-op).
 - **TUI** reads from `EventLog` and `App` state to draw the screen. It writes
   to `App` state through `input::handle_key`. It never reaches into
   `model/openai/` internals or tool registry internals.

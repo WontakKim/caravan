@@ -58,6 +58,59 @@ shown to the operator in the screen log but are not written to the EventLog. The
 command performs **no file write**, creates **no** `ApprovalRequest`, and adds
 **no new `EventKind`** variant.
 
+**`/tool propose-write <path>`:** Submitting this command performs a preview
+dry-run (identical to `/tool preview-write`) and then records an `ApprovalRequest`
+carrying the content-free preview summary. Its hybrid event sequence on success is:
+
+```
+SlashCommand, ToolPolicy(preview_write read_only), ToolCall(preview_write),
+ToolResult(summary), ToolPolicy(write_file workspace_write),
+ApprovalRequest(with content-free preview summary)
+```
+
+When there is **no** latest read-only tool output candidate the command
+short-circuits — only the `SlashCommand` event is recorded (no
+`ToolPolicy`/`ToolCall`/`ToolResult`/`ToolError`):
+
+```
+SlashCommand
+```
+
+When a candidate exists but the preview fails (e.g. path out of workspace or
+unreadable target file) the sequence ends at `ToolError`:
+
+```
+SlashCommand, ToolPolicy(preview_write read_only), ToolCall(preview_write), ToolError
+```
+
+The command performs **no actual write** and no file I/O. The `ToolResult` stores
+**only** the content-free `WritePreview::detail()` summary (a key=value string;
+**no full content**, no diff lines). The `ApprovalRequest` likewise stores
+**only the content-free preview summary** — no diff lines and no proposed file
+content appear in any event payload (**summary-only / content-free** storage).
+The resulting approval is **non-resumable**: `to_tool_request()` returns `None`
+for `write_file`, so `/approval resume` is a no-op for a `write_file` approval.
+
+---
+
+### Command Comparison — plan-write vs preview-write vs propose-write
+
+| Command | Preview (dry-run) | ApprovalRequest | Actual write |
+|---------|:-----------------:|:---------------:|:------------:|
+| `/tool plan-write <path>` | No — approval-only skeleton, no preview | Yes | No |
+| `/tool preview-write <path>` | Yes — dry-run diff, content-free summary logged | No | No |
+| `/tool propose-write <path>` | Yes — same dry-run as preview-write | Yes — carries content-free preview summary | No |
+
+- **plan-write** records the mutation intent and queues an `ApprovalRequest` with
+  no preview data. It does not run `ToolCall`/`ToolResult`.
+- **preview-write** runs a read-only dry-run and shows the diff to the operator.
+  It records a content-free summary `ToolResult` and creates no `ApprovalRequest`.
+- **propose-write** combines the two: it runs the same dry-run as preview-write
+  (recording `ToolResult` with a content-free summary) and then also records an
+  `ApprovalRequest` — but performs **no write** in either phase.
+
+---
+
 **`/approval approve|reject`:** After the generic `SlashCommand` event, these
 commands append exactly one approval-specific event — an `ApprovalDecision`. No
 execution or file I/O occurs.
@@ -325,8 +378,12 @@ Recommended implementation order:
      lines or proposed/existing file content. Use `detail()` for any log or event
      payload; use `preview` only for display to the user. This distinction is
      critical: future code must never treat `WriteDiffSummary.preview` as log-safe.
-3. **Approval request with diff summary** — record an `ApprovalRequest` that
-   includes a bounded diff summary in its detail.
+3. **Approval request with diff summary** ✓ **(implemented)** — `/tool propose-write`
+   records a preview-backed `ApprovalRequest` that carries the content-free
+   `WritePreview::detail()` summary in its detail. It performs **no actual write**
+   and stores no full content or diff lines in any event payload (summary-only /
+   content-free). The resulting `write_file` approval is non-resumable; see the
+   `/tool propose-write` entry in the **Current State** section above.
 4. **Approval resume executes text write with atomic write** — implement
    `to_tool_request()` for `write_file`, atomic temp-rename write, and record
    `ToolCall` + `ToolResult`.
