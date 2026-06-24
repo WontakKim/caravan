@@ -2,6 +2,7 @@ use crate::events::{EventKind, EventLog, RunId, TurnId};
 use crate::manual_context::ManualToolContext;
 use crate::model::ModelRequest;
 use crate::model_gateway::ModelGateway;
+use crate::project_memory::ProjectMemory;
 
 pub struct MockRunOutput {
     pub user_message: String,
@@ -16,6 +17,7 @@ pub fn run_mock_turn(
     message: &str,
     gateway: &ModelGateway,
     manual_tool_context: Option<&ManualToolContext>,
+    project_memory: Option<&ProjectMemory>,
 ) -> MockRunOutput {
     let run_id = RunId(format!("run-{}", event_log.next_seq_value()));
     event_log.append(
@@ -34,8 +36,12 @@ pub fn run_mock_turn(
     // survives the subsequent PromptCompile append.
     let transcript = crate::transcript::ConversationTranscript::from_event_log(event_log);
     let history = transcript.without_trailing_user_message();
-    let prompt =
-        crate::prompt::compile_prompt_with_context(message, history, manual_tool_context, None);
+    let prompt = crate::prompt::compile_prompt_with_context(
+        message,
+        history,
+        manual_tool_context,
+        project_memory,
+    );
     event_log.append(EventKind::PromptCompile, prompt.clone());
     let request = ModelRequest {
         prompt,

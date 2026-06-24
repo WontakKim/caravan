@@ -14,7 +14,7 @@ use crate::model_types::{ModelAdapterKind, ModelProvider};
 fn run_mock_turn_appends_correct_event_sequence() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
     let n_tokens = "Mock response for: hello".split_whitespace().count();
@@ -48,7 +48,7 @@ fn run_mock_turn_appends_correct_event_sequence() {
 fn run_mock_turn_returns_correct_output_fields() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     assert_eq!(output.user_message, "hello");
     assert_eq!(output.assistant_response, "Mock response for: hello");
@@ -58,7 +58,7 @@ fn run_mock_turn_returns_correct_output_fields() {
 fn run_mock_turn_prompt_compile_detail_matches() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
     let pc = events
@@ -76,7 +76,7 @@ fn run_mock_turn_prompt_compile_detail_matches() {
 fn run_mock_turn_first_message_prompt_has_no_prior_context() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let pc = event_log
         .events()
@@ -93,10 +93,10 @@ fn run_mock_turn_second_message_includes_prior_transcript() {
 
     // The app appends the UserMessage before the runner runs; mirror that.
     event_log.append(EventKind::UserMessage, "first");
-    run_mock_turn(&mut event_log, "first", &gateway, None);
+    run_mock_turn(&mut event_log, "first", &gateway, None, None);
 
     event_log.append(EventKind::UserMessage, "second");
-    run_mock_turn(&mut event_log, "second", &gateway, None);
+    run_mock_turn(&mut event_log, "second", &gateway, None, None);
 
     let events = event_log.events();
     let second_pc = events
@@ -122,12 +122,12 @@ fn run_mock_turn_excludes_non_conversation_events_from_context() {
     let gateway = ModelGateway::default();
 
     event_log.append(EventKind::UserMessage, "first");
-    run_mock_turn(&mut event_log, "first", &gateway, None);
+    run_mock_turn(&mut event_log, "first", &gateway, None, None);
 
     // A slash command and other trace events must never enter the context.
     event_log.append(EventKind::SlashCommand, "/help");
     event_log.append(EventKind::UserMessage, "second");
-    run_mock_turn(&mut event_log, "second", &gateway, None);
+    run_mock_turn(&mut event_log, "second", &gateway, None, None);
 
     let events = event_log.events();
     let second_pc = events
@@ -146,7 +146,7 @@ fn run_mock_turn_excludes_non_conversation_events_from_context() {
 fn run_mock_turn_ids_match_event_seq_details() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -194,7 +194,7 @@ fn run_mock_turn_ids_match_event_seq_details() {
 fn run_mock_turn_chunk_count_matches_model_output() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let token_events = event_log
         .events()
@@ -216,7 +216,7 @@ fn run_mock_turn_chunk_count_matches_model_output() {
 fn run_mock_turn_response_matches_model_output() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     assert_eq!(
         output.assistant_response,
@@ -234,7 +234,7 @@ fn run_mock_turn_response_matches_model_output() {
 fn run_mock_turn_model_route_event_has_correct_detail() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -295,7 +295,7 @@ fn run_mock_turn_error_path_emits_model_error_and_run_fail_events() {
     let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
         message: "injected failure".into(),
     });
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -379,7 +379,7 @@ fn run_mock_turn_with_usage_some_emits_model_usage_event_in_correct_position() {
     let gateway =
         ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeUsageOpenAIClient));
     let mut event_log = EventLog::new();
-    let _output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let _output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -445,7 +445,7 @@ fn run_mock_turn_with_usage_some_model_usage_detail_is_exact() {
     let gateway =
         ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeUsageOpenAIClient));
     let mut event_log = EventLog::new();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
     let usage_event = events
@@ -463,7 +463,7 @@ fn run_mock_turn_with_usage_some_model_usage_detail_is_exact() {
 fn run_mock_turn_with_usage_none_emits_no_model_usage_event() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -501,7 +501,7 @@ fn run_mock_turn_with_usage_none_emits_no_model_usage_event() {
 fn run_mock_turn_assistant_message_detail_and_position_for_hello_caravan() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello caravan", &gateway, None);
+    run_mock_turn(&mut event_log, "hello caravan", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -570,7 +570,7 @@ fn run_mock_turn_detects_read_file_tool_request() {
         Box::new(FakeReadFileToolRequestClient),
     );
     let mut event_log = EventLog::new();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -656,7 +656,7 @@ fn run_mock_turn_detects_list_files_tool_request() {
         Box::new(FakeListFilesToolRequestClient),
     );
     let mut event_log = EventLog::new();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -715,7 +715,7 @@ fn run_mock_turn_sentinel_path_does_not_touch_filesystem() {
     let gateway =
         ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeSentinelPathClient));
     let mut event_log = EventLog::new();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -755,7 +755,7 @@ fn run_mock_turn_sentinel_path_does_not_touch_filesystem() {
 fn run_mock_turn_without_tool_request_block_emits_no_model_tool_request_event() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -771,7 +771,7 @@ fn run_mock_turn_error_path_emits_no_model_tool_request_event() {
     let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
         message: "injected failure for tool request test".into(),
     });
-    run_mock_turn(&mut event_log, "hello", &gateway, None);
+    run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let events = event_log.events();
 
@@ -795,7 +795,7 @@ fn run_mock_turn_detected_model_tool_request_read_file() {
         Box::new(FakeReadFileToolRequestClient),
     );
     let mut event_log = EventLog::new();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let detected = output
         .detected_model_tool_request
@@ -843,7 +843,7 @@ fn run_mock_turn_detected_model_tool_request_list_files() {
         Box::new(FakeListFilesToolRequestClient),
     );
     let mut event_log = EventLog::new();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     let detected = output
         .detected_model_tool_request
@@ -880,7 +880,7 @@ fn run_mock_turn_detected_model_tool_request_list_files() {
 fn run_mock_turn_detected_model_tool_request_none_for_default_mock() {
     let mut event_log = EventLog::new();
     let gateway = ModelGateway::default();
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     assert!(
         output.detected_model_tool_request.is_none(),
@@ -894,10 +894,59 @@ fn run_mock_turn_detected_model_tool_request_none_for_error_path() {
     let gateway = ModelGateway::failing_for_test(ModelError::AdapterFailure {
         message: "injected failure".into(),
     });
-    let output = run_mock_turn(&mut event_log, "hello", &gateway, None);
+    let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
     assert!(
         output.detected_model_tool_request.is_none(),
         "error path must return None for detected_model_tool_request"
     );
+}
+
+#[test]
+fn run_mock_turn_with_project_memory_includes_memory_in_prompt_compile() {
+    use std::io::Write as _;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("runner_pm_test_{}_{}", std::process::id(), id));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let claude_md_content = "# My Test Project\nBuild: cargo build";
+    let mut f = std::fs::File::create(dir.join("CLAUDE.md")).unwrap();
+    f.write_all(claude_md_content.as_bytes()).unwrap();
+    drop(f);
+
+    let project_memory = crate::project_memory::load_project_memory(&dir);
+
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    run_mock_turn(
+        &mut event_log,
+        "hello",
+        &gateway,
+        None,
+        Some(&project_memory),
+    );
+
+    let events = event_log.events();
+    let pc = events
+        .iter()
+        .find(|e| e.kind == EventKind::PromptCompile)
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("Project Memory:"),
+        "PromptCompile detail should contain 'Project Memory:'"
+    );
+    assert!(
+        pc.detail.contains("# My Test Project"),
+        "PromptCompile detail should contain CLAUDE.md heading"
+    );
+    assert!(
+        pc.detail.contains("Build: cargo build"),
+        "PromptCompile detail should contain CLAUDE.md body"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
 }

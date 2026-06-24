@@ -138,12 +138,15 @@ impl App {
             }
             ParsedInput::UserMessage(message) => {
                 self.event_log.append(EventKind::UserMessage, &message);
+                let project_memory =
+                    kernel::project_memory::load_project_memory(&self.workspace_root);
                 let pending_context = self.pending_manual_tool_context.take();
                 let output = kernel::runner::run_mock_turn(
                     &mut self.event_log,
                     &message,
                     &self.model_gateway,
                     pending_context.as_ref(),
+                    Some(&project_memory),
                 );
                 self.log.push(format!("User: {}", output.user_message));
                 if !output.assistant_response.is_empty() {
