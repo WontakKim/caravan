@@ -59,6 +59,38 @@ impl super::App {
             return;
         }
 
+        // Early-return: ProposeWrite runs the dry-run diff preview using
+        // last_tool_output_candidate as proposed content, then emits a workspace_write
+        // ToolPolicy + ApprovalRequest with the preview summary. It performs NO file
+        // write and does NOT update last_tool_output_candidate, pending_manual_tool_context,
+        // or pending_model_tool_request.
+        if let ToolCommand::ProposeWrite { path } = tc {
+            let Some(candidate) = self.last_tool_output_candidate.as_ref() else {
+                self.log.push(
+                    "No latest tool output to propose. Run /tool read <path> or /tool list [path] first.".to_string(),
+                );
+                return;
+            };
+            let content = candidate.content.clone();
+            let request = ToolRequest::PreviewWrite {
+                path: path.clone(),
+                content,
+            };
+            let runner = ToolEventRunner::new_readonly();
+            match runner.run(&mut self.event_log, &ctx, request) {
+                Ok(ToolOutput::WritePreview { preview, .. }) => {
+                    runner.append_write_approval(&mut self.event_log, &path, &preview);
+                    self.push_tool_write_proposal_output(&path, &preview);
+                }
+                Ok(_) => unreachable!("PreviewWrite only produces WritePreview output"),
+                Err(error) => {
+                    self.log.push("Write proposal preview failed:".to_string());
+                    self.push_tool_error_output(error);
+                }
+            }
+            return;
+        }
+
         let (request, display_path) = match tc {
             ToolCommand::List { path } => {
                 let dp = path.clone();
@@ -70,6 +102,7 @@ impl super::App {
             }
             ToolCommand::PlanWrite { .. } => unreachable!("handled above"),
             ToolCommand::PreviewWrite { .. } => unreachable!("handled above"),
+            ToolCommand::ProposeWrite { .. } => unreachable!("handled above"),
         };
         match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
             Ok(ToolOutput::FileList { entries, .. }) => {

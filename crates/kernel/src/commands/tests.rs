@@ -547,6 +547,34 @@ fn tool_preview_write_extra_token_is_unknown() {
     ));
 }
 
+// --- /tool propose-write parsing tests ---
+
+#[test]
+fn tool_propose_write_with_path() {
+    assert_eq!(
+        parse_input("/tool propose-write README.md"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::ProposeWrite {
+            path: "README.md".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_propose_write_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool propose-write"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_propose_write_extra_token_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool propose-write README.md extra"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
 // --- Explicit Unknown regressions ---
 
 #[test]

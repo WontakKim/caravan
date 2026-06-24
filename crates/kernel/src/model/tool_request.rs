@@ -440,4 +440,24 @@ mod tests {
             "write_file must not be accepted by the model tool-call parser"
         );
     }
+
+    #[test]
+    fn propose_write_snake_case_is_rejected_by_model_parser() {
+        let text = make_block("propose_write", Some("README.md"));
+        let result = parse_first_model_tool_request(&text);
+        assert_eq!(
+            result, None,
+            "propose_write must not be accepted by the model tool-call parser"
+        );
+    }
+
+    #[test]
+    fn propose_write_kebab_case_is_rejected_by_model_parser() {
+        let text = make_block("propose-write", Some("README.md"));
+        let result = parse_first_model_tool_request(&text);
+        assert_eq!(
+            result, None,
+            "propose-write must not be accepted by the model tool-call parser"
+        );
+    }
 }

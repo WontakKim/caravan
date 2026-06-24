@@ -60,6 +60,38 @@ impl super::App {
         }
     }
 
+    /// Pushes a bounded diff preview of a proposed write to the screen log, followed by
+    /// approval-request guidance lines.
+    ///
+    /// Mirrors [`push_tool_write_preview_output`] for the preview block but adds a blank
+    /// separator line and three approval-guidance lines so the user knows what to do next.
+    pub(super) fn push_tool_write_proposal_output(&mut self, path: &str, preview: &WritePreview) {
+        self.log
+            .push(format!("Write proposal preview for {}:", path));
+        self.log.push(preview.detail());
+        match preview.kind {
+            WritePreviewKind::NoChange => {
+                self.log.push("No changes.".to_string());
+            }
+            _ => {
+                self.log.push("Diff preview:".to_string());
+                for line in preview.diff.preview.iter().take(WRITE_DIFF_PREVIEW_LINES) {
+                    self.log.push(line.clone());
+                }
+                if preview.diff.truncated {
+                    self.log.push("... [truncated]".to_string());
+                }
+            }
+        }
+        self.log.push(String::new());
+        self.log
+            .push("Approval requested for proposed write.".to_string());
+        self.log
+            .push("Use /approval status to inspect pending approvals.".to_string());
+        self.log
+            .push("Use /approval approve <seq> or /approval reject <seq> to resolve.".to_string());
+    }
+
     /// Pushes a single human-readable error line derived from a [`kernel::ToolError`].
     pub(super) fn push_tool_error_output(&mut self, error: kernel::ToolError) {
         let msg = match error {
