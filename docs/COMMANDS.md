@@ -15,6 +15,11 @@ primary interface for all Caravan users.
 | `/help` | Show the list of available commands |
 | `/clear` | Clear the screen log (Main panel); the append-only Event Log is unaffected |
 | `/exit` | Exit the application cleanly |
+| `/quit` | Exit the application (alias for `/exit`) |
+| `/reset` | Reset the session: clears the conversation transcript and starts a fresh session |
+| `/new` | Start a new conversation, clearing the current conversation context |
+| `/permissions` | Display the current tool permission and policy settings |
+| `/allowed-tools` | List the tools currently permitted in this session |
 | *(plain text)* | Submit a task to the assistant; runs the mock Run/Turn flow and appends `User:` / `Assistant:` output to the Main panel |
 
 **Project memory:** If a `CLAUDE.md` file is present at the workspace root, its content

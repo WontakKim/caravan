@@ -203,7 +203,8 @@ When `hello world` is entered, the following events are appended in order:
 3. `RunStart` — the Run transitions to the running state.
 4. `TurnStart` — the first (and only) Turn begins; `turn_id` is in `detail`.
 5. `PromptCompile` — the prompt compiler processes the input into the
-   System/User/Context/Output template; the event `detail` holds the compiled
+   System / Project Memory / Conversation / Current User / Workspace Context /
+   Operating Rules / Output template; the event `detail` holds the compiled
    prompt preview.
 6. `ModelRoute` — `ModelGateway` selects the provider/model/adapter route; the
    event `detail` carries the route metadata (mock provider, model, and adapter).
@@ -260,7 +261,7 @@ commands from plain-text user messages. For plain text it appends the
 `UserMessage` event to the log and updates the screen log, then delegates all
 Run/Turn event assembly to `crates/kernel/src/runner.rs`.
 
-`runner::run_mock_turn(event_log, message, gateway, manual_tool_context)` owns the full Run/Turn lifecycle.
+`runner::run_mock_turn(event_log, message, project_memory, gateway, manual_tool_context)` owns the full Run/Turn lifecycle.
 It appends the sequence `RunCreate → RunStart → TurnStart → PromptCompile →
 ModelRoute → ModelOutputChunk* → AssistantMessage → RunComplete` to the event log (but **not**
 `UserMessage`, which `App::submit()` has already recorded). It returns a `MockRunOutput` value that
@@ -279,11 +280,14 @@ running terminal.
 ## Prompt Compiler POC
 
 Plain-text user input is compiled into a structured prompt before being passed
-to the model. The prompt compiler produces a fixed five-section template:
+to the model. The prompt compiler produces a seven-section template:
 
 ```
 System:
-You are Caravan's local assistant.
+You are Caravan, a local coding assistant inspired by Claude Code.
+
+Project Memory:
+<contents of CLAUDE.md if present at the workspace root, or empty>
 
 Conversation:
 No prior conversation context.
@@ -291,21 +295,26 @@ No prior conversation context.
 Current User:
 <message>
 
-Context:
-No external tool context is available in this POC.
+Workspace Context:
+No external tool context is available.
+
+Operating Rules:
+<operating guidelines for the assistant>
 
 Output:
 Respond to the current user message.
 ```
 
 `compile_prompt(message)` renders the empty-history case shown above. It
-delegates to `compile_prompt_with_context(message, history, manual_tool_context)`, which fills the
-`Conversation:` section from recent transcript messages — see
+delegates to `compile_prompt_with_context(message, project_memory, history, manual_tool_context)`, which fills the
+`Conversation:` section from recent transcript messages and injects `project_memory`
+into the `Project Memory:` section — see
 [Prompt Context Window](#prompt-context-window). The result is stored in the
 `PromptCompile` event `detail` field as the compiled prompt preview. When you
 select a `PromptCompile` event in the **Inspector** panel, the panel displays
-this full System / Conversation / Current User / Context / Output preview,
-letting you inspect exactly what was compiled for that turn.
+this full System / Project Memory / Conversation / Current User / Workspace Context /
+Operating Rules / Output preview, letting you inspect exactly what was compiled
+for that turn.
 
 ## ModelAdapter Boundary
 
@@ -411,7 +420,7 @@ active profile — the gateway reads `active_profile.provider`, `.model`, and
 
 `App` owns the `ModelGateway` (constructed at startup with the default
 `ModelConfig`/`ModelProfile`) and injects it into
-`runner::run_mock_turn(event_log, message, gateway, manual_tool_context)` on every call.
+`runner::run_mock_turn(event_log, message, project_memory, gateway, manual_tool_context)` on every call.
 
 > **This is NOT a real LLM integration.** There is no API key, no provider
 > configuration, no network call, and no external service dependency. The
@@ -1051,7 +1060,7 @@ appears only under `Current User:` and is never duplicated into `Conversation:`.
 - **Window:** capped at the last `DEFAULT_PROMPT_HISTORY_MESSAGES` (6) messages.
   When there is no prior history, the section reads `No prior conversation
   context.`.
-- **Helper:** `compile_prompt_with_context(current_user_message, history, manual_tool_context)` owns
+- **Helper:** `compile_prompt_with_context(current_user_message, project_memory, history, manual_tool_context)` owns
   both the formatting and the window cap; `compile_prompt(message)` is its
   empty-history case.
 - **`/clear`:** clears only the on-screen log, not the event log, so it is
@@ -1513,7 +1522,7 @@ marker); larger tool outputs are truncated before being inserted into the prompt
    output is available, a notice is shown and no `ToolContextAttach` event is
    emitted.
 3. Submit your next plain-text message. The pending tool output is injected into
-   the `Context:` section of the compiled prompt for that turn.
+   the `Workspace Context:` section of the compiled prompt for that turn.
 4. After the run completes, the pending context is automatically cleared — it is
    not carried forward into future turns (this auto-clear emits no event).
 
@@ -1550,17 +1559,17 @@ tool=read_file path="README.md" risk=read_only bytes=<n> truncated=<bool>
 ```
 
 This summary is **summary-only** — it never includes the raw file content.
-Full file content appears **only** in the PromptCompile `Context:` section
+Full file content appears **only** in the PromptCompile `Workspace Context:` section
 (see below), never in `/context status` output or the `ToolContextAttach` event
 detail.
 
-#### PromptCompile `Context:` section
+#### PromptCompile `Workspace Context:` section
 
 When pending manual tool context is present, the prompt compiler renders a
-structured block inside the `Context:` section:
+structured block inside the `Workspace Context:` section:
 
 ```
-Context:
+Workspace Context:
 Manual Tool Context:
 Source:
   tool=read_file path="README.md" risk=read_only truncated=false
@@ -1568,12 +1577,12 @@ Content:
 <bounded file content, at most 4096 bytes>
 ```
 
-When no manual tool context has been staged, the `Context:` section contains
+When no manual tool context has been staged, the `Workspace Context:` section contains
 the fallback literal exactly as written:
 
 ```
-Context:
-No external tool context is available in this POC.
+Workspace Context:
+No external tool context is available.
 ```
 
 This fallback is also the text shown for any turn where context was not attached
@@ -1616,36 +1625,28 @@ renderer, **not** JSON Schema, OpenAI function-calling JSON, or MCP tool definit
 Both specs carry `risk: ToolRisk::ReadOnly`. No write, shell, delete, or network
 tool spec is registered.
 
-### `Available Tools` Prompt Section
+### `ToolCatalog::render_prompt_section()` — Experimental Harness Only
 
-`PromptCompile` now includes an `Available Tools` section rendered from the catalog.
 `ToolCatalog::render_prompt_section()` produces a plain-text block that begins with
 an `Available Tools:` header, followed by a guidance paragraph and one entry per
-tool (name, slash command, risk, description, and inputs). This block is appended
-between the `Context:` section and the `Output:` section in every compiled prompt,
-regardless of whether manual tool context has been attached.
+tool (name, slash command, risk, description, and inputs).
 
-The rendered block states explicitly:
+> **This generator is experimental-harness-only.** The default Claude-baseline
+> prompt does **not** call `render_prompt_section()` and does **not** include an
+> `Available Tools` section. The method exists as a structural seam for future
+> experimentation and is not wired into the `compile_prompt_with_context` path
+> used by the standard Run/Turn flow.
 
-> The model cannot call these tools automatically in this POC — tool invocation
-> always requires an explicit user command.
-> Tool output is not included in the prompt unless the user runs
-> `/context attach-last-tool`.
+### No Automatic Tool Calling
 
-### Informational Only — No Automatic Tool Calling
-
-This section is **descriptive only**. The model receives the tool schema as context
-so it knows which tools exist and what they do, but it cannot invoke them directly.
 All tool execution is manual:
 
 1. Run `/tool list [path]` or `/tool read <path>` to execute a read-only tool.
 2. Run `/context attach-last-tool` to stage the tool output as pending prompt context.
 3. Submit your next plain-text message — the tool output is injected into the
-   `Context:` section of the compiled prompt for that turn only.
+   `Workspace Context:` section of the compiled prompt for that turn only.
 
-Without step 2, the `Available Tools` block names the tools but includes **no tool
-output** in the prompt. Automatic or model-driven tool calling is explicitly out of
-scope for this POC.
+Automatic or model-driven tool calling is explicitly out of scope for this POC.
 
 ## Model Tool Request Detection (Detect-Only)
 
@@ -1702,7 +1703,7 @@ completes the steps below.
    `/tool list [path]`.
 3. Run `/context attach-last-tool` to stage the tool output as pending context.
 4. Submit your next plain-text message — the tool output is injected into the
-   `Context:` section of the compiled prompt for that turn only.
+   `Workspace Context:` section of the compiled prompt for that turn only.
 
 Without step 2, the `ModelToolRequest` event is recorded but the tool is never
 run and no output enters the prompt. Detection is strictly observe-and-act —
