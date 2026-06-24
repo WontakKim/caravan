@@ -12,6 +12,7 @@ use crate::tool::policy::{ToolPolicyDecision, ToolPolicyEngine, format_tool_poli
 use crate::tool::registry::{
     ToolError, ToolExecutionContext, ToolOutput, ToolRegistry, ToolRequest,
 };
+use crate::write_preview::WritePreview;
 
 /// Runs read-only tool calls and records them in an [`EventLog`].
 pub struct ToolEventRunner {
@@ -116,6 +117,46 @@ impl ToolEventRunner {
                     reason: outcome.reason.clone(),
                 })
             }
+        }
+    }
+
+    /// Appends a `ToolPolicy` event and, when approval is required, an
+    /// `ApprovalRequest` event to `event_log` for a propose-write operation.
+    ///
+    /// The `ApprovalRequest` detail is the standard approval detail string with
+    /// `preview.approval_summary()` appended, producing a content-free summary
+    /// of the pending write.
+    ///
+    /// MUST NOT append any `ToolCall`, `ToolResult`, or `ToolError` event and
+    /// MUST perform no filesystem write.
+    pub fn append_write_approval(
+        &self,
+        event_log: &mut EventLog,
+        path: &str,
+        preview: &WritePreview,
+    ) {
+        let outcome = self.policy.evaluate(&ToolRequest::PlanWrite {
+            path: path.to_string(),
+        });
+        event_log.append(
+            EventKind::ToolPolicy,
+            format_tool_policy_detail("write_file", path, &outcome),
+        );
+        let gate = ApprovalGate::new();
+        if let Some(request) = gate.evaluate(
+            "write_file",
+            path,
+            outcome.risk.as_str(),
+            &outcome.approval_requirement,
+        ) {
+            event_log.append(
+                EventKind::ApprovalRequest,
+                format!(
+                    "{} {}",
+                    format_approval_request_detail(&request),
+                    preview.approval_summary()
+                ),
+            );
         }
     }
 }

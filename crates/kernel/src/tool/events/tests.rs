@@ -2,9 +2,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::*;
+use crate::approval::ParsedApprovalRequest;
 use crate::events::{EventKind, EventLog};
 use crate::storage::EventStore;
 use crate::tool::registry::{ToolExecutionContext, ToolOutput};
+use crate::write_intent::{WriteIntentMode, WriteIntentSource, new_text};
+use crate::write_preview::preview_write_intent;
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -923,5 +926,160 @@ fn preview_write_directory_target_maps_to_not_a_file() {
         matches!(result, Err(ToolError::NotAFile { .. })),
         "expected NotAFile, got {:?}",
         result
+    );
+}
+
+// --- append_write_approval tests ---
+
+const APPEND_WRITE_APPROVAL_SENTINEL: &str = "APPEND_WRITE_APPROVAL_SENTINEL_XYZ_12345678";
+
+fn make_write_preview_intent(path: &str, content: &str) -> crate::write_intent::WriteIntent {
+    new_text(
+        path,
+        content,
+        WriteIntentMode::CreateOrReplace,
+        WriteIntentSource::Operator,
+    )
+    .expect("valid intent")
+}
+
+// (a) append_write_approval emits exactly ToolPolicy then ApprovalRequest.
+#[test]
+fn append_write_approval_emits_tool_policy_then_approval_request() {
+    let dir = TempDir::new();
+    std::fs::write(
+        dir.path().join("target.txt"),
+        APPEND_WRITE_APPROVAL_SENTINEL,
+    )
+    .expect("write file");
+    let ctx = make_context(dir.path());
+    let intent = make_write_preview_intent("target.txt", "replacement content\n");
+    let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner.append_write_approval(&mut log, "target.txt", &preview);
+
+    // Exactly two events in order.
+    assert_eq!(log.len(), 2, "expected 2 events, got {}", log.len());
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ApprovalRequest);
+
+    // No ToolCall, ToolResult, or ToolError events.
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolCall),
+        "ToolCall must not be appended"
+    );
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolResult),
+        "ToolResult must not be appended"
+    );
+    assert!(
+        !log.events().iter().any(|e| e.kind == EventKind::ToolError),
+        "ToolError must not be appended"
+    );
+}
+
+// (b) ToolPolicy detail has the expected exact format.
+#[test]
+fn append_write_approval_tool_policy_detail_exact() {
+    let dir = TempDir::new();
+    let ctx = make_context(dir.path());
+    let intent = make_write_preview_intent("README.md", "new content\n");
+    let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner.append_write_approval(&mut log, "README.md", &preview);
+
+    let policy_detail = &log.get(0).unwrap().detail;
+    assert_eq!(
+        policy_detail,
+        r#"tool=write_file path="README.md" risk=workspace_write decision=allow reason=workspace_write_requires_approval"#,
+        "ToolPolicy detail mismatch: {policy_detail}"
+    );
+}
+
+// (c) ApprovalRequest detail starts with expected prefix and contains summary fields.
+#[test]
+fn append_write_approval_approval_request_detail_structure() {
+    let dir = TempDir::new();
+    std::fs::write(
+        dir.path().join("target.txt"),
+        APPEND_WRITE_APPROVAL_SENTINEL,
+    )
+    .expect("write file");
+    let ctx = make_context(dir.path());
+    let intent = make_write_preview_intent("target.txt", "replacement content\n");
+    let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner.append_write_approval(&mut log, "target.txt", &preview);
+
+    let approval_detail = &log.get(1).unwrap().detail;
+
+    // Starts with expected prefix (note trailing space before summary).
+    assert!(
+        approval_detail.starts_with(
+            r#"tool=write_file path="target.txt" risk=workspace_write reason=workspace_write_requires_approval "#
+        ),
+        "ApprovalRequest detail must start with expected prefix: {approval_detail}"
+    );
+
+    // Contains preview summary fields.
+    assert!(
+        approval_detail.contains("preview_kind="),
+        "expected preview_kind= in approval detail: {approval_detail}"
+    );
+    assert!(
+        approval_detail.contains("truncated="),
+        "expected truncated= in approval detail: {approval_detail}"
+    );
+
+    // No diff lines.
+    for line in approval_detail.lines() {
+        assert!(
+            !line.starts_with("+ ") && !line.starts_with("- "),
+            "approval detail must not contain diff lines: {line}"
+        );
+    }
+
+    // No content sentinel leak.
+    assert!(
+        !approval_detail.contains(APPEND_WRITE_APPROVAL_SENTINEL),
+        "approval detail must not contain file content sentinel: {approval_detail}"
+    );
+}
+
+// (d) ParsedApprovalRequest parses correctly and to_tool_request() returns None.
+#[test]
+fn append_write_approval_parsed_approval_request_non_resumable() {
+    let dir = TempDir::new();
+    let ctx = make_context(dir.path());
+    let intent = make_write_preview_intent("output.txt", "new file content\n");
+    let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner.append_write_approval(&mut log, "output.txt", &preview);
+
+    let approval_detail = &log.get(1).unwrap().detail;
+
+    let parsed = ParsedApprovalRequest::parse_detail(approval_detail)
+        .expect("ApprovalRequest detail must parse");
+
+    assert_eq!(parsed.tool, "write_file");
+    assert_eq!(parsed.path, "output.txt");
+    assert_eq!(parsed.risk, "workspace_write");
+
+    // Non-resumable: write_file is not a recognised resumable tool.
+    assert!(
+        parsed.to_tool_request().is_none(),
+        "write_file approval must be non-resumable (to_tool_request must return None)"
     );
 }

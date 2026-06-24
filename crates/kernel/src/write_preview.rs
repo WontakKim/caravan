@@ -108,6 +108,32 @@ pub struct WritePreview {
 }
 
 impl WritePreview {
+    /// Returns a content-free key=value approval summary string.
+    ///
+    /// Exactly the fields needed for the `ApprovalRequest` event detail suffix.
+    /// MUST NOT contain any diff preview lines or proposed/existing file content.
+    pub(crate) fn approval_summary(&self) -> String {
+        let old_bytes = match self.diff.old_bytes {
+            Some(n) => n.to_string(),
+            None => "none".to_string(),
+        };
+        let old_lines = match self.diff.old_lines {
+            Some(n) => n.to_string(),
+            None => "none".to_string(),
+        };
+        format!(
+            "preview_kind={} old_bytes={} new_bytes={} old_lines={} new_lines={} additions={} removals={} truncated={}",
+            self.kind.as_str(),
+            old_bytes,
+            self.diff.new_bytes,
+            old_lines,
+            self.diff.new_lines,
+            self.diff.additions,
+            self.diff.removals,
+            self.diff.truncated,
+        )
+    }
+
     /// Returns a content-free key=value summary suitable for logging.
     ///
     /// MUST NOT contain any preview lines or proposed/existing file content.
@@ -1076,5 +1102,91 @@ mod tests {
 
         let after = std::fs::read_to_string(dir.path().join("existing.txt")).expect("read file");
         assert_eq!(after, original, "preview must not modify the existing file");
+    }
+
+    // --- approval_summary tests ---
+
+    // (ab) approval_summary contains all required key=value fields.
+    #[test]
+    fn approval_summary_contains_all_required_fields() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let intent = make_intent("new.txt", "line one\nline two\n");
+
+        let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+        let summary = preview.approval_summary();
+
+        assert!(
+            summary.contains("preview_kind="),
+            "expected preview_kind= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("old_bytes="),
+            "expected old_bytes= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("new_bytes="),
+            "expected new_bytes= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("old_lines="),
+            "expected old_lines= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("new_lines="),
+            "expected new_lines= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("additions="),
+            "expected additions= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("removals="),
+            "expected removals= in summary: {summary}"
+        );
+        assert!(
+            summary.contains("truncated="),
+            "expected truncated= in summary: {summary}"
+        );
+    }
+
+    // (ac) approval_summary contains no existing file content.
+    #[test]
+    fn approval_summary_contains_no_file_content() {
+        let dir = TempDir::new();
+        let sentinel = "APPROVAL_SUMMARY_CONTENT_SENTINEL_XYZ_9182736";
+        std::fs::write(
+            dir.path().join("secret.txt"),
+            format!("{sentinel}\nmore content\n"),
+        )
+        .expect("write file");
+        let ctx = make_context(dir.path());
+        let intent = make_intent("secret.txt", "replacement content\n");
+
+        let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+        let summary = preview.approval_summary();
+
+        assert!(
+            !summary.contains(sentinel),
+            "approval_summary must not contain existing file content: {summary}"
+        );
+    }
+
+    // (ad) approval_summary contains no diff lines (no "+ " or "- " prefixed lines).
+    #[test]
+    fn approval_summary_contains_no_diff_lines() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let intent = make_intent("new.txt", "line one\nline two\n");
+
+        let preview = preview_write_intent(&ctx, &intent).expect("should succeed");
+        let summary = preview.approval_summary();
+
+        for line in summary.lines() {
+            assert!(
+                !line.starts_with("+ ") && !line.starts_with("- "),
+                "approval_summary must not contain diff lines: {line}"
+            );
+        }
     }
 }
