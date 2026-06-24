@@ -35,7 +35,16 @@ tool event sequence on success:
 SlashCommand, ToolPolicy, ToolCall, ToolResult
 ```
 
-On preview error (e.g. no tool output candidate available, path out of workspace,
+When there is **no** latest read-only tool output candidate, the dry-run is not
+started at all: only the `SlashCommand` event is recorded and the operator sees
+the screen-log notice `No latest tool output to preview. Run /tool read <path>
+or /tool list [path] first.` (no `ToolPolicy`/`ToolCall`/`ToolResult`/`ToolError`):
+
+```
+SlashCommand
+```
+
+When a candidate exists but the preview itself fails (e.g. path out of workspace
 or unreadable target file):
 
 ```
