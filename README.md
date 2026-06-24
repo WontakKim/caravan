@@ -1,6 +1,28 @@
 # Caravan
 
-A minimal Rust TUI shell skeleton. Agents, models, and tools are out of scope for this POC.
+Caravan is currently a **Claude Code-like local coding agent baseline** — a Rust TUI shell
+that lets you interact with an assistant the same way Claude Code does:
+
+- **Plain text** submits a task to the assistant and runs the mock Run/Turn flow.
+- **`CLAUDE.md` project memory** is read from the workspace root at session start and
+  injected into the main prompt when present (see `project_memory` module in `crates/kernel`).
+- **Slash commands** (`/help`, `/clear`, `/exit`, …) control session state.
+- **Tool/approval/write commands** (`/tool`, `/context`, `/request`, `/approval`) are an
+  **experimental harness layer** — not the primary user experience. They exist as a
+  structural seam for future agentic tooling and are not yet part of the core assistant flow.
+
+> **File mutation is still not implemented.** `/tool plan-write`, `/tool preview-write`, and
+> `/tool propose-write` perform no real write to the filesystem. Actual file mutation is
+> explicitly deferred to a future task.
+
+> **`CLAUDE.md` may contain secrets.** Caravan loads `CLAUDE.md` from the workspace root and
+> injects its content into the model prompt. There is no automatic secret detection — do not
+> place API keys, tokens, passwords, or other sensitive values in `CLAUDE.md`.
+
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the full command reference, including which
+commands are experimental, reserved, or explicitly unsupported.
+
+---
 
 ## Workspace Structure
 

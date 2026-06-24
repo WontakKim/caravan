@@ -1,8 +1,43 @@
 # Caravan — Internal Structure Guide
 
 This document describes the on-disk layout of the Caravan repository after the
-initial POC refactoring pass (T-1 through T-4). Its purpose is to make the
+initial POC refactoring pass (T-1 through T-5). Its purpose is to make the
 chosen structure and the splitting criteria explicit for the next contributor.
+
+---
+
+## 0. Architectural Layers
+
+Caravan is structured in two distinct layers. Understanding this split is the
+key to navigating the codebase.
+
+### Claude Baseline Layer (primary)
+
+This layer implements the Claude Code-like local coding agent baseline.
+
+| Component | Module | Description |
+|-----------|--------|-------------|
+| **Project Memory** | `crates/kernel/src/project_memory.rs` | Loads `CLAUDE.md` from the workspace root at session start and exposes it as `ProjectMemory`. The content is injected into the compiled prompt so the assistant has persistent project context across turns. If no `CLAUDE.md` is present, a "not found" fallback is used. Capped at 32 KiB; truncation is flagged. |
+| **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Context / Available Tools / Output` sections from `ProjectMemory`, `ConversationTranscript`, `ManualToolContext`, and the static `ToolCatalog`. |
+| **Conversation transcript** | `crates/kernel/src/transcript.rs` | Read-only projection of `UserMessage` and `AssistantMessage` events; feeds the `Conversation:` prompt section for in-session history. |
+| **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; submits the compiled prompt to `ModelGateway` and appends result events. |
+| **Storage / event log** | `crates/kernel/src/storage.rs`, `events/` | Append-only JSONL persistence; replays across restarts. |
+
+> **`CLAUDE.md` may contain secrets.** There is no automatic secret detection.
+> Do not store credentials or sensitive values in `CLAUDE.md`.
+
+### Experimental Harness Layer (secondary)
+
+This layer is a structural seam for future agentic tooling. It is **not** the
+primary user experience and sits clearly below the baseline layer in priority.
+Actual file mutation is still not implemented.
+
+| Component | Module | Description |
+|-----------|--------|-------------|
+| **Tool harness** | `crates/kernel/src/tool/` | `registry.rs` (list/read tools), `policy.rs` (auto-allow for read-only tools), `events.rs` (ToolPolicy / ToolCall / ToolResult / ToolError), `schema.rs` (prompt-visible catalog). |
+| **Approval gate** | `crates/kernel/src/approval.rs`, `approval_queue.rs` | Data types and projection for the manual-approval flow; `/approval approve|reject|resume` commands. No tool write execution yet. |
+| **Write intent / preview** | `crates/kernel/src/write_intent.rs`, `write_preview.rs` | Pure data model and dry-run diff preview for proposed writes. **No file is ever written**; these are skeleton types only. |
+| **Manual tool context** | `crates/kernel/src/manual_context.rs` | One-shot attachment of tool output to the next prompt via `/context attach-last-tool`. |
 
 ---
 
@@ -38,6 +73,7 @@ crates/kernel/src/
 │   ├── log.rs           # EventLog
 │   └── tests.rs         # Unit tests
 ├── manual_context.rs    # ManualToolContext: user-attached tool context blobs
+├── project_memory.rs    # Project Memory: loads CLAUDE.md from workspace root (capped at 32 KiB); exposes ProjectMemory / ProjectMemorySource / load_project_memory; injected into the prompt's Project Memory section at session start
 ├── model_config.rs      # Facade: pub use crate::model::config::*
 ├── model_gateway.rs     # Facade: pub use crate::model::gateway::*
 ├── model_registry.rs    # Facade: pub use crate::model::registry::*
