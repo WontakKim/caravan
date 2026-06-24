@@ -12,6 +12,7 @@ pub mod model_registry;
 pub mod model_runtime_config;
 pub mod model_tool_request;
 pub mod model_types;
+pub mod project_memory;
 pub mod prompt;
 pub mod runner;
 pub mod storage;
@@ -45,6 +46,7 @@ pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,
     ModelUsage,
 };
+pub use project_memory::*;
 pub use runner::{MockRunOutput, run_mock_turn};
 pub use storage::EventStore;
 pub use tool::events::ToolEventRunner;
