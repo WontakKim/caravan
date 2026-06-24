@@ -18,7 +18,7 @@ This layer implements the Claude Code-like local coding agent baseline.
 | Component | Module | Description |
 |-----------|--------|-------------|
 | **Project Memory** | `crates/kernel/src/project_memory.rs` | Loads `CLAUDE.md` from the workspace root at session start and exposes it as `ProjectMemory`. The content is injected into the compiled prompt so the assistant has persistent project context across turns. If no `CLAUDE.md` is present, a "not found" fallback is used. Capped at 32 KiB; truncation is flagged. |
-| **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Context / Available Tools / Output` sections from `ProjectMemory`, `ConversationTranscript`, `ManualToolContext`, and the static `ToolCatalog`. |
+| **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Workspace Context / Operating Rules / Output` sections from `ProjectMemory`, `ConversationTranscript`, and (only when explicitly attached) `ManualToolContext`. The default prompt does not include an "Available Tools" section; tool/approval/write behavior belongs to the experimental harness layer and is not advertised in the baseline prompt. |
 | **Conversation transcript** | `crates/kernel/src/transcript.rs` | Read-only projection of `UserMessage` and `AssistantMessage` events; feeds the `Conversation:` prompt section for in-session history. |
 | **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; submits the compiled prompt to `ModelGateway` and appends result events. |
 | **Storage / event log** | `crates/kernel/src/storage.rs`, `events/` | Append-only JSONL persistence; replays across restarts. |
@@ -80,7 +80,7 @@ crates/kernel/src/
 ├── model_runtime_config.rs  # Facade: pub use crate::model::runtime_config::*
 ├── model_tool_request.rs    # Facade: pub use crate::model::tool_request::*
 ├── model_types.rs       # Facade: pub use crate::model::types::*
-├── prompt.rs            # Prompt compilation: transcript + manual context + static ToolCatalog section → prompt string
+├── prompt.rs            # Prompt compilation: project memory + transcript + (optional) manual context → Claude-baseline prompt string (no Available Tools section)
 ├── runner.rs            # Turn execution orchestrator (run_mock_turn, MockRunOutput)
 ├── storage.rs           # EventStore: JSONL persistence for EventLog
 ├── transcript.rs        # ConversationTranscript / TranscriptMessage / TranscriptRole
@@ -267,10 +267,12 @@ constraints are enforced:
 └─────────────────────────────────────────────────────┘
 ```
 
-- **Prompt** builds the prompt string from `ConversationTranscript`,
-  `ManualToolContext`, and the static read-only `ToolCatalog` prompt section
-  (`tool::schema`); it produces the prompt text placed in the `ModelRequest`. It
-  does not touch the event log.
+- **Prompt** builds the Claude-baseline prompt string from `ProjectMemory`,
+  `ConversationTranscript`, and — only when explicitly attached — `ManualToolContext`
+  (rendered in the `Workspace Context` section); it produces the prompt text placed
+  in the `ModelRequest`. The experimental `ToolCatalog` prompt section
+  (`tool::schema`) is no longer part of the default prompt. It does not touch the
+  event log.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a
   `ModelRequest` and returns `ModelOutput`. It has no knowledge of tools,
   prompts, or the event log.
