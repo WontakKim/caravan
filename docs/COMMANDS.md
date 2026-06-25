@@ -80,6 +80,14 @@ future agentic tooling. They may change substantially and are not surfaced in
 
 ### Request commands
 
+> **Experimental — not connected to the default runtime.** The default runtime
+> does **not** auto-detect model tool requests. `/request` commands exist solely
+> as internal/experimental compatibility infrastructure — a structural seam for
+> future agentic tooling. They are **not connected to the default runtime** and
+> must not be treated as part of the basic command surface. For basic tool
+> invocation, use `/tool read` and `/tool list` (see
+> [Basic Workspace Tools](#basic-workspace-tools) above).
+
 | Command | Description |
 |---------|-------------|
 | `/request status` | Show the pending model tool request; does not run the model or any tool |
