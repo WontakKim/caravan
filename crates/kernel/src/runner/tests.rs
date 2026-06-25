@@ -336,14 +336,9 @@ fn run_mock_turn_error_path_emits_model_error_and_run_fail_events() {
     );
 }
 
-// FakeUsageOpenAIClient content must NOT contain a CARAVAN_TOOL_REQUEST block.
-// Changing the `content` field to include such a block would silently invalidate the
-// pinned event-sequence length assertions in
-// `run_mock_turn_appends_correct_event_sequence` (which uses the default mock gateway,
-// not this client) and `run_mock_turn_with_usage_none_emits_no_model_usage_event` tests,
-// as well as the exact-sequence assertions in
-// `run_mock_turn_with_usage_some_emits_model_usage_event_in_correct_position`, because
-// the detection logic would inject an extra `ModelToolRequest` event into the sequence.
+// This struct exists to test ModelUsage event sequencing. Its content does not contain a
+// CARAVAN_TOOL_REQUEST block, and as of this commit detection is disabled in the default
+// runtime path regardless.
 struct FakeUsageOpenAIClient;
 
 impl OpenAIHttpClient for FakeUsageOpenAIClient {
@@ -557,7 +552,7 @@ impl OpenAIHttpClient for FakeReadFileToolRequestClient {
 }
 
 #[test]
-fn run_mock_turn_detects_read_file_tool_request() {
+fn run_mock_turn_does_not_detect_read_file_tool_request_by_default() {
     let config = ModelConfig {
         active_profile: ModelProfile {
             provider: ModelProvider::OpenAI,
@@ -574,41 +569,10 @@ fn run_mock_turn_detects_read_file_tool_request() {
 
     let events = event_log.events();
 
-    let assistant_msg_idx = events
-        .iter()
-        .position(|e| e.kind == EventKind::AssistantMessage)
-        .expect("AssistantMessage event should exist");
-    let tool_req_idx = events
-        .iter()
-        .position(|e| e.kind == EventKind::ModelToolRequest)
-        .expect("ModelToolRequest event should exist");
-    let model_usage_idx = events
-        .iter()
-        .position(|e| e.kind == EventKind::ModelUsage)
-        .expect("ModelUsage event should exist");
-    let run_complete_idx = events
-        .iter()
-        .position(|e| e.kind == EventKind::RunComplete)
-        .expect("RunComplete event should exist");
-
     assert!(
-        tool_req_idx > assistant_msg_idx,
-        "ModelToolRequest must be after AssistantMessage"
+        !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+        "ModelToolRequest must not be emitted in default path even when CARAVAN_TOOL_REQUEST block is present"
     );
-    assert!(
-        tool_req_idx < model_usage_idx,
-        "ModelToolRequest must be before ModelUsage when usage is present"
-    );
-    assert!(
-        tool_req_idx < run_complete_idx,
-        "ModelToolRequest must be before RunComplete"
-    );
-
-    assert_eq!(
-        events[tool_req_idx].detail,
-        "source=model tool=read_file path=\"README.md\" risk=read_only status=detected"
-    );
-
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ToolCall),
         "must not emit ToolCall events"
@@ -643,7 +607,7 @@ impl OpenAIHttpClient for FakeListFilesToolRequestClient {
 }
 
 #[test]
-fn run_mock_turn_detects_list_files_tool_request() {
+fn run_mock_turn_does_not_detect_list_files_tool_request_by_default() {
     let config = ModelConfig {
         active_profile: ModelProfile {
             provider: ModelProvider::OpenAI,
@@ -660,16 +624,10 @@ fn run_mock_turn_detects_list_files_tool_request() {
 
     let events = event_log.events();
 
-    let tool_req_idx = events
-        .iter()
-        .position(|e| e.kind == EventKind::ModelToolRequest)
-        .expect("ModelToolRequest event should exist");
-
-    assert_eq!(
-        events[tool_req_idx].detail,
-        "source=model tool=list_files path=\".\" risk=read_only status=detected"
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+        "ModelToolRequest must not be emitted in default path even when CARAVAN_TOOL_REQUEST block is present"
     );
-
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ToolCall),
         "must not emit ToolCall events"
@@ -704,7 +662,7 @@ impl OpenAIHttpClient for FakeSentinelPathClient {
 }
 
 #[test]
-fn run_mock_turn_sentinel_path_does_not_touch_filesystem() {
+fn run_mock_turn_sentinel_path_does_not_touch_filesystem_by_default() {
     let config = ModelConfig {
         active_profile: ModelProfile {
             provider: ModelProvider::OpenAI,
@@ -719,16 +677,10 @@ fn run_mock_turn_sentinel_path_does_not_touch_filesystem() {
 
     let events = event_log.events();
 
-    let tool_req_idx = events
-        .iter()
-        .position(|e| e.kind == EventKind::ModelToolRequest)
-        .expect("ModelToolRequest event should exist");
-
-    assert_eq!(
-        events[tool_req_idx].detail,
-        "source=model tool=read_file path=\"/definitely/not/a/real/caravan/sentinel/file\" risk=read_only status=detected"
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+        "ModelToolRequest must not be emitted in default path even when CARAVAN_TOOL_REQUEST block is present"
     );
-
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ModelError),
         "must not emit ModelError events"
@@ -782,7 +734,7 @@ fn run_mock_turn_error_path_emits_no_model_tool_request_event() {
 }
 
 #[test]
-fn run_mock_turn_detected_model_tool_request_read_file() {
+fn run_mock_turn_does_not_detect_model_tool_request_read_file_by_default() {
     let config = ModelConfig {
         active_profile: ModelProfile {
             provider: ModelProvider::OpenAI,
@@ -797,23 +749,15 @@ fn run_mock_turn_detected_model_tool_request_read_file() {
     let mut event_log = EventLog::new();
     let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
-    let detected = output
-        .detected_model_tool_request
-        .expect("expected Some detected_model_tool_request");
-    assert_eq!(
-        detected.kind,
-        crate::model_tool_request::ModelToolRequestKind::ReadFile
+    assert!(
+        output.detected_model_tool_request.is_none(),
+        "detected_model_tool_request must be None in default path even when CARAVAN_TOOL_REQUEST block is present"
     );
-    assert_eq!(detected.path, "README.md");
 
     let events = event_log.events();
-    let tool_req_count = events
-        .iter()
-        .filter(|e| e.kind == EventKind::ModelToolRequest)
-        .count();
-    assert_eq!(
-        tool_req_count, 1,
-        "expected exactly one ModelToolRequest event"
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+        "must not emit ModelToolRequest events in default path"
     );
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ToolCall),
@@ -830,7 +774,7 @@ fn run_mock_turn_detected_model_tool_request_read_file() {
 }
 
 #[test]
-fn run_mock_turn_detected_model_tool_request_list_files() {
+fn run_mock_turn_does_not_detect_model_tool_request_list_files_by_default() {
     let config = ModelConfig {
         active_profile: ModelProfile {
             provider: ModelProvider::OpenAI,
@@ -845,22 +789,15 @@ fn run_mock_turn_detected_model_tool_request_list_files() {
     let mut event_log = EventLog::new();
     let output = run_mock_turn(&mut event_log, "hello", &gateway, None, None);
 
-    let detected = output
-        .detected_model_tool_request
-        .expect("expected Some detected_model_tool_request");
-    assert_eq!(
-        detected.kind,
-        crate::model_tool_request::ModelToolRequestKind::ListFiles
+    assert!(
+        output.detected_model_tool_request.is_none(),
+        "detected_model_tool_request must be None in default path even when CARAVAN_TOOL_REQUEST block is present"
     );
 
     let events = event_log.events();
-    let tool_req_count = events
-        .iter()
-        .filter(|e| e.kind == EventKind::ModelToolRequest)
-        .count();
-    assert_eq!(
-        tool_req_count, 1,
-        "expected exactly one ModelToolRequest event"
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelToolRequest),
+        "must not emit ModelToolRequest events in default path"
     );
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ToolCall),

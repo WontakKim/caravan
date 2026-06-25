@@ -60,13 +60,6 @@ pub fn run_mock_turn(
                 EventKind::AssistantMessage,
                 response.assistant_response.clone(),
             );
-            let detected_model_tool_request =
-                crate::model_tool_request::parse_first_model_tool_request(
-                    &response.assistant_response,
-                );
-            if let Some(req) = &detected_model_tool_request {
-                event_log.append(EventKind::ModelToolRequest, req.detail());
-            }
             if let Some(usage) = response.usage {
                 event_log.append(
                     EventKind::ModelUsage,
@@ -85,7 +78,7 @@ pub fn run_mock_turn(
                 assistant_response: response.assistant_response,
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
-                detected_model_tool_request,
+                detected_model_tool_request: None,
             }
         }
         Err(err) => {
