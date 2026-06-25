@@ -1275,13 +1275,23 @@ fn tool_read_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
     app.input = "/tool read data.txt".to_string();
     app.submit();
 
+    let pending = app
+        .pending_manual_tool_context
+        .as_ref()
+        .expect("pending_manual_tool_context must be auto-set after successful /tool read");
+    let candidate = app
+        .last_tool_output_candidate
+        .as_ref()
+        .expect("last_tool_output_candidate must be set after successful /tool read");
+    // Both fields must carry the actual read output, and must be the same value
+    // (built once and cloned, per D1).
     assert!(
-        app.pending_manual_tool_context.is_some(),
-        "pending_manual_tool_context must be auto-set after successful /tool read"
+        pending.content.contains("auto-set content"),
+        "pending content must carry the read output"
     );
-    assert!(
-        app.last_tool_output_candidate.is_some(),
-        "last_tool_output_candidate must be set after successful /tool read"
+    assert_eq!(
+        candidate.content, pending.content,
+        "candidate and pending must be the same auto-set context"
     );
     assert!(
         app.log
@@ -1313,13 +1323,23 @@ fn tool_list_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
     app.input = "/tool list .".to_string();
     app.submit();
 
+    let pending = app
+        .pending_manual_tool_context
+        .as_ref()
+        .expect("pending_manual_tool_context must be auto-set after successful /tool list");
+    let candidate = app
+        .last_tool_output_candidate
+        .as_ref()
+        .expect("last_tool_output_candidate must be set after successful /tool list");
+    // Both fields must carry the actual list output (the known entry), and must
+    // be the same value (built once and cloned, per D1).
     assert!(
-        app.pending_manual_tool_context.is_some(),
-        "pending_manual_tool_context must be auto-set after successful /tool list"
+        pending.content.contains("entry.txt"),
+        "pending content must carry the list output entry"
     );
-    assert!(
-        app.last_tool_output_candidate.is_some(),
-        "last_tool_output_candidate must be set after successful /tool list"
+    assert_eq!(
+        candidate.content, pending.content,
+        "candidate and pending must be the same auto-set context"
     );
     assert!(
         app.log
@@ -1363,22 +1383,23 @@ fn tool_read_auto_set_prompt_compile_contains_workspace_and_manual_context() {
         .next()
         .expect("PromptCompile event should exist");
 
+    // Ordered chain proves the content is rendered INSIDE the Workspace Context
+    // section's Manual Tool Context block, not merely somewhere after the header.
+    let ws_pos = pc
+        .detail
+        .find("Workspace Context:")
+        .expect("PromptCompile detail must contain 'Workspace Context:'");
+    let manual_pos = pc
+        .detail
+        .find("Manual Tool Context:")
+        .expect("PromptCompile detail must contain 'Manual Tool Context:'");
+    let content_pos = pc
+        .detail
+        .find(file_content)
+        .expect("PromptCompile detail must contain the bounded file content");
     assert!(
-        pc.detail.contains("Workspace Context:"),
-        "PromptCompile detail must contain 'Workspace Context:'"
-    );
-    assert!(
-        pc.detail.contains("Manual Tool Context:"),
-        "PromptCompile detail must contain 'Manual Tool Context:'"
-    );
-    assert!(
-        pc.detail.contains(file_content),
-        "PromptCompile detail must contain the bounded file content"
-    );
-    // Position check: file content must appear AFTER "Workspace Context:".
-    assert!(
-        pc.detail.find("Workspace Context:").unwrap() < pc.detail.find(file_content).unwrap(),
-        "file content must appear after 'Workspace Context:' in PromptCompile detail"
+        ws_pos < manual_pos && manual_pos < content_pos,
+        "expected order Workspace Context: < Manual Tool Context: < file content"
     );
 }
 
@@ -1415,18 +1436,23 @@ fn tool_list_auto_set_prompt_compile_contains_workspace_context_section() {
         .next()
         .expect("PromptCompile event should exist");
 
+    // Ordered chain proves the list output is rendered INSIDE the Workspace
+    // Context section's Manual Tool Context block (the same wrapper as read).
+    let ws_pos = pc
+        .detail
+        .find("Workspace Context:")
+        .expect("PromptCompile detail must contain 'Workspace Context:'");
+    let manual_pos = pc
+        .detail
+        .find("Manual Tool Context:")
+        .expect("PromptCompile detail must contain 'Manual Tool Context:' for list output");
+    let entry_pos = pc
+        .detail
+        .find(known_entry)
+        .expect("PromptCompile detail must contain the known entry name from the list");
     assert!(
-        pc.detail.contains("Workspace Context:"),
-        "PromptCompile detail must contain 'Workspace Context:'"
-    );
-    assert!(
-        pc.detail.contains(known_entry),
-        "PromptCompile detail must contain the known entry name from the list"
-    );
-    // Position check: the entry name must appear AFTER "Workspace Context:".
-    assert!(
-        pc.detail.find("Workspace Context:").unwrap() < pc.detail.find(known_entry).unwrap(),
-        "known entry name must appear after 'Workspace Context:' in PromptCompile detail"
+        ws_pos < manual_pos && manual_pos < entry_pos,
+        "expected order Workspace Context: < Manual Tool Context: < list entry"
     );
 }
 
@@ -1518,6 +1544,8 @@ fn tool_read_failure_leaves_pending_context_unchanged() {
         .unwrap()
         .content
         .clone();
+    let guidance = "This tool output will be used as context for your next message.";
+    let guidance_before = app.log.iter().filter(|l| *l == guidance).count();
 
     // Failed read: missing file.
     app.input = "/tool read nonexistent_missing.txt".to_string();
@@ -1531,6 +1559,12 @@ fn tool_read_failure_leaves_pending_context_unchanged() {
         app.pending_manual_tool_context.as_ref().unwrap().content,
         original_content,
         "sub-case (b): pending_manual_tool_context content must be unchanged after a failed read"
+    );
+    // A failed read must NOT push the success guidance line (guidance is success-only).
+    assert_eq!(
+        app.log.iter().filter(|l| *l == guidance).count(),
+        guidance_before,
+        "sub-case (b): a failed read must not push the success guidance line"
     );
 }
 
@@ -1549,20 +1583,30 @@ fn tool_read_auto_set_emits_no_tool_context_attach_event() {
         workspace_dir.path().to_path_buf(),
     );
 
+    std::fs::write(workspace_dir.path().join("listme.txt"), "x").unwrap();
+
+    // /tool read auto-set: no ToolContextAttach.
     app.input = "/tool read noattach.txt".to_string();
     app.submit();
-
     assert!(
         app.pending_manual_tool_context.is_some(),
         "pending_manual_tool_context must be set after /tool read"
     );
+    // /tool list auto-set: also no ToolContextAttach.
+    app.input = "/tool list .".to_string();
+    app.submit();
+    assert!(app.pending_manual_tool_context.is_some());
+    // Consume the context with a user message — must not emit ToolContextAttach
+    // during submit either.
+    app.input = "use it".to_string();
+    app.submit();
 
     let events = app.event_log.events();
     assert!(
-        !events
+        events
             .iter()
-            .any(|e| e.kind == EventKind::ToolContextAttach),
-        "auto-set on /tool read must NOT emit a ToolContextAttach event"
+            .all(|e| e.kind != EventKind::ToolContextAttach),
+        "auto-set on /tool read or /tool list (and its later consumption) must NOT emit a ToolContextAttach event"
     );
 }
 
@@ -1624,6 +1668,12 @@ fn tool_read_second_success_overwrites_pending_last_write_wins() {
     assert!(
         second_content.contains("content of second file"),
         "pending must reflect the second file's content (last-write-wins)"
+    );
+    // Last-write-wins means OVERWRITE, not append/merge: the first file's
+    // content must be gone from pending.
+    assert!(
+        !second_content.contains("content of first file"),
+        "pending must NOT retain the first file's content (overwrite, not append)"
     );
 }
 
