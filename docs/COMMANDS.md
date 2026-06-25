@@ -1,14 +1,20 @@
 # Caravan Command Reference
 
-Commands are grouped by layer. The Claude-like core commands form the primary UX.
-The experimental harness commands are a structural seam for future agentic tooling.
+Commands are organized by their role in the UX hierarchy: the default surface
+is what all users interact with first; the hidden harness commands are implemented
+infrastructure that is not the center of the default UX; reserved commands are
+placeholders matching the Claude Code namespace.
 
 ---
 
-## 1. Claude-like Core Commands
+## 1. Default Command Surface
 
-These commands mirror the session-control commands in Claude Code and form the
-primary interface for all Caravan users.
+These are the commands that every Caravan user is expected to use in normal
+operation. They form the primary UX surface.
+
+### Claude-like Core Commands
+
+These commands mirror the session-control commands in Claude Code.
 
 | Command | Description |
 |---------|-------------|
@@ -26,25 +32,36 @@ primary interface for all Caravan users.
 is loaded at session start by the `project_memory` module and injected into the main
 prompt. There is no automatic secret detection — do not place credentials in `CLAUDE.md`.
 
----
+### Basic Workspace Tools
 
-## 2. Experimental Caravan Harness Commands
-
-These commands are part of the **experimental harness layer** — a structural seam for
-future agentic tooling. They are not the primary UX and may change substantially.
-
-### Tool commands
+Read-only tool commands for inspecting the workspace. These are part of the
+default UX surface: they observe the filesystem without mutating it.
 
 | Command | Description |
 |---------|-------------|
 | `/tool list [path]` | List files under the workspace root (or a sub-path); read-only |
 | `/tool read <path>` | Read a UTF-8 text file under the workspace root; read-only |
+
+---
+
+## 2. Hidden / Internal Experimental Harness Commands
+
+These commands are **implemented and still parse**, but they are **not the center
+of the default UX**. They exist as internal infrastructure — a structural seam for
+future agentic tooling. They may change substantially and are not surfaced in
+`/help` by default.
+
+### Tool write-staging commands
+
+> **No actual file write is performed by any `/tool *-write` command.** File
+> mutation is still not implemented; these commands exist as a sandbox skeleton
+> only.
+
+| Command | Description |
+|---------|-------------|
 | `/tool plan-write <path>` | Record a `workspace_write` mutation intent and route it through the approval gate; **performs no real write** and produces no `ToolCall`/`ToolResult`/`ToolError` |
 | `/tool preview-write <path>` | Dry-run diff preview of what a write would produce; **performs no real write** |
 | `/tool propose-write <path>` | Preview-backed approval request; **performs no real write** |
-
-> **No actual file write is performed by any `/tool *-write` command.** File mutation
-> is still not implemented; these commands exist as a sandbox skeleton only.
 
 ### Context commands
 
@@ -73,11 +90,12 @@ future agentic tooling. They are not the primary UX and may change substantially
 
 ---
 
-## 3. Reserved — Claude Code Commands Not Implemented Yet
+## 3. Unsupported / Reserved Claude Code Commands
 
 The following slash commands are intentionally reserved to match the Claude Code
-command namespace. None of them are implemented yet; entering any of these in the
-current build produces an `UnknownSlashCommand` event.
+command namespace or are explicitly unsupported. None of them are implemented
+yet; entering any of these in the current build produces an `UnknownSlashCommand`
+event.
 
 | Command | Status |
 |---------|--------|
@@ -87,20 +105,39 @@ current build produces an `UnknownSlashCommand` event.
 | `/resume` | Reserved — not implemented yet |
 | `/status` | Reserved — not implemented yet |
 | `/usage` | Reserved — not implemented yet |
-| `/init` | Reserved — not implemented yet |
+| `/agents` | Reserved — not implemented yet |
+| `/mcp` | Reserved — not implemented yet |
 | `/memory` | Reserved — not implemented yet |
+| `/ask` | Unsupported — not a Caravan command; maps to `UnknownSlashCommand` |
+| `/tool write` | Unsupported — not a valid sub-command; write execution is not implemented — use `/tool plan-write`, `/tool preview-write`, or `/tool propose-write` for the skeleton harness |
+| `/approval run` | Unsupported — not a valid sub-command; use `/approval resume <seq>` to execute an approved plan |
+| Any other unrecognised `/command` | Maps to `UnknownSlashCommand`; an `Unknown command: /…` notice is shown in the screen log |
 
 ---
 
-## 4. Explicitly Unsupported Inputs
+## 4. Rationale
 
-The following inputs have no planned implementation path at this stage and map to
-`UnknownSlashCommand` in the event log. They are listed here so that the command
-set boundary is explicit.
+The ordering of sections reflects the intended UX progression:
 
-| Input | Reason unsupported |
-|-------|--------------------|
-| `/ask` | Not a Caravan command; maps to `UnknownSlashCommand` |
-| `/tool write` | Not a valid sub-command; write execution is not implemented — use `/tool plan-write`, `/tool preview-write`, or `/tool propose-write` for the skeleton harness |
-| `/approval run` | Not a valid sub-command; use `/approval resume <seq>` to execute an approved plan |
-| Any other unrecognised `/command` | Maps to `UnknownSlashCommand`; an `Unknown command: /…` notice is shown in the screen log |
+1. **Basic Claude-like interaction first.** The core session-control commands
+   (`/help`, `/clear`, `/reset`, `/new`, `/exit`, `/quit`, `/permissions`,
+   `/allowed-tools`) mirror the Claude Code UX that users already know. They are
+   the default entry point and require no knowledge of the harness layer.
+
+2. **Basic tool invocation before agent/tool automation.** Read-only inspection
+   commands (`/tool list`, `/tool read`) are included in the default surface
+   because they are safe, predictable, and useful on their own. Agent-driven
+   tool automation (context attachment, request routing, approval gating) belongs
+   to the harness layer and is deliberately hidden from the primary UX.
+
+3. **Harness later.** The experimental harness commands are implemented and
+   functional, but they are internal infrastructure. Surfacing them as primary
+   commands would imply a level of stability and UX commitment that does not yet
+   exist. They remain hidden until the agentic workflow is ready to be the center
+   of the UX.
+
+4. **No automatic mutation.** None of the default-surface commands mutate the
+   filesystem. The harness write-staging commands (`/tool plan-write`,
+   `/tool preview-write`, `/tool propose-write`) explicitly perform no real write.
+   File mutation is a deliberate future step that requires approval gating to be
+   fully implemented first.
