@@ -85,13 +85,17 @@ The commands below are the **default surface** — they match what `/help` shows
 The commands in this section are implemented but are **not the primary baseline UX**. They form an
 experimental structural seam for future tooling and are not shown by the default `/help` output.
 
-### Manual tool context commands
+### Workspace context commands
+
+> **Hidden / compatibility / advanced context controls.** These commands expose the workspace
+> context layer directly. For normal use, `/tool read` and `/tool list` stage workspace context
+> automatically; the `/context` commands are provided for advanced workflows and compatibility.
 
 | Command                     | Description                                                                                    |
 |-----------------------------|------------------------------------------------------------------------------------------------|
-| `/context attach-last-tool` | Attach the latest read-only tool output to the next prompt (one-shot)                          |
-| `/context clear`            | Clear pending manual tool context                                                              |
-| `/context status`           | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
+| `/context attach-last-tool` | Attach the latest read-only tool output to the next prompt as workspace context (one-shot)     |
+| `/context clear`            | Clear pending workspace context                                                                |
+| `/context status`           | Print a read-only status report of pending workspace context and the last tool-output candidate; does not run the model |
 | `/request status`           | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
 | `/request run`              | Execute the pending model tool request as a read-only tool                                     |
 | `/request clear`            | Clear the pending model tool request; does not run the model or any tool                       |
@@ -119,25 +123,19 @@ is **not the current default**.
 
 ### Header Context Indicator
 
-The TUI header includes a context indicator segment: it shows `| Context: pending`
-when manual tool context has been staged and will be attached to the next prompt,
-and `| Context: none` when no manual context is staged. A successful `/tool read`
-or `/tool list` automatically sets `pending_manual_tool_context`, so the header
-shows `| Context: pending` immediately after the tool command completes — no
-explicit `/context attach-last-tool` is needed for the basic flow. Context can
-also be staged explicitly via `/context attach-last-tool`. Only context that has
-been staged and is waiting to be sent causes the header to display
-`| Context: pending`.
+The TUI header includes a workspace context indicator segment: it shows
+`| Workspace Context: pending` when workspace context has been staged and will be
+attached to the next prompt, and `| Workspace Context: none` when no workspace
+context is staged. A successful `/tool read` or `/tool list` automatically stages
+workspace context, so the header shows `| Workspace Context: pending` immediately
+after the tool command completes — no explicit `/context attach-last-tool` is
+needed for the basic flow. Workspace context can also be staged explicitly via
+`/context attach-last-tool`. Only workspace context that has been staged and is
+waiting to be sent causes the header to display `| Workspace Context: pending`.
 
-The header also includes a separate request indicator segment: it shows
-`| Request: pending` when a pending model tool request has been stored and not yet
-cleared, and `| Request: none` otherwise. The request indicator reflects only the
-in-memory pending state, which is set exclusively through the experimental `/request`
-seam (disabled in the default runtime — see [Model Tool Request Detection](#model-tool-request-detection-detect-only))
-and is cleared by `/request clear`; the read-only `/request status` command displays
-this state without changing it. Default model responses do **not** set
-`| Request: pending` — that state is not reachable through normal assistant turns.
-The request indicator is independent of the context indicator.
+Pending model tool-request state is **not** shown in the default header. To
+inspect it, use the hidden `/request status` command, which displays the pending
+request state without changing it.
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
@@ -213,7 +211,7 @@ not persisted to `.caravan/events.jsonl`.
 | `RunFail`                    | Emitted when a Run fails on the model error path (after a `ModelError` event); no `ModelOutputChunk` or `RunComplete` is appended |
 | `ModelError`                 | Emitted when the model layer returns an error; carries `kind=... message="..."` detail |
 | `ToolContextAttach`          | When `/context attach-last-tool` successfully stages a recent tool output as pending context; detail is summary-only (no raw tool output). Not emitted when there is no recent tool output to attach |
-| `ToolContextClear`           | When `/context clear` is processed; any pending manual tool context is discarded |
+| `ToolContextClear`           | When `/context clear` is processed; any pending workspace context is discarded |
 | `ToolPolicy`                 | Policy decision trace recorded immediately before the Approval Gate; carries the tool name, path, risk level, decision, and reason |
 | `ApprovalRequest`            | Emitted by the Approval Gate when `approval_requirement` is `Manual`; sits between `ToolPolicy` and `ToolCall`; never emitted on the production read-only-tool path; pending `ApprovalRequest` events can be observed via `/approval status` (the `ApprovalQueue` projection) |
 | `ApprovalDecision`           | Governance trace that resolves a referenced `ApprovalRequest`; carries `request_seq`, `decision` (`approved`\|`rejected`), and `reason` in its detail string (formatted by `ApprovalDecisionRecord`); when a valid `ApprovalDecision` event is recorded for a given `ApprovalRequest` seq, the `ApprovalQueue` projection moves that request from the `pending` list to the `resolved` list, so it no longer appears in `/approval status` output; appended by `/approval approve <seq>` (reason `operator_approved`) and `/approval reject <seq>` (reason `operator_rejected`) — neither command resumes tool execution or emits `ToolCall`/`ToolResult`/`ToolError` |
@@ -1539,9 +1537,9 @@ remain bounded in size regardless of the file being read.
 > **No write, shell, delete, or network tools exist in this stage.** Only the
 > two read-only tools (`/tool list` and `/tool read`) are available.
 
-## Manual Tool Context
+## Workspace Context
 
-Manual tool context lets you attach the output of a read-only tool call to the
+Workspace context lets you attach the output of a read-only tool call to the
 next prompt you send to the model. The attach is **one-shot**: the context is
 automatically cleared after the run completes, so it never leaks into subsequent
 turns. The attached output is **bounded to 4096 bytes** (including any truncation
@@ -1561,12 +1559,12 @@ not need to run `/context attach-last-tool` for the basic flow.
 > submitting your next message.
 
 1. Run `/tool read <path>` or `/tool list [path]` to execute a read-only tool.
-   On success the bounded output is automatically staged as pending context and
-   the header shows `| Context: pending`.
+   On success the bounded output is automatically staged as pending workspace context
+   and the header shows `| Workspace Context: pending`.
 2. Submit your next plain-text message. The pending tool output is injected into
    the `Workspace Context:` section of the compiled prompt for that turn.
-3. After the run completes, the pending context is automatically cleared — it is
-   not carried forward into future turns (this auto-clear emits no event).
+3. After the run completes, the pending workspace context is automatically cleared —
+   it is not carried forward into future turns (this auto-clear emits no event).
 
 `/context attach-last-tool` can still be used to explicitly re-stage the most
 recent tool output (for example after a `/context clear`), but it is no longer
@@ -1611,19 +1609,19 @@ detail.
 
 #### PromptCompile `Workspace Context:` section
 
-When pending manual tool context is present, the prompt compiler renders a
+When pending workspace context is present, the prompt compiler renders a
 structured block inside the `Workspace Context:` section:
 
 ```
 Workspace Context:
-Manual Tool Context:
+Attached Workspace Context:
 Source:
   tool=read_file path="README.md" risk=read_only truncated=false
 Content:
 <bounded file content, at most 4096 bytes>
 ```
 
-When no manual tool context has been staged, the `Workspace Context:` section contains
+When no workspace context has been staged, the `Workspace Context:` section contains
 the fallback literal exactly as written:
 
 ```
@@ -1803,8 +1801,7 @@ error:
 4. A preview of the tool output is shown in the screen log.
 5. The manual tool output candidate is updated so that a subsequent
    `/context attach-last-tool` picks up this result.
-6. The pending model tool request is cleared (header returns to
-   `| Request: none`).
+6. The pending model tool request is cleared (observable via `/request status`).
 7. A prompt to run `/context attach-last-tool` is shown in the screen log.
 
 **Failure path** — when the tool executes but returns an error:
@@ -1823,8 +1820,8 @@ error:
 
 #### `/request clear`
 
-Removes the pending model tool request. After `/request clear`, the header shows
-`| Request: none` and `/request status` reports that no request is pending.
+Removes the pending model tool request. After `/request clear`, `/request status`
+reports that no request is pending.
 
 `/request clear` is **read-only** — it does not run the model and does not execute
 any tool.

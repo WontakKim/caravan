@@ -72,11 +72,15 @@ future agentic tooling. They may change substantially and are not surfaced in
 
 ### Context commands
 
+> **Hidden / compatibility / advanced context controls.** These commands expose the workspace
+> context layer directly. For normal use, `/tool read` and `/tool list` stage workspace context
+> automatically; the `/context` commands are provided for advanced workflows and compatibility.
+
 | Command | Description |
 |---------|-------------|
-| `/context attach-last-tool` | Attach the latest read-only tool output to the next prompt (one-shot) |
-| `/context clear` | Discard any pending manual tool context |
-| `/context status` | Print a read-only status report of pending manual tool context and the last tool-output candidate |
+| `/context attach-last-tool` | Attach the latest read-only tool output to the next prompt as workspace context (one-shot) |
+| `/context clear` | Discard any pending workspace context |
+| `/context status` | Print a read-only status report of pending workspace context and the last tool-output candidate |
 
 ### Request commands
 

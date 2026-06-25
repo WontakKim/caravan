@@ -52,7 +52,7 @@ Actual file mutation is still not implemented.
 | **Tool harness (write / policy)** | `crates/kernel/src/tool/` | `policy.rs` (approval policy engine), `events.rs` (ToolPolicy / ToolCall / ToolResult / ToolError), `schema.rs` (prompt-visible catalog). Write-path tool commands (`/tool preview-write`, `/tool propose-write`) live here, not in the baseline. |
 | **Approval gate** | `crates/kernel/src/approval.rs`, `approval_queue.rs` | Data types and projection for the manual-approval flow; `/approval approve|reject|resume` commands. No tool write execution yet. |
 | **Write intent / preview** | `crates/kernel/src/write_intent.rs`, `write_preview.rs` | Pure data model and dry-run diff preview for proposed writes. **No file is ever written**; these are skeleton types only. |
-| **Manual tool context** | `crates/kernel/src/manual_context.rs` | One-shot attachment of tool output to the next prompt. A successful `/tool read` or `/tool list` auto-attaches its bounded output as the next-message Workspace Context; `/context attach-last-tool` can also attach explicitly (`/context` commands). |
+| **Workspace Context** | `crates/kernel/src/manual_context.rs` | One-shot next-message workspace context attached by a successful `/tool read` or `/tool list`; `/context attach-last-tool` can also attach explicitly. Implemented by the internal `ManualToolContext` type (internal/compatibility name). |
 | **Request harness** | `crates/tui/src/app/request.rs` | `/request status`, `/request run`, `/request clear` — structured request lifecycle outside the normal turn flow. Part of the experimental surface. |
 
 ---
