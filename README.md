@@ -1,15 +1,13 @@
 # Caravan
 
-Caravan is currently a **Claude Code-like local coding agent baseline** — a Rust TUI shell
+Caravan currently focuses on a **Claude Code-like local coding assistant baseline** — a Rust TUI shell
 that lets you interact with an assistant the same way Claude Code does:
 
-- **Plain text** submits a task to the assistant and runs the mock Run/Turn flow.
+- **Plain text** is the primary interaction — submit a message and the assistant responds via the mock Run/Turn flow.
 - **`CLAUDE.md` project memory** is read from the workspace root at session start and
   injected into the main prompt when present (see `project_memory` module in `crates/kernel`).
-- **Slash commands** (`/help`, `/clear`, `/exit`, …) control session state.
-- **Tool/approval/write commands** (`/tool`, `/context`, `/request`, `/approval`) are an
-  **experimental harness layer** — not the primary user experience. They exist as a
-  structural seam for future agentic tooling and are not yet part of the core assistant flow.
+- **Basic read-only workspace tools** are available via `/tool list [path]` and `/tool read <path>`; see the default command table below.
+- **Advanced harness commands** (`/context`, `/request`, `/approval`, write-sandbox `/tool` variants) exist internally and experimentally but are **not the primary baseline UX**; they are documented in the appendix below.
 
 > **File mutation is still not implemented.** `/tool plan-write`, `/tool preview-write`, and
 > `/tool propose-write` perform no real write to the filesystem. Actual file mutation is
@@ -67,28 +65,57 @@ cargo test --workspace
 
 ## Available Commands
 
-| Command              | Description                                              |
-|----------------------|----------------------------------------------------------|
-| `/help`              | Show the list of available commands                      |
-| `/clear`             | Clear the log panel                                      |
-| `/exit`              | Exit the application                                     |
-| `/tool list [path]`           | List files under the workspace root (or a sub-path)                      |
-| `/tool read <path>`           | Read a UTF-8 text file under the workspace root                          |
-| `/tool plan-write <path>`     | Approval-only skeleton: records a `workspace_write` mutation intent (`ToolPolicy` + `ApprovalRequest`) without writing any file and produces no `ToolCall`/`ToolResult`/`ToolError`; resolve via `/approval approve\|reject <seq>`; not resumable; see [write-sandbox safety design](docs/WRITE_SANDBOX.md) |
-| `/tool preview-write <path>`  | Dry-run diff preview: renders a bounded line-diff preview of what a write to `<path>` would produce, using the latest read-only tool output candidate as proposed content; performs **no write**, creates **no** `ApprovalRequest`, and emits `SlashCommand, ToolPolicy, ToolCall, ToolResult` on success (or `... ToolError` on preview error); the `ToolResult` stores only the content-free `WritePreview::detail()` summary — never any file content or diff lines |
-| `/tool propose-write <path>`  | Preview-backed approval request: shows a bounded diff preview and records a `workspace_write` `ApprovalRequest` using the latest tool output as content; performs **no write** |
-| `/context attach-last-tool`   | Attach the latest read-only tool output to the next prompt (one-shot)    |
-| `/context clear`              | Clear pending manual tool context                                         |
-| `/context status`             | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
-| `/request status`             | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
-| `/request run`                | Execute the pending model tool request as a read-only tool; on success records `ToolPolicy` + `ToolCall` + `ToolResult`, shows a preview, updates the manual tool output candidate, clears the pending request, and prompts you to run `/context attach-last-tool`; on failure records `ToolPolicy` + `ToolCall` + `ToolError` and keeps the pending request; with no pending request shows "No pending model tool request." and does not run a tool or the model |
-| `/request clear`              | Clear the pending model tool request; does not run the model or any tool |
-| `/approval status`            | Show the pending approval queue and approved resume plan summary: lists only **pending** (unresolved) `ApprovalRequest` events, then always prints the count of approved resume plans (`ApprovalQueue::resume_plans` — resolved `Approved` decisions for supported tools), a per-plan summary line (`seq=<n> <detail>`), and a suggested `/tool` command for each plan; observe-only, appends only a `SlashCommand` event; no resume execution happens in this step |
-| `/approval approve <seq>`     | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=approved reason=operator_approved`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
-| `/approval reject <seq>`      | Resolve the pending `ApprovalRequest` identified by `<seq>` by appending an `ApprovalDecision` event with detail `request_seq=<seq> decision=rejected reason=operator_rejected`; if `<seq>` is not pending or has already been resolved, appends nothing and prints `No pending approval for seq=<seq>`; does **not** resume tool execution and emits no `ToolCall`/`ToolResult`/`ToolError` |
-| `/approval resume <seq>`      | Resume an approved `ApprovalResumePlan` identified by `<seq>` as a read-only tool execution; records `ApprovalResume` then `ToolPolicy → ToolCall → (ToolResult \| ToolError)`; does nothing for pending, rejected, or unknown seqs; the resume plan is **consumed on attempt** — even on tool error it is not retried and will no longer appear in `/approval status`; on success run `/context attach-last-tool` to attach the output to the next prompt (`pending_manual_tool_context` is not set automatically) |
+The commands below are the **default surface** — they match what `/help` shows in the app.
 
-> These commands match the in-app `/help` output.
+| Command               | Description                                                       |
+|-----------------------|-------------------------------------------------------------------|
+| `/help`               | Show the list of available commands                               |
+| `/clear`              | Clear the log panel                                               |
+| `/exit`               | Exit the application                                              |
+| `/reset`              | Reset the session (clears screen log and pending state)           |
+| `/new`                | Start a new session (alias for `/reset`)                          |
+| `/quit`               | Quit Caravan (alias for `/exit`)                                  |
+| `/permissions`        | Show the current permission posture                               |
+| `/allowed-tools`      | List the tools that are currently allowed                         |
+| `/tool list [path]`   | List files under the workspace root (or a sub-path)               |
+| `/tool read <path>`   | Read a UTF-8 text file under the workspace root                   |
+
+## Experimental Harness Appendix
+
+The commands in this section are implemented but are **not the primary baseline UX**. They form an
+experimental structural seam for future tooling and are not shown by the default `/help` output.
+
+### Manual tool context commands
+
+| Command                     | Description                                                                                    |
+|-----------------------------|------------------------------------------------------------------------------------------------|
+| `/context attach-last-tool` | Attach the latest read-only tool output to the next prompt (one-shot)                          |
+| `/context clear`            | Clear pending manual tool context                                                              |
+| `/context status`           | Print a read-only status report of pending manual tool context and the last tool-output candidate; does not run the model |
+| `/request status`           | Show the pending model tool request: the suggested `/tool` command and the `/context attach-last-tool` next step; does not run the model or any tool |
+| `/request run`              | Execute the pending model tool request as a read-only tool                                     |
+| `/request clear`            | Clear the pending model tool request; does not run the model or any tool                       |
+
+### Approval gate commands
+
+| Command                   | Description                                                                                      |
+|---------------------------|--------------------------------------------------------------------------------------------------|
+| `/approval status`        | Show the pending approval queue and approved resume plan summary; observe-only                   |
+| `/approval approve <seq>` | Approve the pending `ApprovalRequest` identified by `<seq>`; does not resume tool execution      |
+| `/approval reject <seq>`  | Reject the pending `ApprovalRequest` identified by `<seq>`; does not resume tool execution       |
+| `/approval resume <seq>`  | Resume an approved `ApprovalResumePlan`; plan is consumed on attempt even if the tool errors     |
+
+### Write/sandbox experimental commands
+
+The following commands record intents or previews but perform **no real file write**.
+See [docs/WRITE_SANDBOX.md](docs/WRITE_SANDBOX.md) for the safety design. This write-sandbox UX
+is **not the current default**.
+
+| Command                      | Description                                                                                   |
+|------------------------------|-----------------------------------------------------------------------------------------------|
+| `/tool plan-write <path>`    | Approval-only skeleton: records a `workspace_write` mutation intent without writing any file  |
+| `/tool preview-write <path>` | Dry-run diff preview of a proposed write using the latest tool output; performs no write      |
+| `/tool propose-write <path>` | Preview-backed approval request: shows a bounded diff preview and records a `workspace_write` approval request; performs no write |
 
 ### Header Context Indicator
 
