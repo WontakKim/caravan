@@ -125,38 +125,49 @@ fn help_lines_exact_content() {
         "    /quit - quit Caravan (alias for /exit)".to_string(),
         "    /permissions - show the current permission posture".to_string(),
         "    /allowed-tools - list the tools that are currently allowed".to_string(),
-        "  Experimental Caravan harness commands:".to_string(),
+        "  Basic workspace tools:".to_string(),
         "    /tool list [path] - list files under the workspace".to_string(),
         "    /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
-        "    /context attach-last-tool - attach the latest read-only tool output to the next prompt".to_string(),
-        "    /context clear - clear pending manual tool context".to_string(),
-        "    /context status - show pending manual tool context and last tool output".to_string(),
-        "  Advanced experimental harness commands:".to_string(),
-        "    /request status - show the pending model tool request".to_string(),
-        "    /request clear - clear the pending model tool request".to_string(),
-        "    /request run - execute the pending model tool request (read-only)".to_string(),
-        "    /approval status - show pending approval requests".to_string(),
-        "    /approval approve <seq> - approve a pending approval request".to_string(),
-        "    /approval reject <seq> - reject a pending approval request".to_string(),
-        "    /approval resume <seq> - resume an approved read-only tool plan (consumed on attempt)".to_string(),
-        "  Write/sandbox experimental commands:".to_string(),
-        "    /tool plan-write <path> - approval-only skeleton: records workspace_write intent (ToolPolicy + ApprovalRequest) without writing any file".to_string(),
-        "    /tool preview-write <path> - read-only dry-run diff preview of a proposed write using the latest tool output as content; performs no write".to_string(),
-        "    /tool propose-write <path> - preview-backed approval request: shows a bounded diff preview and records a workspace_write ApprovalRequest using the latest tool output as content; performs no write".to_string(),
     ];
     assert_eq!(App::help_lines(), expected);
 }
 
 #[test]
-fn help_lines_includes_resume_and_plan_write() {
+fn help_lines_excludes_harness_commands() {
     let lines = App::help_lines();
+
+    // Experimental harness commands must not appear in the default /help surface.
+    for pattern in &[
+        "/context",
+        "/request",
+        "/approval",
+        "/tool plan-write",
+        "/tool preview-write",
+        "/tool propose-write",
+    ] {
+        assert!(
+            !lines.iter().any(|l| l.contains(pattern)),
+            "help_lines should not contain {}",
+            pattern
+        );
+    }
+
+    // Basic workspace and core commands must appear.
     assert!(
-        lines.iter().any(|l| l.contains("/approval resume <seq>")),
-        "help_lines should include /approval resume <seq>"
+        lines.iter().any(|l| l.contains("/tool list [path]")),
+        "help_lines should contain /tool list [path]"
     );
     assert!(
-        lines.iter().any(|l| l.contains("/tool plan-write <path>")),
-        "help_lines should include /tool plan-write <path>"
+        lines.iter().any(|l| l.contains("/tool read <path>")),
+        "help_lines should contain /tool read <path>"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("/permissions")),
+        "help_lines should contain /permissions"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("/allowed-tools")),
+        "help_lines should contain /allowed-tools"
     );
 }
 

@@ -1,3 +1,9 @@
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum CommandHelpSurface {
+    Default,
+    InternalHarness,
+}
+
 pub struct CommandHelpEntry {
     pub command: &'static str,
     pub description: &'static str,
@@ -6,11 +12,13 @@ pub struct CommandHelpEntry {
 pub struct HelpSection {
     pub header: &'static str,
     pub entries: &'static [CommandHelpEntry],
+    pub surface: CommandHelpSurface,
 }
 
 static HELP_SECTIONS: &[HelpSection] = &[
     HelpSection {
         header: "Claude-like core commands",
+        surface: CommandHelpSurface::Default,
         entries: &[
             CommandHelpEntry {
                 command: "/help",
@@ -47,7 +55,8 @@ static HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
-        header: "Experimental Caravan harness commands",
+        header: "Basic workspace tools",
+        surface: CommandHelpSurface::Default,
         entries: &[
             CommandHelpEntry {
                 command: "/tool list [path]",
@@ -57,6 +66,12 @@ static HELP_SECTIONS: &[HelpSection] = &[
                 command: "/tool read <path>",
                 description: "read a UTF-8 text file under the workspace",
             },
+        ],
+    },
+    HelpSection {
+        header: "Manual tool context commands",
+        surface: CommandHelpSurface::InternalHarness,
+        entries: &[
             CommandHelpEntry {
                 command: "/context attach-last-tool",
                 description: "attach the latest read-only tool output to the next prompt",
@@ -73,6 +88,7 @@ static HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         header: "Advanced experimental harness commands",
+        surface: CommandHelpSurface::InternalHarness,
         entries: &[
             CommandHelpEntry {
                 command: "/request status",
@@ -106,6 +122,7 @@ static HELP_SECTIONS: &[HelpSection] = &[
     },
     HelpSection {
         header: "Write/sandbox experimental commands",
+        surface: CommandHelpSurface::InternalHarness,
         entries: &[
             CommandHelpEntry {
                 command: "/tool plan-write <path>",
@@ -125,6 +142,13 @@ static HELP_SECTIONS: &[HelpSection] = &[
 
 pub fn command_help_sections() -> &'static [HelpSection] {
     HELP_SECTIONS
+}
+
+pub fn default_command_help_sections() -> Vec<&'static HelpSection> {
+    HELP_SECTIONS
+        .iter()
+        .filter(|s| s.surface == CommandHelpSurface::Default)
+        .collect()
 }
 
 pub fn command_help_entries() -> Vec<&'static CommandHelpEntry> {
