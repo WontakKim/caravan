@@ -421,7 +421,7 @@ fn request_run_without_pending() {
             .any(|l| l == "No pending model tool request."),
         "log must contain 'No pending model tool request.'"
     );
-    // pending_model_tool_request remains None (header: Request: none).
+    // pending_model_tool_request remains None (pending_model_tool_request is hidden from the default header).
     assert!(app.pending_model_tool_request.is_none());
 }
 
@@ -478,7 +478,7 @@ fn request_run_pending_read_file_success() {
             .any(|e| e.kind == EventKind::AssistantMessage)
     );
 
-    // pending_model_tool_request cleared on success (header: Request: none).
+    // pending_model_tool_request cleared on success (pending_model_tool_request is hidden from the default header).
     assert!(
         app.pending_model_tool_request.is_none(),
         "pending_model_tool_request must be None after successful /request run"
@@ -560,7 +560,7 @@ fn request_run_pending_list_files_success() {
             .any(|e| e.kind == EventKind::AssistantMessage)
     );
 
-    // pending cleared (header: Request: none).
+    // pending cleared (pending_model_tool_request is hidden from the default header).
     assert!(
         app.pending_model_tool_request.is_none(),
         "pending_model_tool_request must be None after successful /request run"
@@ -642,7 +642,7 @@ fn request_run_pending_path_violation_tool_error() {
             .any(|e| e.kind == EventKind::AssistantMessage)
     );
 
-    // pending_model_tool_request kept (header: Request: pending).
+    // pending_model_tool_request kept (pending_model_tool_request is hidden from the default header).
     assert!(
         app.pending_model_tool_request.is_some(),
         "pending_model_tool_request must remain Some after tool error"
