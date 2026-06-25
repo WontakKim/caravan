@@ -130,12 +130,14 @@ been staged and is waiting to be sent causes the header to display
 `| Context: pending`.
 
 The header also includes a separate request indicator segment: it shows
-`| Request: pending` when a `ModelToolRequest` has been detected and stored as a
-pending suggested action that has not yet been cleared, and `| Request: none`
-otherwise. The request indicator reflects only the in-memory pending state, which is
-set when a `ModelToolRequest` is detected in a model response and is cleared by
-`/request clear`; the read-only `/request status` command displays this state without
-changing it. The request indicator is independent of the context indicator.
+`| Request: pending` when a pending model tool request has been stored and not yet
+cleared, and `| Request: none` otherwise. The request indicator reflects only the
+in-memory pending state, which is set exclusively through the experimental `/request`
+seam (disabled in the default runtime — see [Model Tool Request Detection](#model-tool-request-detection-detect-only))
+and is cleared by `/request clear`; the read-only `/request status` command displays
+this state without changing it. Default model responses do **not** set
+`| Request: pending` — that state is not reachable through normal assistant turns.
+The request indicator is independent of the context indicator.
 
 Plain text (any input not starting with `/`) is treated as a user message and runs
 the Mock Run/Turn flow, producing `User:` / `Assistant:` output in the Main panel.
@@ -1254,9 +1256,12 @@ error, not a policy denial.
 
 ### What Does NOT Emit `ToolPolicy`
 
-- **`ModelToolRequest` detection** — detecting a `CARAVAN_TOOL_REQUEST` block
-  in a model response records only a `ModelToolRequest` event. No tool is
-  executed and no `ToolPolicy` event is emitted.
+- **`ModelToolRequest` parser (dormant/experimental)** — the `CARAVAN_TOOL_REQUEST`
+  block parser is an experimental harness layer that is **not connected to the
+  default runtime**. When the parser is exercised (e.g. in tests or via the
+  experimental `/request` seam), it records only a `ModelToolRequest` event; no
+  tool is executed and no `ToolPolicy` event is emitted. Under normal assistant
+  turns the parser is not invoked, so no `ModelToolRequest` event is produced either.
 - **The basic mock flow** — plain text submitted to the mock runner produces
   the standard `UserMessage → RunCreate → … → RunComplete` sequence with no
   `ToolPolicy` event, because no tool is executed.
@@ -1693,15 +1698,25 @@ Automatic or model-driven tool calling is explicitly out of scope for this POC.
 
 ## Model Tool Request Detection (Detect-Only)
 
-When the assistant response contains a `CARAVAN_TOOL_REQUEST` block, Caravan
-detects it and records a `ModelToolRequest` event in the Event Log. This is a
+> **Status: Dormant / Experimental — disabled in the default runtime.**
+> The `CARAVAN_TOOL_REQUEST` parser and the `/request` commands described in this
+> section are an experimental harness layer. They are **not connected to the
+> default runtime** and are not invoked during normal assistant turns. The default
+> workflow is entirely `/tool read` / `/tool list` centered (see
+> [Tool Commands](#tool-commands)). This section is retained for reference while
+> the detection seam is dormant.
+
+The experimental parser can recognise a `CARAVAN_TOOL_REQUEST` block embedded in
+a response string and, when exercised (e.g. in tests or through the internal
+`/request` seam), record a `ModelToolRequest` event in the Event Log. This is a
 **detect-only** mechanism — Caravan does **not** execute the requested tool
-automatically.
+automatically, and the parser is **not** wired into the live assistant response
+path.
 
 ### `CARAVAN_TOOL_REQUEST` Block Format
 
-The model may embed a tool request in its response using the following format.
-The delimiter lines must appear exactly as bare text — no angle brackets or other
+The block format below describes what the dormant parser recognises. The
+delimiter lines must appear as bare text — no angle brackets or other
 decoration — and keys use `=` as the separator.
 
 **`read_file` example:**
@@ -1722,65 +1737,45 @@ path=.
 END_CARAVAN_TOOL_REQUEST
 ```
 
-When a block matching these markers is present in the assistant response, Caravan
-records a `ModelToolRequest` event whose detail carries the detected block
-contents.
+When the experimental parser is explicitly exercised and a block matching these
+markers is present, it records a `ModelToolRequest` event whose detail carries
+the detected block contents. Under default runtime conditions the parser is never
+called, so no `ModelToolRequest` event is produced from assistant responses.
 
 ### What Detection Does NOT Do
 
-Detection does **not**:
+The experimental detect-only parser does **not**:
 
 - Execute the named tool.
 - Produce a `ToolCall`, `ToolResult`, or `ToolError` event — those events are
   emitted only when the user explicitly runs a `/tool` command.
 
 The `ModelToolRequest` event is a trace only. No tool runs, no output is
-produced, and the prompt for the next turn is unaffected unless the user
-completes the steps below.
+produced, and the prompt for the next turn is unaffected.
 
-### What You Must Do Manually
+### Standard Manual Flow (Default Runtime)
 
-1. Observe the `ModelToolRequest` event in the Event Log (and its detail in the
-   Inspector) to see which tool the model requested.
-2. Run the matching slash command yourself — for example `/tool read <path>` or
-   `/tool list [path]`.
-3. Run `/context attach-last-tool` to stage the tool output as pending context.
-4. Submit your next plain-text message — the tool output is injected into the
+The standard way to run a tool is always a direct slash command — regardless of
+what the assistant response suggests:
+
+1. Run `/tool read <path>` or `/tool list [path]` directly.
+2. Run `/context attach-last-tool` to stage the tool output as pending context.
+3. Submit your next plain-text message — the tool output is injected into the
    `Workspace Context:` section of the compiled prompt for that turn only.
 
-Without step 2, the `ModelToolRequest` event is recorded but the tool is never
-run and no output enters the prompt. Detection is strictly observe-and-act —
-there is no automatic execution.
+The assistant may suggest a tool in its prose response; you still run the command
+manually. There is no automatic execution in the default runtime.
 
-### Screen-Log Guidance
+### `/request` Commands (Experimental — Dormant)
 
-When Caravan detects a `CARAVAN_TOOL_REQUEST` block it shows a guidance message
-in the screen log. The guidance consists of:
-
-- **Detected request detail** — the tool name and path extracted from the block.
-- **Explicit notice** that Caravan did **not** execute the request automatically.
-- **Suggested `/tool` command** — `/tool read <path>` for a `read_file` request,
-  or `/tool list <path>` for a `list_files` request.
-- **Next step** — run `/context attach-last-tool` after the tool command
-  completes to stage the output as pending context.
-
-This guidance is a **screen-log UI hint only**. It is **NOT** recorded as an
-Event Log event and does not appear in the Inspector. The tool still runs only
-when the user runs the suggested `/tool` command manually.
-
-> **Limitation:** Paths with spaces are not supported yet. The suggested command
-> uses the raw path verbatim; use a path without spaces.
-
-### Pending Model Tool Request UX
-
-When Caravan detects a `CARAVAN_TOOL_REQUEST` block, it stores the detected
-request as a **pending suggested action** in memory — replacing any previously
-stored pending request. The pending state is surfaced through two commands and
-the `| Request:` header segment described above.
+The `/request` commands below are part of the dormant experimental seam. They
+are available in the binary but are **not connected to the default runtime** —
+no ordinary assistant turn populates the pending request state they operate on.
 
 #### `/request status`
 
-Shows the currently pending model tool request. The output includes:
+Shows the currently pending model tool request (if any was set via the
+experimental seam). The output includes:
 
 - The suggested `/tool` command to run (e.g. `/tool read <path>` or
   `/tool list <path>`).
@@ -1792,9 +1787,10 @@ any tool, and does not modify the pending state.
 
 #### `/request run`
 
-Explicitly executes the pending model tool request as a read-only tool. This is
-the **only** way a model-requested tool is ever run — the model response alone
-never causes a tool to execute automatically.
+Explicitly executes the pending model tool request as a read-only tool. Because
+the default runtime does not populate the pending request, this command will
+typically report `No pending model tool request.` in normal operation. It is
+retained for experimental use.
 
 **Success path** — when a pending request exists and the tool executes without
 error:
@@ -1833,17 +1829,17 @@ Removes the pending model tool request. After `/request clear`, the header shows
 `/request clear` is **read-only** — it does not run the model and does not execute
 any tool.
 
-#### Behavior Contract
+#### Behavior Contract (Experimental Seam)
 
-The following invariants apply to the pending model tool request state:
+The following invariants apply to the pending model tool request state when the
+experimental seam is active:
 
 - A detected `ModelToolRequest` replaces any previously pending request — there
   is at most one pending request at a time.
 - The pending request is **not** executed automatically; Caravan never runs a
   tool on behalf of the model.
-- A plain model response (one that contains no `CARAVAN_TOOL_REQUEST` block)
-  does **not** clear the pending request — it remains pending until explicitly
-  cleared via `/request clear`.
+- A plain model response does **not** clear the pending request — it remains
+  pending until explicitly cleared via `/request clear`.
 - A successful `/tool` command does **not** auto-clear the pending request — you
   must run `/request clear` explicitly when you are done with it.
 - The pending state is **in-memory only** — it is not persisted to
