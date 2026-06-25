@@ -1251,6 +1251,375 @@ fn tool_propose_write_approval_request_detail_is_summary_only_and_non_resumable(
     );
 }
 
+// --- Auto-attached workspace context tests (T-1 behavior) ---
+
+// Step 1: /tool read auto-sets pending_manual_tool_context and last_tool_output_candidate,
+// and pushes the guidance line into app.log.
+#[test]
+fn tool_read_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("data.txt"), "auto-set content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    assert!(app.pending_manual_tool_context.is_none());
+    assert!(app.last_tool_output_candidate.is_none());
+
+    app.input = "/tool read data.txt".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be auto-set after successful /tool read"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be set after successful /tool read"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "This tool output will be used as context for your next message."),
+        "guidance line must be pushed into app.log after /tool read"
+    );
+}
+
+// Step 2: /tool list auto-sets pending_manual_tool_context and last_tool_output_candidate,
+// and pushes the guidance line into app.log.
+#[test]
+fn tool_list_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("entry.txt"), "e").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    assert!(app.pending_manual_tool_context.is_none());
+    assert!(app.last_tool_output_candidate.is_none());
+
+    app.input = "/tool list .".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be auto-set after successful /tool list"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be set after successful /tool list"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "This tool output will be used as context for your next message."),
+        "guidance line must be pushed into app.log after /tool list"
+    );
+}
+
+// Step 3: After /tool read, a plain-text user message produces a PromptCompile event
+// whose detail contains "Workspace Context:", "Manual Tool Context:", and the bounded
+// file content appearing AFTER "Workspace Context:" (position-based check).
+#[test]
+fn tool_read_auto_set_prompt_compile_contains_workspace_and_manual_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let file_content = "unique_read_content_for_prompt_test_xyz";
+    std::fs::write(workspace_dir.path().join("prompt_test.txt"), file_content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read prompt_test.txt".to_string();
+    app.submit();
+    assert!(app.pending_manual_tool_context.is_some());
+
+    app.input = "use the file content".to_string();
+    app.submit();
+
+    // pending is cleared after one-shot consumption.
+    assert!(app.pending_manual_tool_context.is_none());
+
+    let events = app.event_log.events();
+    let pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .next()
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("Workspace Context:"),
+        "PromptCompile detail must contain 'Workspace Context:'"
+    );
+    assert!(
+        pc.detail.contains("Manual Tool Context:"),
+        "PromptCompile detail must contain 'Manual Tool Context:'"
+    );
+    assert!(
+        pc.detail.contains(file_content),
+        "PromptCompile detail must contain the bounded file content"
+    );
+    // Position check: file content must appear AFTER "Workspace Context:".
+    assert!(
+        pc.detail.find("Workspace Context:").unwrap() < pc.detail.find(file_content).unwrap(),
+        "file content must appear after 'Workspace Context:' in PromptCompile detail"
+    );
+}
+
+// Step 4: After /tool list, a plain-text user message produces a PromptCompile event
+// whose detail contains a known entry name under the Workspace Context section,
+// verified with a position-based check.
+#[test]
+fn tool_list_auto_set_prompt_compile_contains_workspace_context_section() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let known_entry = "unique_list_entry_abc.txt";
+    std::fs::write(workspace_dir.path().join(known_entry), "x").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool list .".to_string();
+    app.submit();
+    assert!(app.pending_manual_tool_context.is_some());
+
+    app.input = "what files are there".to_string();
+    app.submit();
+
+    assert!(app.pending_manual_tool_context.is_none());
+
+    let events = app.event_log.events();
+    let pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .next()
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("Workspace Context:"),
+        "PromptCompile detail must contain 'Workspace Context:'"
+    );
+    assert!(
+        pc.detail.contains(known_entry),
+        "PromptCompile detail must contain the known entry name from the list"
+    );
+    // Position check: the entry name must appear AFTER "Workspace Context:".
+    assert!(
+        pc.detail.find("Workspace Context:").unwrap() < pc.detail.find(known_entry).unwrap(),
+        "known entry name must appear after 'Workspace Context:' in PromptCompile detail"
+    );
+}
+
+// Step 5: One-shot clearing — after /tool read then one user message,
+// pending_manual_tool_context is None; a SECOND user message's PromptCompile
+// detail does NOT contain "Manual Tool Context:" or the bounded content.
+#[test]
+fn tool_read_auto_set_context_is_one_shot() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let file_content = "one_shot_content_sentinel_abc123";
+    std::fs::write(workspace_dir.path().join("oneshot.txt"), file_content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read oneshot.txt".to_string();
+    app.submit();
+    assert!(app.pending_manual_tool_context.is_some());
+
+    // First user message consumes the context.
+    app.input = "first message".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must be None after the first user message (one-shot)"
+    );
+
+    // Second user message must NOT include the context.
+    app.input = "second message".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    let second_pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .nth(1)
+        .expect("second PromptCompile event should exist");
+
+    assert!(
+        !second_pc.detail.contains("Manual Tool Context:"),
+        "second PromptCompile must NOT contain 'Manual Tool Context:' (context was one-shot)"
+    );
+    assert!(
+        !second_pc.detail.contains(file_content),
+        "second PromptCompile must NOT contain the bounded content (context was one-shot)"
+    );
+}
+
+// Step 6: A FAILED /tool read does not disturb pending_manual_tool_context.
+// Sub-case (a): clean state → failed read → pending stays None.
+// Sub-case (b): after a successful read (pending = Some), a failed read leaves
+// the original pending intact (still Some, same content).
+#[test]
+fn tool_read_failure_leaves_pending_context_unchanged() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("real.txt"), "real content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Sub-case (a): clean state — a failed read (workspace violation) leaves pending None.
+    assert!(app.pending_manual_tool_context.is_none());
+    app.input = "/tool read ../outside.txt".to_string();
+    app.submit();
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "sub-case (a): pending_manual_tool_context must remain None after a failed /tool read"
+    );
+
+    // Sub-case (b): after a successful read, a subsequent failed read leaves pending intact.
+    app.input = "/tool read real.txt".to_string();
+    app.submit();
+    assert!(app.pending_manual_tool_context.is_some());
+    let original_content = app
+        .pending_manual_tool_context
+        .as_ref()
+        .unwrap()
+        .content
+        .clone();
+
+    // Failed read: missing file.
+    app.input = "/tool read nonexistent_missing.txt".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "sub-case (b): pending_manual_tool_context must remain Some after a failed /tool read"
+    );
+    assert_eq!(
+        app.pending_manual_tool_context
+            .as_ref()
+            .unwrap()
+            .content,
+        original_content,
+        "sub-case (b): pending_manual_tool_context content must be unchanged after a failed read"
+    );
+}
+
+// Step 7: A successful /tool read auto-sets pending but emits NO ToolContextAttach event.
+#[test]
+fn tool_read_auto_set_emits_no_tool_context_attach_event() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("noattach.txt"), "content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read noattach.txt".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be set after /tool read"
+    );
+
+    let events = app.event_log.events();
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        "auto-set on /tool read must NOT emit a ToolContextAttach event"
+    );
+}
+
+// Step 8: A second successful /tool read of a different file overwrites
+// pending_manual_tool_context with the newer file's content (last-write-wins, no panic).
+#[test]
+fn tool_read_second_success_overwrites_pending_last_write_wins() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("first.txt"), "content of first file").unwrap();
+    std::fs::write(workspace_dir.path().join("second.txt"), "content of second file").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // First read.
+    app.input = "/tool read first.txt".to_string();
+    app.submit();
+    assert!(app.pending_manual_tool_context.is_some());
+    let first_content = app
+        .pending_manual_tool_context
+        .as_ref()
+        .unwrap()
+        .content
+        .clone();
+
+    // Second read of a different file — must overwrite pending (no panic).
+    app.input = "/tool read second.txt".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must remain Some after second /tool read"
+    );
+    let second_content = app
+        .pending_manual_tool_context
+        .as_ref()
+        .unwrap()
+        .content
+        .clone();
+
+    assert_ne!(
+        first_content, second_content,
+        "pending_manual_tool_context must be overwritten with the second file's content"
+    );
+    assert!(
+        second_content.contains("content of second file"),
+        "pending must reflect the second file's content (last-write-wins)"
+    );
+}
+
 // (j) Candidate-source preservation: a second propose-write still reflects the
 //     original last_tool_output_candidate content, not the prior ToolResult summary.
 //     No event detail anywhere contains the raw sentinel.
