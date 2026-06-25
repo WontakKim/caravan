@@ -1528,10 +1528,7 @@ fn tool_read_failure_leaves_pending_context_unchanged() {
         "sub-case (b): pending_manual_tool_context must remain Some after a failed /tool read"
     );
     assert_eq!(
-        app.pending_manual_tool_context
-            .as_ref()
-            .unwrap()
-            .content,
+        app.pending_manual_tool_context.as_ref().unwrap().content,
         original_content,
         "sub-case (b): pending_manual_tool_context content must be unchanged after a failed read"
     );
@@ -1562,7 +1559,9 @@ fn tool_read_auto_set_emits_no_tool_context_attach_event() {
 
     let events = app.event_log.events();
     assert!(
-        !events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        !events
+            .iter()
+            .any(|e| e.kind == EventKind::ToolContextAttach),
         "auto-set on /tool read must NOT emit a ToolContextAttach event"
     );
 }
@@ -1574,8 +1573,16 @@ fn tool_read_second_success_overwrites_pending_last_write_wins() {
     let store_dir = TempDir::new();
     let workspace_dir = TempDir::new();
 
-    std::fs::write(workspace_dir.path().join("first.txt"), "content of first file").unwrap();
-    std::fs::write(workspace_dir.path().join("second.txt"), "content of second file").unwrap();
+    std::fs::write(
+        workspace_dir.path().join("first.txt"),
+        "content of first file",
+    )
+    .unwrap();
+    std::fs::write(
+        workspace_dir.path().join("second.txt"),
+        "content of second file",
+    )
+    .unwrap();
 
     let store = EventStore::new(store_dir.path());
     let mut app = App::with_store_gateway_and_workspace_root(
