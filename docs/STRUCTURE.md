@@ -12,10 +12,12 @@ Caravan is structured in two distinct layers. Understanding this split is the
 key to navigating the codebase.
 
 > **Current focus:** The active development surface is a **Claude Code-like baseline** —
-> not a harness-first architecture. The baseline layer (command parser, prompt /
-> project memory / transcript, model gateway, and basic read-only workspace tools)
-> is the primary user experience. The experimental harness layer exists as a
-> structural seam for future tooling but is not the default surface.
+> not a harness-first architecture. The **baseline runtime path** is:
+> prompt / project memory / transcript / basic read-only tools (`/tool read`, `/tool list`).
+> This is the primary user experience. The experimental harness layer (including the
+> `model/tool_request.rs` dormant parser and `tool/schema.rs` "Model Tool Request Blocks"
+> generator) exists as a structural seam for future tooling but is not wired into the
+> default runtime path.
 
 ### Claude Baseline Layer (primary)
 
@@ -111,7 +113,7 @@ crates/kernel/src/
 │   ├── runtime_config.rs    # ModelRuntimeConfig loaded from process environment
 │   ├── runtime_config/      # runtime_config submodule
 │   │   └── tests.rs         # Unit tests
-│   ├── tool_request.rs  # ModelToolRequest parsed from model output
+│   ├── tool_request.rs  # ModelToolRequest parser — dormant experimental harness module; parses tool-call blocks from model output but is not connected to the default runtime path and is not invoked during a normal baseline session
 │   ├── types.rs         # ModelAdapterKind / ModelProvider enums
 │   └── openai/          # OpenAI-compatible HTTP adapter
 │       ├── mod.rs
@@ -134,7 +136,7 @@ crates/kernel/src/
     ├── registry/        # registry submodule
     │   ├── path.rs      # Workspace path confinement helper (resolve_in_workspace) for safe in-workspace resolution
     │   └── tests.rs     # Unit tests for ToolRegistry and path-safety logic
-    └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog
+    └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog — generates "Model Tool Request Blocks" prompt section; part of the same dormant experimental harness as model/tool_request.rs; this output is not injected into the default prompt
 ```
 
 The `commands/` sub-directory follows the same facade pattern as `events/`:
