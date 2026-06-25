@@ -69,7 +69,7 @@ static HELP_SECTIONS: &[HelpSection] = &[
         ],
     },
     HelpSection {
-        header: "Manual tool context commands",
+        header: "Workspace context commands",
         surface: CommandHelpSurface::InternalHarness,
         entries: &[
             CommandHelpEntry {
