@@ -111,7 +111,8 @@ impl super::App {
                 self.pending_manual_tool_context = Some(ctx);
                 self.push_tool_list_output(&display_path, entries);
                 self.log.push(
-                    "This tool output will be used as context for your next message.".to_string(),
+                    "This tool output will be used as workspace context for your next message."
+                        .to_string(),
                 );
             }
             Ok(ToolOutput::FileContent { content, .. }) => {
@@ -120,7 +121,8 @@ impl super::App {
                 self.pending_manual_tool_context = Some(ctx);
                 self.push_tool_read_output(&display_path, &content);
                 self.log.push(
-                    "This tool output will be used as context for your next message.".to_string(),
+                    "This tool output will be used as workspace context for your next message."
+                        .to_string(),
                 );
             }
             Ok(ToolOutput::WritePreview { .. }) => {

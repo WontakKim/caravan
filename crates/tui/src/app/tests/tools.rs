@@ -1296,7 +1296,8 @@ fn tool_read_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
     assert!(
         app.log
             .iter()
-            .any(|l| l == "This tool output will be used as context for your next message."),
+            .any(|l| l
+                == "This tool output will be used as workspace context for your next message."),
         "guidance line must be pushed into app.log after /tool read"
     );
 }
@@ -1344,7 +1345,8 @@ fn tool_list_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
     assert!(
         app.log
             .iter()
-            .any(|l| l == "This tool output will be used as context for your next message."),
+            .any(|l| l
+                == "This tool output will be used as workspace context for your next message."),
         "guidance line must be pushed into app.log after /tool list"
     );
 }
@@ -1544,7 +1546,7 @@ fn tool_read_failure_leaves_pending_context_unchanged() {
         .unwrap()
         .content
         .clone();
-    let guidance = "This tool output will be used as context for your next message.";
+    let guidance = "This tool output will be used as workspace context for your next message.";
     let guidance_before = app.log.iter().filter(|l| *l == guidance).count();
 
     // Failed read: missing file.
