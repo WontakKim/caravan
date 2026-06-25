@@ -11,16 +11,27 @@ chosen structure and the splitting criteria explicit for the next contributor.
 Caravan is structured in two distinct layers. Understanding this split is the
 key to navigating the codebase.
 
+> **Current focus:** The active development surface is a **Claude Code-like baseline** —
+> not a harness-first architecture. The baseline layer (command parser, prompt /
+> project memory / transcript, model gateway, and basic read-only workspace tools)
+> is the primary user experience. The experimental harness layer exists as a
+> structural seam for future tooling but is not the default surface.
+
 ### Claude Baseline Layer (primary)
 
-This layer implements the Claude Code-like local coding agent baseline.
+This layer implements the Claude Code-like baseline: a local coding-assistant
+that accepts slash commands, maintains project memory and conversation context,
+routes requests through a model gateway, and exposes read-only workspace tools.
 
 | Component | Module | Description |
 |-----------|--------|-------------|
+| **Command parser** | `crates/kernel/src/commands/` | Parses all slash-command input (`/help`, `/tool list`, `/tool read`, `/run`, etc.) into a typed `Command` enum. `commands/parse.rs` contains parsing logic; `commands/help.rs` is the single source of truth for command help text. |
 | **Project Memory** | `crates/kernel/src/project_memory.rs` | Loads `CLAUDE.md` from the workspace root at session start and exposes it as `ProjectMemory`. The content is injected into the compiled prompt so the assistant has persistent project context across turns. If no `CLAUDE.md` is present, a "not found" fallback is used. Capped at 32 KiB; truncation is flagged. |
 | **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Workspace Context / Operating Rules / Output` sections from `ProjectMemory`, `ConversationTranscript`, and (only when explicitly attached) `ManualToolContext`. The default prompt does not include an "Available Tools" section; tool/approval/write behavior belongs to the experimental harness layer and is not advertised in the baseline prompt. |
 | **Conversation transcript** | `crates/kernel/src/transcript.rs` | Read-only projection of `UserMessage` and `AssistantMessage` events; feeds the `Conversation:` prompt section for in-session history. |
+| **Model gateway** | `crates/kernel/src/model/gateway.rs` | Routes a compiled `ModelRequest` to the correct provider adapter (`ModelGateway`), returns a `ModelResponse`, and records `ModelRoute` / `ModelUsage` events. Knows nothing about tools or the prompt structure. |
 | **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; submits the compiled prompt to `ModelGateway` and appends result events. |
+| **Read-only workspace tools** | `crates/kernel/src/tool/registry.rs`, `crates/tui/src/app/tools.rs` | `/tool list` enumerates registered tools; `/tool read <path>` reads a file from the workspace. Both are read-only and auto-allowed without an approval step. These are the only tool commands that belong to the baseline surface. |
 | **Storage / event log** | `crates/kernel/src/storage.rs`, `events/` | Append-only JSONL persistence; replays across restarts. |
 
 > **`CLAUDE.md` may contain secrets.** There is no automatic secret detection.
@@ -29,15 +40,18 @@ This layer implements the Claude Code-like local coding agent baseline.
 ### Experimental Harness Layer (secondary)
 
 This layer is a structural seam for future agentic tooling. It is **not** the
-primary user experience and sits clearly below the baseline layer in priority.
+default user experience and sits clearly below the baseline layer in priority.
+Commands in this layer (`/context`, `/request`, `/approval`, `/tool preview-write`,
+`/tool propose-write`) are intentionally separate from the baseline surface.
 Actual file mutation is still not implemented.
 
 | Component | Module | Description |
 |-----------|--------|-------------|
-| **Tool harness** | `crates/kernel/src/tool/` | `registry.rs` (list/read tools), `policy.rs` (auto-allow for read-only tools), `events.rs` (ToolPolicy / ToolCall / ToolResult / ToolError), `schema.rs` (prompt-visible catalog). |
+| **Tool harness (write / policy)** | `crates/kernel/src/tool/` | `policy.rs` (approval policy engine), `events.rs` (ToolPolicy / ToolCall / ToolResult / ToolError), `schema.rs` (prompt-visible catalog). Write-path tool commands (`/tool preview-write`, `/tool propose-write`) live here, not in the baseline. |
 | **Approval gate** | `crates/kernel/src/approval.rs`, `approval_queue.rs` | Data types and projection for the manual-approval flow; `/approval approve|reject|resume` commands. No tool write execution yet. |
 | **Write intent / preview** | `crates/kernel/src/write_intent.rs`, `write_preview.rs` | Pure data model and dry-run diff preview for proposed writes. **No file is ever written**; these are skeleton types only. |
-| **Manual tool context** | `crates/kernel/src/manual_context.rs` | One-shot attachment of tool output to the next prompt via `/context attach-last-tool`. |
+| **Manual tool context** | `crates/kernel/src/manual_context.rs` | One-shot attachment of tool output to the next prompt via `/context attach-last-tool` (`/context` commands). |
+| **Request harness** | `crates/tui/src/app/request.rs` | `/request status`, `/request run`, `/request clear` — structured request lifecycle outside the normal turn flow. Part of the experimental surface. |
 
 ---
 
