@@ -121,11 +121,13 @@ is **not the current default**.
 
 The TUI header includes a context indicator segment: it shows `| Context: pending`
 when manual tool context has been staged and will be attached to the next prompt,
-and `| Context: none` when no manual context is staged. Note that merely having a
-last tool-output candidate available (i.e. a `/tool read` result that has not yet
-been explicitly attached via `/context attach-last-tool`) does **not** set the
-indicator to `pending`; only context that has actually been attached and is waiting
-to be sent causes the header to display `| Context: pending`.
+and `| Context: none` when no manual context is staged. A successful `/tool read`
+or `/tool list` automatically sets `pending_manual_tool_context`, so the header
+shows `| Context: pending` immediately after the tool command completes — no
+explicit `/context attach-last-tool` is needed for the basic flow. Context can
+also be staged explicitly via `/context attach-last-tool`. Only context that has
+been staged and is waiting to be sent causes the header to display
+`| Context: pending`.
 
 The header also includes a separate request indicator segment: it shows
 `| Request: pending` when a `ModelToolRequest` has been detected and stored as a
@@ -1542,16 +1544,28 @@ marker); larger tool outputs are truncated before being inserted into the prompt
 
 ### One-shot attach flow
 
+A successful `/tool read <path>` or `/tool list [path]` **automatically** attaches
+its bounded output as the next user message's Workspace Context (one-shot). You do
+not need to run `/context attach-last-tool` for the basic flow.
+
+> **Sensitive-file warning:** Because `/tool read` and `/tool list` output is
+> automatically included in the next prompt, do **not** use these commands on
+> sensitive files or directories — such as private keys, credentials, `.env`
+> files, or any path containing secrets — as the content will be forwarded to
+> the model layer. Review the tool output in the Inspector panel before
+> submitting your next message.
+
 1. Run `/tool read <path>` or `/tool list [path]` to execute a read-only tool.
-2. Run `/context attach-last-tool` to stage that output as pending context. If a
-   recent successful `/tool read` or `/tool list` result exists, a
-   `ToolContextAttach` event is appended (with a summary-only detail). If no tool
-   output is available, a notice is shown and no `ToolContextAttach` event is
-   emitted.
-3. Submit your next plain-text message. The pending tool output is injected into
+   On success the bounded output is automatically staged as pending context and
+   the header shows `| Context: pending`.
+2. Submit your next plain-text message. The pending tool output is injected into
    the `Workspace Context:` section of the compiled prompt for that turn.
-4. After the run completes, the pending context is automatically cleared — it is
+3. After the run completes, the pending context is automatically cleared — it is
    not carried forward into future turns (this auto-clear emits no event).
+
+`/context attach-last-tool` can still be used to explicitly re-stage the most
+recent tool output (for example after a `/context clear`), but it is no longer
+required for the basic flow.
 
 To discard staged context before it is used, run `/context clear`. A
 `ToolContextClear` event is appended and the pending context is removed.
@@ -1617,14 +1631,16 @@ This fallback is also the text shown for any turn where context was not attached
 
 ### Sensitive-data warning
 
-> **Warning:** `/context attach-last-tool` includes the bounded output of the
-> user-chosen read-only tool call directly in the prompt sent to the model. For
-> `/tool read` this may include (possibly truncated) file content; for
-> `/tool list` this includes directory listing output. Do **not** read and attach
-> sensitive files or directories — such as private keys, credentials, `.env`
-> files, or any path containing secrets — because the attached output will be
-> forwarded to the model layer. Review the tool output in the Inspector panel
-> before attaching.
+> **Warning:** A successful `/tool read` or `/tool list` automatically includes
+> the bounded output in the next prompt sent to the model — no explicit
+> `/context attach-last-tool` is required. For `/tool read` this may include
+> (possibly truncated) file content; for `/tool list` this includes directory
+> listing output. Do **not** use these commands on sensitive files or
+> directories — such as private keys, credentials, `.env` files, or any path
+> containing secrets — because the output will be forwarded to the model layer
+> automatically. Review the tool output in the Inspector panel before submitting
+> your next message. `/context attach-last-tool` also includes the bounded
+> output when used explicitly; the same caution applies.
 
 ## Model-visible Read-only Tool Schema Skeleton
 

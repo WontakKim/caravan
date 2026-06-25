@@ -39,8 +39,15 @@ default UX surface: they observe the filesystem without mutating it.
 
 | Command | Description |
 |---------|-------------|
-| `/tool list [path]` | List files under the workspace root (or a sub-path); read-only |
-| `/tool read <path>` | Read a UTF-8 text file under the workspace root; read-only |
+| `/tool list [path]` | List files under the workspace root (or a sub-path); read-only. On success, automatically attaches the bounded listing as the next message's Workspace Context (one-shot). |
+| `/tool read <path>` | Read a UTF-8 text file under the workspace root; read-only. On success, automatically attaches the bounded file content as the next message's Workspace Context (one-shot). |
+
+> **Sensitive-file warning:** A successful `/tool read` or `/tool list` automatically
+> includes the bounded output in the next prompt sent to the model. Do **not** use
+> these commands on sensitive files or directories — such as private keys,
+> credentials, `.env` files, or any path containing secrets — because the content
+> will be forwarded to the model layer automatically. `/context attach-last-tool`
+> also includes the output when used explicitly; the same caution applies.
 
 ---
 

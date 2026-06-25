@@ -27,7 +27,7 @@ routes requests through a model gateway, and exposes read-only workspace tools.
 |-----------|--------|-------------|
 | **Command parser** | `crates/kernel/src/commands/` | Parses all slash-command input (`/help`, `/tool list`, `/tool read`, `/run`, etc.) into a typed `Command` enum. `commands/parse.rs` contains parsing logic; `commands/help.rs` is the single source of truth for command help text. |
 | **Project Memory** | `crates/kernel/src/project_memory.rs` | Loads `CLAUDE.md` from the workspace root at session start and exposes it as `ProjectMemory`. The content is injected into the compiled prompt so the assistant has persistent project context across turns. If no `CLAUDE.md` is present, a "not found" fallback is used. Capped at 32 KiB; truncation is flagged. |
-| **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Workspace Context / Operating Rules / Output` sections from `ProjectMemory`, `ConversationTranscript`, and (only when explicitly attached) `ManualToolContext`. The default prompt does not include an "Available Tools" section; tool/approval/write behavior belongs to the experimental harness layer and is not advertised in the baseline prompt. |
+| **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Workspace Context / Operating Rules / Output` sections from `ProjectMemory`, `ConversationTranscript`, and (when attached — automatically by a successful `/tool read`/`/tool list`, or explicitly via `/context attach-last-tool`) `ManualToolContext`. The default prompt does not include an "Available Tools" section; tool/approval/write behavior belongs to the experimental harness layer and is not advertised in the baseline prompt. |
 | **Conversation transcript** | `crates/kernel/src/transcript.rs` | Read-only projection of `UserMessage` and `AssistantMessage` events; feeds the `Conversation:` prompt section for in-session history. |
 | **Model gateway** | `crates/kernel/src/model/gateway.rs` | Routes a compiled `ModelRequest` to the correct provider adapter (`ModelGateway`), returns a `ModelResponse`, and records `ModelRoute` / `ModelUsage` events. Knows nothing about tools or the prompt structure. |
 | **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; submits the compiled prompt to `ModelGateway` and appends result events. |
@@ -50,7 +50,7 @@ Actual file mutation is still not implemented.
 | **Tool harness (write / policy)** | `crates/kernel/src/tool/` | `policy.rs` (approval policy engine), `events.rs` (ToolPolicy / ToolCall / ToolResult / ToolError), `schema.rs` (prompt-visible catalog). Write-path tool commands (`/tool preview-write`, `/tool propose-write`) live here, not in the baseline. |
 | **Approval gate** | `crates/kernel/src/approval.rs`, `approval_queue.rs` | Data types and projection for the manual-approval flow; `/approval approve|reject|resume` commands. No tool write execution yet. |
 | **Write intent / preview** | `crates/kernel/src/write_intent.rs`, `write_preview.rs` | Pure data model and dry-run diff preview for proposed writes. **No file is ever written**; these are skeleton types only. |
-| **Manual tool context** | `crates/kernel/src/manual_context.rs` | One-shot attachment of tool output to the next prompt via `/context attach-last-tool` (`/context` commands). |
+| **Manual tool context** | `crates/kernel/src/manual_context.rs` | One-shot attachment of tool output to the next prompt. A successful `/tool read` or `/tool list` auto-attaches its bounded output as the next-message Workspace Context; `/context attach-last-tool` can also attach explicitly (`/context` commands). |
 | **Request harness** | `crates/tui/src/app/request.rs` | `/request status`, `/request run`, `/request clear` — structured request lifecycle outside the normal turn flow. Part of the experimental surface. |
 
 ---
@@ -282,11 +282,12 @@ constraints are enforced:
 ```
 
 - **Prompt** builds the Claude-baseline prompt string from `ProjectMemory`,
-  `ConversationTranscript`, and — only when explicitly attached — `ManualToolContext`
-  (rendered in the `Workspace Context` section); it produces the prompt text placed
-  in the `ModelRequest`. The experimental `ToolCatalog` prompt section
-  (`tool::schema`) is no longer part of the default prompt. It does not touch the
-  event log.
+  `ConversationTranscript`, and — when attached (automatically by a successful
+  `/tool read`/`/tool list`, or explicitly via `/context attach-last-tool`) —
+  `ManualToolContext` (rendered in the `Workspace Context` section); it produces
+  the prompt text placed in the `ModelRequest`. The experimental `ToolCatalog`
+  prompt section (`tool::schema`) is no longer part of the default prompt. It does
+  not touch the event log.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a
   `ModelRequest` and returns `ModelOutput`. It has no knowledge of tools,
   prompts, or the event log.
