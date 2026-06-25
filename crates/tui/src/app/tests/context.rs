@@ -561,14 +561,14 @@ fn context_status_pending_and_candidate_both_present() {
     app.input = "/context status".to_string();
     app.submit();
 
-    // Find the "Context status:" line in the log.
+    // Find the "Workspace context status:" line in the log.
     let status_pos = app
         .log
         .iter()
-        .rposition(|l| l == "Context status:")
-        .expect("'Context status:' line must be present");
+        .rposition(|l| l == "Workspace context status:")
+        .expect("'Workspace context status:' line must be present");
 
-    assert_eq!(app.log[status_pos], "Context status:");
+    assert_eq!(app.log[status_pos], "Workspace context status:");
     // D4 last-write-wins: reading fileB overwrites pending to fileB's summary.
     assert_eq!(
         app.log[status_pos + 1],
@@ -679,8 +679,8 @@ fn context_status_output_excludes_raw_content() {
     let status_pos = app
         .log
         .iter()
-        .rposition(|l| l == "Context status:")
-        .expect("'Context status:' line must be present");
+        .rposition(|l| l == "Workspace context status:")
+        .expect("'Workspace context status:' line must be present");
 
     for i in 0..3 {
         assert!(
