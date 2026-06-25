@@ -583,11 +583,14 @@ fn tool_preview_write_does_not_mutate_state_fields() {
         workspace_dir.path().to_path_buf(),
     );
 
-    // Set up candidate.
+    // Set up candidate (auto-sets pending_manual_tool_context via T-1 behavior).
     app.input = "/tool read source.txt".to_string();
     app.submit();
     let candidate_before = app.last_tool_output_candidate.clone();
     assert!(candidate_before.is_some());
+    // After T-1, /tool read auto-sets pending_manual_tool_context.
+    let pending_before = app.pending_manual_tool_context.clone();
+    assert!(pending_before.is_some());
 
     // Set up a pending model tool request.
     let pending_req = ModelToolRequest {
@@ -608,10 +611,14 @@ fn tool_preview_write_does_not_mutate_state_fields() {
         "last_tool_output_candidate.content must be unchanged after preview-write"
     );
 
-    // pending_manual_tool_context must remain None.
-    assert!(
-        app.pending_manual_tool_context.is_none(),
-        "pending_manual_tool_context must not be set by preview-write"
+    // pending_manual_tool_context must remain unchanged (preview-write must not clear it).
+    let pending_after = app.pending_manual_tool_context.as_ref().expect(
+        "pending_manual_tool_context must remain Some after preview-write (auto-set by read)",
+    );
+    assert_eq!(
+        pending_after.content,
+        pending_before.as_ref().unwrap().content,
+        "pending_manual_tool_context must be unchanged by preview-write"
     );
 
     // pending_model_tool_request must remain set to the same value.
@@ -1094,6 +1101,9 @@ fn tool_propose_write_does_not_mutate_state_fields() {
     app.submit();
     let candidate_before = app.last_tool_output_candidate.clone();
     assert!(candidate_before.is_some());
+    // After T-1, /tool read auto-sets pending_manual_tool_context.
+    let pending_before = app.pending_manual_tool_context.clone();
+    assert!(pending_before.is_some());
 
     let pending_req = ModelToolRequest {
         kind: ModelToolRequestKind::ReadFile,
@@ -1111,9 +1121,14 @@ fn tool_propose_write_does_not_mutate_state_fields() {
         "last_tool_output_candidate.content must be unchanged after propose-write"
     );
 
-    assert!(
-        app.pending_manual_tool_context.is_none(),
-        "pending_manual_tool_context must not be set by propose-write"
+    // pending_manual_tool_context must remain unchanged (propose-write must not clear it).
+    let pending_after = app.pending_manual_tool_context.as_ref().expect(
+        "pending_manual_tool_context must remain Some after propose-write (auto-set by read)",
+    );
+    assert_eq!(
+        pending_after.content,
+        pending_before.as_ref().unwrap().content,
+        "pending_manual_tool_context must be unchanged by propose-write"
     );
 
     assert_eq!(

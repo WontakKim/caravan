@@ -427,9 +427,11 @@ fn context_status_candidate_only_shows_pending_none() {
     app.input = "/context status".to_string();
     app.submit();
 
+    // After T-1, /tool read auto-sets pending_manual_tool_context.
+    // The pending line now reflects the auto-set read, not "none".
     assert!(
-        app.log.contains(&"- pending: none".to_string()),
-        "pending should be none when nothing is attached"
+        app.log.iter().any(|l| l.starts_with("- pending: tool=")),
+        "pending should reflect the auto-set read (tool= summary line)"
     );
     assert!(
         app.log
@@ -541,7 +543,8 @@ fn context_status_pending_and_candidate_both_present() {
     app.input = "/context attach-last-tool".to_string();
     app.submit();
 
-    // Read fileB (last candidate = fileB's summary, pending still fileA).
+    // Read fileB — after T-1 (D4 last-write-wins), this auto-sets pending to
+    // fileB's summary, overwriting the previously attached fileA pending.
     app.input = "/tool read fileB.txt".to_string();
     app.submit();
     let file_b_summary = app
@@ -566,10 +569,11 @@ fn context_status_pending_and_candidate_both_present() {
         .expect("'Context status:' line must be present");
 
     assert_eq!(app.log[status_pos], "Context status:");
+    // D4 last-write-wins: reading fileB overwrites pending to fileB's summary.
     assert_eq!(
         app.log[status_pos + 1],
-        format!("- pending: {}", file_a_summary),
-        "pending line must contain fileA summary"
+        format!("- pending: {}", file_b_summary),
+        "pending line must contain fileB summary (last-write-wins)"
     );
     assert_eq!(
         app.log[status_pos + 2],

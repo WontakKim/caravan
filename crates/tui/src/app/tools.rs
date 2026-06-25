@@ -106,14 +106,22 @@ impl super::App {
         };
         match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
             Ok(ToolOutput::FileList { entries, .. }) => {
-                self.last_tool_output_candidate =
-                    Some(ManualToolContext::from_list_files(&display_path, &entries));
+                let ctx = ManualToolContext::from_list_files(&display_path, &entries);
+                self.last_tool_output_candidate = Some(ctx.clone());
+                self.pending_manual_tool_context = Some(ctx);
                 self.push_tool_list_output(&display_path, entries);
+                self.log.push(
+                    "This tool output will be used as context for your next message.".to_string(),
+                );
             }
             Ok(ToolOutput::FileContent { content, .. }) => {
-                self.last_tool_output_candidate =
-                    Some(ManualToolContext::from_read_file(&display_path, &content));
+                let ctx = ManualToolContext::from_read_file(&display_path, &content);
+                self.last_tool_output_candidate = Some(ctx.clone());
+                self.pending_manual_tool_context = Some(ctx);
                 self.push_tool_read_output(&display_path, &content);
+                self.log.push(
+                    "This tool output will be used as context for your next message.".to_string(),
+                );
             }
             Ok(ToolOutput::WritePreview { .. }) => {
                 unreachable!("handled in PreviewWrite early-return")
