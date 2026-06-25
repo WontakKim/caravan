@@ -34,6 +34,9 @@ fn request_run_without_pending_produces_no_tool_policy_event() {
 
 #[test]
 fn model_tool_request_detection_only_produces_no_tool_policy_event() {
+    // The default runtime no longer detects model tool requests; the
+    // CARAVAN_TOOL_REQUEST block is treated as plain assistant text. Either
+    // way, submitting the message must never produce a ToolPolicy event.
     let mut app = App::new();
     app.input =
         "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
@@ -43,7 +46,7 @@ fn model_tool_request_detection_only_produces_no_tool_policy_event() {
     let events = app.event_log.events();
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ToolPolicy),
-        "ModelToolRequest detection without execution must not produce ToolPolicy events"
+        "ModelToolRequest block without execution must not produce ToolPolicy events"
     );
 }
 

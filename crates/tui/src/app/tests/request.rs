@@ -8,45 +8,36 @@ use std::collections::HashMap;
 // --- ModelToolRequest guidance tests ---
 
 #[test]
-fn model_tool_request_guidance_shown_in_log_and_invariants_hold() {
-    // The first line of the message is plain text so the mock echo prefix
-    // "Mock response for: " does not land on the same line as the
-    // CARAVAN_TOOL_REQUEST delimiter, allowing the parser to detect it.
+fn model_tool_request_block_does_not_produce_guidance_by_default() {
+    // The default runtime no longer consumes detected_model_tool_request, so a
+    // CARAVAN_TOOL_REQUEST block in the assistant response is treated as plain
+    // text: no guidance lines are pushed and pending stays None.
     let mut app = App::new();
     app.input =
         "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
             .to_string();
     app.submit();
 
-    // (a) Positive case: guidance lines must appear in self.log.
+    // No guidance lines must appear in self.log.
     assert!(
-        app.log.iter().any(|l| l == "Run: /tool read README.md"),
-        "log must contain the exact line 'Run: /tool read README.md'"
+        !app.log.iter().any(|l| l == "Run: /tool read README.md"),
+        "log must not contain 'Run: /tool read README.md'"
     );
     assert!(
-        app.log
-            .iter()
-            .any(|l| l.contains("/context attach-last-tool")),
-        "log must contain a line with '/context attach-last-tool'"
-    );
-    assert!(
-        app.log
+        !app.log
             .iter()
             .any(|l| l.contains("did not execute it automatically")),
-        "log must contain a line with 'did not execute it automatically'"
+        "log must not contain 'did not execute it automatically'"
     );
 
-    // (b) Invariants: exactly one ModelToolRequest event (round-trip guard),
-    //     no tool-execution events, context fields untouched.
-    let events = app.event_log.events();
-    let model_tool_req_count = events
-        .iter()
-        .filter(|e| e.kind == EventKind::ModelToolRequest)
-        .count();
-    assert_eq!(
-        model_tool_req_count, 1,
-        "expected exactly one ModelToolRequest event (round-trip guard)"
+    // pending_model_tool_request must remain None.
+    assert!(
+        app.pending_model_tool_request.is_none(),
+        "pending_model_tool_request must remain None (default-off)"
     );
+
+    // No tool-execution events.
+    let events = app.event_log.events();
     assert!(
         !events.iter().any(|e| e.kind == EventKind::ToolCall),
         "must not emit ToolCall events"
@@ -90,9 +81,9 @@ fn plain_message_produces_no_model_tool_request_guidance() {
 // --- pending_model_tool_request field tests ---
 
 #[test]
-fn model_tool_request_detected_sets_pending_and_keeps_invariants() {
-    // The first line is plain text so the mock echo prefix does not land on
-    // the same line as the CARAVAN_TOOL_REQUEST delimiter, allowing detection.
+fn model_tool_request_block_does_not_set_pending_by_default() {
+    // The default runtime no longer consumes detected_model_tool_request, so a
+    // CARAVAN_TOOL_REQUEST block in the assistant response leaves pending None.
     let mut app = App::new();
     app.input =
         "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
@@ -100,8 +91,8 @@ fn model_tool_request_detected_sets_pending_and_keeps_invariants() {
     app.submit();
 
     assert!(
-        app.pending_model_tool_request.is_some(),
-        "pending_model_tool_request should be Some after detection"
+        app.pending_model_tool_request.is_none(),
+        "pending_model_tool_request must remain None (default-off)"
     );
     assert!(
         app.last_tool_output_candidate.is_none(),
@@ -195,30 +186,29 @@ fn error_path_keeps_existing_pending() {
 }
 
 #[test]
-fn second_detection_replaces_pending() {
+fn model_response_does_not_replace_seeded_pending() {
     use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
 
+    // The default runtime ignores detected_model_tool_request, so a seeded
+    // pending value must be preserved exactly — not replaced — when a model
+    // response containing a CARAVAN_TOOL_REQUEST block is submitted.
     let mut app = App::new();
-    // Pre-seed with a ListFiles request.
-    app.pending_model_tool_request = Some(ModelToolRequest {
+    let seeded = ModelToolRequest {
         kind: ModelToolRequestKind::ListFiles,
         path: ".".to_string(),
-    });
+    };
+    app.pending_model_tool_request = Some(seeded.clone());
 
-    // Submit a message that triggers read_file README.md detection via the mock path.
+    // Submit a message whose response contains a CARAVAN_TOOL_REQUEST block.
     app.input =
         "read the readme\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST"
             .to_string();
     app.submit();
 
-    let expected = ModelToolRequest {
-        kind: ModelToolRequestKind::ReadFile,
-        path: "README.md".to_string(),
-    };
     assert_eq!(
         app.pending_model_tool_request,
-        Some(expected),
-        "second detection must replace the existing pending_model_tool_request"
+        Some(seeded),
+        "model response must not replace the seeded pending_model_tool_request"
     );
 }
 

@@ -169,10 +169,6 @@ impl App {
                     self.log
                         .push(format!("Assistant: {}", output.assistant_response));
                 }
-                if let Some(req) = &output.detected_model_tool_request {
-                    self.log.extend(req.user_guidance());
-                    self.pending_model_tool_request = Some(req.clone());
-                }
             }
         }
 
