@@ -144,8 +144,8 @@ fn after_attach_user_message_prompt_compile_contains_manual_tool_context() {
 
     // The bounded content must appear in the Context section (after "Context:").
     assert!(
-        pc.detail.contains("Manual Tool Context:"),
-        "PromptCompile must contain Manual Tool Context: section"
+        pc.detail.contains("Attached Workspace Context:"),
+        "PromptCompile must contain Attached Workspace Context: section"
     );
     assert!(
         pc.detail.contains(file_content),
@@ -200,8 +200,8 @@ fn after_attach_second_user_message_does_not_reuse_context() {
         .expect("second PromptCompile event should exist");
 
     assert!(
-        !second_pc.detail.contains("Manual Tool Context:"),
-        "second PromptCompile must NOT contain Manual Tool Context"
+        !second_pc.detail.contains("Attached Workspace Context:"),
+        "second PromptCompile must NOT contain Attached Workspace Context"
     );
     assert!(
         !second_pc.detail.contains(file_content),

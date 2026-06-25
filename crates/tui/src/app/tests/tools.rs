@@ -1350,7 +1350,7 @@ fn tool_list_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
 }
 
 // Step 3: After /tool read, a plain-text user message produces a PromptCompile event
-// whose detail contains "Workspace Context:", "Manual Tool Context:", and the bounded
+// whose detail contains "Workspace Context:", "Attached Workspace Context:", and the bounded
 // file content appearing AFTER "Workspace Context:" (position-based check).
 #[test]
 fn tool_read_auto_set_prompt_compile_contains_workspace_and_manual_context() {
@@ -1384,22 +1384,22 @@ fn tool_read_auto_set_prompt_compile_contains_workspace_and_manual_context() {
         .expect("PromptCompile event should exist");
 
     // Ordered chain proves the content is rendered INSIDE the Workspace Context
-    // section's Manual Tool Context block, not merely somewhere after the header.
+    // section's Attached Workspace Context block, not merely somewhere after the header.
     let ws_pos = pc
         .detail
         .find("Workspace Context:")
         .expect("PromptCompile detail must contain 'Workspace Context:'");
     let manual_pos = pc
         .detail
-        .find("Manual Tool Context:")
-        .expect("PromptCompile detail must contain 'Manual Tool Context:'");
+        .find("Attached Workspace Context:")
+        .expect("PromptCompile detail must contain 'Attached Workspace Context:'");
     let content_pos = pc
         .detail
         .find(file_content)
         .expect("PromptCompile detail must contain the bounded file content");
     assert!(
         ws_pos < manual_pos && manual_pos < content_pos,
-        "expected order Workspace Context: < Manual Tool Context: < file content"
+        "expected order Workspace Context: < Attached Workspace Context: < file content"
     );
 }
 
@@ -1437,28 +1437,28 @@ fn tool_list_auto_set_prompt_compile_contains_workspace_context_section() {
         .expect("PromptCompile event should exist");
 
     // Ordered chain proves the list output is rendered INSIDE the Workspace
-    // Context section's Manual Tool Context block (the same wrapper as read).
+    // Context section's Attached Workspace Context block (the same wrapper as read).
     let ws_pos = pc
         .detail
         .find("Workspace Context:")
         .expect("PromptCompile detail must contain 'Workspace Context:'");
     let manual_pos = pc
         .detail
-        .find("Manual Tool Context:")
-        .expect("PromptCompile detail must contain 'Manual Tool Context:' for list output");
+        .find("Attached Workspace Context:")
+        .expect("PromptCompile detail must contain 'Attached Workspace Context:' for list output");
     let entry_pos = pc
         .detail
         .find(known_entry)
         .expect("PromptCompile detail must contain the known entry name from the list");
     assert!(
         ws_pos < manual_pos && manual_pos < entry_pos,
-        "expected order Workspace Context: < Manual Tool Context: < list entry"
+        "expected order Workspace Context: < Attached Workspace Context: < list entry"
     );
 }
 
 // Step 5: One-shot clearing — after /tool read then one user message,
 // pending_manual_tool_context is None; a SECOND user message's PromptCompile
-// detail does NOT contain "Manual Tool Context:" or the bounded content.
+// detail does NOT contain "Attached Workspace Context:" or the bounded content.
 #[test]
 fn tool_read_auto_set_context_is_one_shot() {
     let store_dir = TempDir::new();
@@ -1498,8 +1498,8 @@ fn tool_read_auto_set_context_is_one_shot() {
         .expect("second PromptCompile event should exist");
 
     assert!(
-        !second_pc.detail.contains("Manual Tool Context:"),
-        "second PromptCompile must NOT contain 'Manual Tool Context:' (context was one-shot)"
+        !second_pc.detail.contains("Attached Workspace Context:"),
+        "second PromptCompile must NOT contain 'Attached Workspace Context:' (context was one-shot)"
     );
     assert!(
         !second_pc.detail.contains(file_content),

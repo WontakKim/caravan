@@ -52,7 +52,7 @@ pub fn compile_prompt_with_context(
 
     let workspace_context = match manual_tool_context {
         Some(ctx) => format!(
-            "Manual Tool Context:\nSource:\n  {}\nContent:\n{}",
+            "Attached Workspace Context:\nSource:\n  {}\nContent:\n{}",
             ctx.source_label(),
             ctx.content
         ),
@@ -254,7 +254,7 @@ Respond to the current user message.",
         let compiled = compile_prompt_with_context("tell me about it", &[], Some(&ctx), None);
 
         // Positive assertions: required labels and content are present.
-        assert!(compiled.contains("Manual Tool Context:"));
+        assert!(compiled.contains("Attached Workspace Context:"));
         assert!(compiled.contains(
             "Source:\n  tool=read_file path=\"notes.txt\" risk=read_only truncated=false"
         ));
@@ -266,8 +266,8 @@ Respond to the current user message.",
             .find("Workspace Context:")
             .expect("Workspace Context: section must exist");
         let manual_pos = compiled
-            .find("Manual Tool Context:")
-            .expect("Manual Tool Context: must be present");
+            .find("Attached Workspace Context:")
+            .expect("Attached Workspace Context: must be present");
         let source_pos = compiled.find("Source:").expect("Source: must be present");
         let content_label_pos = compiled.find("Content:").expect("Content: must be present");
         let content_body_pos = compiled
@@ -275,7 +275,7 @@ Respond to the current user message.",
             .expect("bounded content must be present");
         assert!(
             manual_pos > context_pos,
-            "Manual Tool Context: must appear after Workspace Context:"
+            "Attached Workspace Context: must appear after Workspace Context:"
         );
         assert!(
             source_pos > context_pos,
@@ -312,7 +312,7 @@ Respond to the current user message.",
     fn compile_prompt_with_context_none_manual_tool_context_uses_fallback_literal() {
         let result = compile_prompt_with_context("hello", &[], None, None);
         assert!(result.contains("No external tool context is attached."));
-        assert!(!result.contains("Manual Tool Context:"));
+        assert!(!result.contains("Attached Workspace Context:"));
     }
 
     #[test]
@@ -320,7 +320,7 @@ Respond to the current user message.",
         let result = compile_prompt_with_context("hello", &[], None, None);
         assert!(result.contains("Project Memory:"));
         assert!(result.contains("No CLAUDE.md project memory found."));
-        assert!(!result.contains("Manual Tool Context:"));
+        assert!(!result.contains("Attached Workspace Context:"));
     }
 
     #[test]
@@ -347,7 +347,7 @@ Respond to the current user message.",
         let ctx = ManualToolContext::from_read_file("notes.txt", "attached file body");
         let compiled = compile_prompt_with_context("tell me", &[], Some(&ctx), None);
 
-        assert!(compiled.contains("Manual Tool Context:"));
+        assert!(compiled.contains("Attached Workspace Context:"));
         assert!(compiled.contains("Workspace Context:"));
 
         // The Workspace Context section must contain the attached file content.
