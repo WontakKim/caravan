@@ -105,41 +105,43 @@ impl ManualToolContext {
     ) -> Self {
         let source = format!("tool=search_text query=\"{query}\"");
         let byte_marker = "\n... [context truncated by byte budget]";
+        // Suffix that always applies when the search itself hit its match cap.
+        let search_suffix = if search_truncated {
+            "\n... [search results truncated by match limit]"
+        } else {
+            ""
+        };
 
-        let mut content: String = matches
+        let body: String = matches
             .iter()
             .map(|m| format!("{}:{}: {}", m.path, m.line, m.text))
             .collect::<Vec<_>>()
             .join("\n");
 
-        // Preserve the search-level match-cap truncation so the staged context
-        // is not mistaken for a complete result set when only the first capped
-        // batch of matches is present.
-        if search_truncated {
-            if !content.is_empty() {
-                content.push('\n');
-            }
-            content.push_str("... [search results truncated by match limit]");
-        }
-
-        if content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
+        // No byte-budget truncation needed: keep the body plus the search-cap
+        // marker (if any). `truncated` still reflects the match-cap truncation.
+        if body.len() + search_suffix.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
             return Self {
                 source,
-                content,
+                content: format!("{body}{search_suffix}"),
                 truncated: search_truncated,
             };
         }
 
-        let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - byte_marker.len();
-        let mut cut = budget;
-        while cut > 0 && !content.is_char_boundary(cut) {
+        // Byte-budget truncation needed. Reserve room for BOTH applicable
+        // markers and append them AFTER slicing the body, so a byte-budget cut
+        // can never erase the search-cap marker. Both causes are then preserved
+        // deterministically.
+        let budget =
+            MANUAL_TOOL_CONTEXT_MAX_BYTES.saturating_sub(search_suffix.len() + byte_marker.len());
+        let mut cut = budget.min(body.len());
+        while cut > 0 && !body.is_char_boundary(cut) {
             cut -= 1;
         }
-        let truncated_content = format!("{}{}", &content[..cut], byte_marker);
 
         Self {
             source,
-            content: truncated_content,
+            content: format!("{}{search_suffix}{byte_marker}", &body[..cut]),
             truncated: true,
         }
     }
@@ -354,5 +356,63 @@ mod tests {
             input.is_char_boundary(without_marker.len()),
             "cut point must be a char boundary"
         );
+    }
+
+    // (g) Search-cap truncation with content within the byte budget: the
+    // match-limit marker is present and truncated=true, with no byte-budget marker.
+    #[test]
+    fn from_search_text_preserves_match_cap_without_byte_truncation() {
+        let matches = vec![crate::tool::registry::SearchMatch {
+            path: "a.rs".to_string(),
+            line: 1,
+            text: "hit".to_string(),
+        }];
+        let ctx = ManualToolContext::from_search_text("q", &matches, true);
+        assert!(
+            ctx.truncated,
+            "search-cap truncation must set truncated=true"
+        );
+        assert!(
+            ctx.content
+                .contains("[search results truncated by match limit]"),
+            "must mark match-cap truncation: {}",
+            ctx.content
+        );
+        assert!(
+            !ctx.content.contains("[context truncated by byte budget]"),
+            "no byte-budget marker when within budget"
+        );
+    }
+
+    // (h) Both causes fire: the byte-budget cut must NOT erase the match-cap
+    // marker — both markers must survive and the content stays within budget.
+    #[test]
+    fn from_search_text_preserves_both_markers_when_byte_budget_exceeded() {
+        let matches: Vec<_> = (0..200)
+            .map(|i| crate::tool::registry::SearchMatch {
+                path: format!("file_{i}.rs"),
+                line: i + 1,
+                text: "x".repeat(200),
+            })
+            .collect();
+        let ctx = ManualToolContext::from_search_text("q", &matches, true);
+
+        assert!(ctx.truncated);
+        assert!(
+            ctx.content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES,
+            "content must stay within budget, len={}",
+            ctx.content.len()
+        );
+        assert!(
+            ctx.content
+                .contains("[search results truncated by match limit]"),
+            "match-cap marker must survive byte-budget truncation: {}",
+            ctx.content
+        );
+        assert!(
+            ctx.content.contains("[context truncated by byte budget]"),
+            "byte-budget marker must be present"
+        );
+        std::str::from_utf8(ctx.content.as_bytes()).expect("stored content must be valid UTF-8");
     }
 }
