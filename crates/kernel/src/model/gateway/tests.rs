@@ -386,7 +386,7 @@ fn make_step_request(user_message: &str) -> ModelStepRequest {
             description: "List files in a directory".into(),
             input_schema: serde_json::json!({"type": "object"}),
         }],
-        prior_tool_exchange: None,
+        prior_tool_exchanges: vec![],
     }
 }
 

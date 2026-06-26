@@ -289,7 +289,7 @@ mod tests {
                 description: "Search the web".into(),
                 input_schema: serde_json::json!({"type": "object"}),
             }],
-            prior_tool_exchange: None,
+            prior_tool_exchanges: vec![],
         }
     }
 

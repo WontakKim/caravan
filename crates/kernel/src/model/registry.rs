@@ -313,7 +313,7 @@ mod tests {
                 description: "List files in a directory".into(),
                 input_schema: serde_json::json!({"type": "object"}),
             }],
-            prior_tool_exchange: None,
+            prior_tool_exchanges: vec![],
         }
     }
 

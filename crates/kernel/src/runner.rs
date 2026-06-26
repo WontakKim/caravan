@@ -94,7 +94,7 @@ pub fn run_mock_turn(
     let first_step = ModelStepRequest {
         request,
         tools: ToolCatalog::readonly().readonly_model_definitions(),
-        prior_tool_exchange: None,
+        prior_tool_exchanges: vec![],
     };
 
     match gateway.complete_step(first_step) {
@@ -266,13 +266,14 @@ pub fn run_mock_turn(
 
             // Build the follow-up request: reuse the cloned base request, pass NO tools,
             // and include the prior exchange so the model sees the tool result.
+            let exchange = ModelToolExchange {
+                call: call.clone(),
+                result,
+            };
             let follow_up = ModelStepRequest {
                 request: request_clone,
                 tools: vec![],
-                prior_tool_exchange: Some(ModelToolExchange {
-                    call: call.clone(),
-                    result,
-                }),
+                prior_tool_exchanges: vec![exchange],
             };
 
             match gateway.complete_step(follow_up) {

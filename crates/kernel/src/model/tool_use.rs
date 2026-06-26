@@ -208,11 +208,11 @@ pub struct ModelToolExchange {
 }
 
 /// A single step request: a base model request plus available tools and any
-/// prior tool exchange to include in the conversation history.
+/// prior tool exchanges to include in the conversation history (in order).
 pub struct ModelStepRequest {
     pub request: ModelRequest,
     pub tools: Vec<ModelToolDefinition>,
-    pub prior_tool_exchange: Option<ModelToolExchange>,
+    pub prior_tool_exchanges: Vec<ModelToolExchange>,
 }
 
 /// The output of a single model step: either a plain assistant reply or a
@@ -349,7 +349,7 @@ mod tests {
         let step_request = ModelStepRequest {
             request,
             tools: vec![],
-            prior_tool_exchange: None,
+            prior_tool_exchanges: vec![],
         };
         let result = MockModelAdapter.complete_step(&mock_context(), &step_request);
         let output = result.unwrap();

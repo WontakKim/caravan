@@ -44,80 +44,67 @@ impl OpenAIRequestBuilder {
 
     /// Build a step request plan for a tool-enabled conversation turn.
     ///
-    /// Three cases are handled:
-    /// - `prior_tool_exchange` is `None` and `tools` is non-empty: initial request with
-    ///   `tools` and `tool_choice="auto"`.
-    /// - `prior_tool_exchange` is `None` and `tools` is empty: plain single-user-message
-    ///   request; no `tools` or `tool_choice` fields are serialized.
-    /// - `prior_tool_exchange` is `Some(exchange)`: follow-up with three messages
-    ///   (user, assistant with tool_calls, tool result); no `tools` or `tool_choice`.
+    /// Message history and tools serialization are independent:
+    /// - Message history: always starts with the user message, then appends one
+    ///   `assistant(tool_calls=[call_i], content=null)` + one `tool(result_i)`
+    ///   pair per entry in `prior_tool_exchanges` (in order). Empty vec → just
+    ///   the user message. Two exchanges → five messages in order:
+    ///   `[user, assistant(call1), tool(result1), assistant(call2), tool(result2)]`.
+    /// - Tools: when `step.tools` is non-empty, `tools` and `tool_choice="auto"`
+    ///   are included. When empty, both fields are omitted. This is independent
+    ///   of how many prior exchanges are present.
     pub fn build_step(
         config: &OpenAICompatibleConfig,
         model: &str,
         step: &ModelStepRequest,
     ) -> OpenAIRequestPlan {
-        let (messages, tools, tool_choice) = match &step.prior_tool_exchange {
-            None if !step.tools.is_empty() => {
-                let messages = vec![OpenAIChatMessage {
-                    role: "user".to_string(),
-                    content: Some(step.request.prompt.clone()),
-                    tool_calls: None,
-                    tool_call_id: None,
-                }];
-                let tool_defs = step
-                    .tools
-                    .iter()
-                    .map(|t| OpenAIToolDefinition {
-                        kind: "function".to_string(),
-                        function: OpenAIFunctionDefinition {
-                            name: t.name.clone(),
-                            description: t.description.clone(),
-                            parameters: t.input_schema.clone(),
-                        },
-                    })
-                    .collect();
-                (messages, Some(tool_defs), Some("auto".to_string()))
-            }
-            None => {
-                let messages = vec![OpenAIChatMessage {
-                    role: "user".to_string(),
-                    content: Some(step.request.prompt.clone()),
-                    tool_calls: None,
-                    tool_call_id: None,
-                }];
-                (messages, None, None)
-            }
-            Some(exchange) => {
-                let messages = vec![
-                    OpenAIChatMessage {
-                        role: "user".to_string(),
-                        content: Some(step.request.prompt.clone()),
-                        tool_calls: None,
-                        tool_call_id: None,
+        // Build message history: user message + one assistant+tool pair per exchange.
+        let mut messages = vec![OpenAIChatMessage {
+            role: "user".to_string(),
+            content: Some(step.request.prompt.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        for exchange in &step.prior_tool_exchanges {
+            messages.push(OpenAIChatMessage {
+                role: "assistant".to_string(),
+                content: None, // serializes as "content":null (no skip_serializing_if)
+                tool_calls: Some(vec![OpenAIToolCall {
+                    id: exchange.call.id.clone(),
+                    kind: "function".to_string(),
+                    function: OpenAIToolCallFunction {
+                        name: exchange.call.name.clone(),
+                        arguments: serde_json::to_string(&exchange.call.arguments)
+                            .unwrap_or_else(|_| "{}".to_string()),
                     },
-                    OpenAIChatMessage {
-                        role: "assistant".to_string(),
-                        content: None, // serializes as "content":null (no skip_serializing_if)
-                        tool_calls: Some(vec![OpenAIToolCall {
-                            id: exchange.call.id.clone(),
-                            kind: "function".to_string(),
-                            function: OpenAIToolCallFunction {
-                                name: exchange.call.name.clone(),
-                                arguments: serde_json::to_string(&exchange.call.arguments)
-                                    .unwrap_or_else(|_| "{}".to_string()),
-                            },
-                        }]),
-                        tool_call_id: None,
+                }]),
+                tool_call_id: None,
+            });
+            messages.push(OpenAIChatMessage {
+                role: "tool".to_string(),
+                content: Some(exchange.result.content.clone()),
+                tool_calls: None,
+                tool_call_id: Some(exchange.result.tool_call_id.clone()),
+            });
+        }
+
+        // Tools serialization is driven solely by step.tools.
+        let (tools, tool_choice) = if !step.tools.is_empty() {
+            let tool_defs = step
+                .tools
+                .iter()
+                .map(|t| OpenAIToolDefinition {
+                    kind: "function".to_string(),
+                    function: OpenAIFunctionDefinition {
+                        name: t.name.clone(),
+                        description: t.description.clone(),
+                        parameters: t.input_schema.clone(),
                     },
-                    OpenAIChatMessage {
-                        role: "tool".to_string(),
-                        content: Some(exchange.result.content.clone()),
-                        tool_calls: None,
-                        tool_call_id: Some(exchange.result.tool_call_id.clone()),
-                    },
-                ];
-                (messages, None, None)
-            }
+                })
+                .collect();
+            (Some(tool_defs), Some("auto".to_string()))
+        } else {
+            (None, None)
         };
 
         OpenAIRequestPlan {
@@ -267,7 +254,7 @@ mod tests {
                 user_message: "what is rust?".to_string(),
             },
             tools: vec![sample_tool_def()],
-            prior_tool_exchange: None,
+            prior_tool_exchanges: vec![],
         }
     }
 
@@ -278,7 +265,7 @@ mod tests {
                 user_message: "hello".to_string(),
             },
             tools: vec![],
-            prior_tool_exchange: None,
+            prior_tool_exchanges: vec![],
         }
     }
 
@@ -398,7 +385,7 @@ mod tests {
     fn build_step_follow_up_produces_exactly_three_messages() {
         let config = OpenAICompatibleConfig::default();
         let mut step = step_with_tools();
-        step.prior_tool_exchange = Some(sample_exchange());
+        step.prior_tool_exchanges = vec![sample_exchange()];
         let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
         assert_eq!(
             plan.body.messages.len(),
@@ -411,7 +398,7 @@ mod tests {
     fn build_step_follow_up_message_roles_are_user_assistant_tool() {
         let config = OpenAICompatibleConfig::default();
         let mut step = step_with_tools();
-        step.prior_tool_exchange = Some(sample_exchange());
+        step.prior_tool_exchanges = vec![sample_exchange()];
         let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
         assert_eq!(plan.body.messages[0].role, "user");
         assert_eq!(plan.body.messages[1].role, "assistant");
@@ -422,7 +409,7 @@ mod tests {
     fn build_step_follow_up_assistant_has_explicit_content_null() {
         let config = OpenAICompatibleConfig::default();
         let mut step = step_with_tools();
-        step.prior_tool_exchange = Some(sample_exchange());
+        step.prior_tool_exchanges = vec![sample_exchange()];
         let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
         let json = serde_json::to_string(&plan.body).unwrap();
         assert!(
@@ -436,7 +423,7 @@ mod tests {
     fn build_step_follow_up_assistant_has_tool_calls_with_call_id() {
         let config = OpenAICompatibleConfig::default();
         let mut step = step_with_tools();
-        step.prior_tool_exchange = Some(sample_exchange());
+        step.prior_tool_exchanges = vec![sample_exchange()];
         let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
         let assistant = &plan.body.messages[1];
         let tool_calls = assistant
@@ -453,7 +440,7 @@ mod tests {
     fn build_step_follow_up_tool_message_has_tool_call_id() {
         let config = OpenAICompatibleConfig::default();
         let mut step = step_with_tools();
-        step.prior_tool_exchange = Some(sample_exchange());
+        step.prior_tool_exchanges = vec![sample_exchange()];
         let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
         let tool_msg = &plan.body.messages[2];
         assert_eq!(tool_msg.tool_call_id, Some("call-1".to_string()));
@@ -466,14 +453,136 @@ mod tests {
 
     #[test]
     fn build_step_follow_up_omits_tools_field_in_serialized_body() {
+        // Follow-up calls pass empty tools (matching runtime runner.rs behavior).
+        // Tools serialization is driven solely by step.tools, so empty tools → no
+        // "tools" key in the body regardless of how many prior exchanges are present.
         let config = OpenAICompatibleConfig::default();
-        let mut step = step_with_tools();
-        step.prior_tool_exchange = Some(sample_exchange());
+        let mut step = step_empty_tools();
+        step.prior_tool_exchanges = vec![sample_exchange()];
         let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
         let json = serde_json::to_string(&plan.body).unwrap();
         assert!(
             !json.contains("\"tools\""),
             "follow-up should not contain \"tools\" key: {json}"
+        );
+    }
+
+    // --- new multi-exchange tests ---
+
+    #[test]
+    fn one_exchange_with_tools() {
+        // ONE prior exchange AND non-empty step.tools:
+        // - messages: [user, assistant(call1, content null), tool(result1)]
+        // - tools field IS serialized with tool_choice="auto"
+        let config = OpenAICompatibleConfig::default();
+        let step = ModelStepRequest {
+            request: ModelRequest {
+                prompt: "find something".to_string(),
+                user_message: "find something".to_string(),
+            },
+            tools: vec![sample_tool_def()],
+            prior_tool_exchanges: vec![sample_exchange()],
+        };
+        let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
+
+        // Check message order: [user, assistant(call1), tool(result1)]
+        assert_eq!(
+            plan.body.messages.len(),
+            3,
+            "expected 3 messages: user, assistant(call1), tool(result1)"
+        );
+        assert_eq!(plan.body.messages[0].role, "user");
+        assert_eq!(plan.body.messages[1].role, "assistant");
+        assert_eq!(plan.body.messages[1].content, None);
+        let tool_calls = plan.body.messages[1]
+            .tool_calls
+            .as_ref()
+            .expect("assistant must have tool_calls");
+        assert_eq!(tool_calls[0].id, "call-1");
+        assert_eq!(plan.body.messages[2].role, "tool");
+        assert_eq!(
+            plan.body.messages[2].tool_call_id,
+            Some("call-1".to_string())
+        );
+
+        // Check tools field IS serialized
+        let json = serde_json::to_string(&plan.body).unwrap();
+        assert!(
+            json.contains("\"tools\""),
+            "expected \"tools\" key in json when step.tools is non-empty: {json}"
+        );
+        assert!(
+            json.contains("\"tool_choice\":\"auto\""),
+            "expected tool_choice:auto in json: {json}"
+        );
+    }
+
+    #[test]
+    fn two_exchange() {
+        // TWO prior exchanges AND empty step.tools:
+        // - messages: [user, assistant(call1), tool(result1), assistant(call2), tool(result2)]
+        // - NO tools field
+        let config = OpenAICompatibleConfig::default();
+        let exchange2 = ModelToolExchange {
+            call: ModelToolCall {
+                id: "call-2".to_string(),
+                name: "search".to_string(),
+                arguments: serde_json::json!({"q": "ownership"}),
+            },
+            result: ModelToolResult {
+                tool_call_id: "call-2".to_string(),
+                name: "search".to_string(),
+                content: "Ownership is a memory safety concept.".to_string(),
+                is_error: false,
+            },
+        };
+        let step = ModelStepRequest {
+            request: ModelRequest {
+                prompt: "explain rust".to_string(),
+                user_message: "explain rust".to_string(),
+            },
+            tools: vec![],
+            prior_tool_exchanges: vec![sample_exchange(), exchange2],
+        };
+        let plan = OpenAIRequestBuilder::build_step(&config, "gpt-4o", &step);
+
+        // Check message order: [user, assistant(call1), tool(result1), assistant(call2), tool(result2)]
+        assert_eq!(
+            plan.body.messages.len(),
+            5,
+            "expected 5 messages for two exchanges"
+        );
+        assert_eq!(plan.body.messages[0].role, "user");
+        assert_eq!(plan.body.messages[1].role, "assistant");
+        assert_eq!(plan.body.messages[1].content, None);
+        let tc1 = plan.body.messages[1]
+            .tool_calls
+            .as_ref()
+            .expect("first assistant must have tool_calls");
+        assert_eq!(tc1[0].id, "call-1");
+        assert_eq!(plan.body.messages[2].role, "tool");
+        assert_eq!(
+            plan.body.messages[2].tool_call_id,
+            Some("call-1".to_string())
+        );
+        assert_eq!(plan.body.messages[3].role, "assistant");
+        assert_eq!(plan.body.messages[3].content, None);
+        let tc2 = plan.body.messages[3]
+            .tool_calls
+            .as_ref()
+            .expect("second assistant must have tool_calls");
+        assert_eq!(tc2[0].id, "call-2");
+        assert_eq!(plan.body.messages[4].role, "tool");
+        assert_eq!(
+            plan.body.messages[4].tool_call_id,
+            Some("call-2".to_string())
+        );
+
+        // Check NO tools field (budget-exhausted final call)
+        let json = serde_json::to_string(&plan.body).unwrap();
+        assert!(
+            !json.contains("\"tools\""),
+            "expected no \"tools\" key when step.tools is empty: {json}"
         );
     }
 }
