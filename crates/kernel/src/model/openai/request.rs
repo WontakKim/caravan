@@ -7,7 +7,7 @@ use crate::model::ModelRequest;
 /// This is a coordinator type — it is never transmitted over the network.
 /// `api_key_env` holds only the environment variable NAME (e.g. `"OPENAI_API_KEY"`),
 /// never a resolved secret value.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenAIRequestPlan {
     pub url: String,
     pub api_key_env: String,
@@ -112,7 +112,7 @@ mod tests {
         let plan = OpenAIRequestBuilder::build(&config, "gpt-4o", &request);
         assert_eq!(
             plan.body.messages[0].content,
-            "SYSTEM: be helpful\nUSER: explain recursion"
+            Some("SYSTEM: be helpful\nUSER: explain recursion".to_string())
         );
     }
 

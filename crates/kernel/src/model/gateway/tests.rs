@@ -270,7 +270,9 @@ impl OpenAIHttpClient for FakeSuccessOpenAIClient {
             choices: vec![OpenAIChatChoice {
                 message: OpenAIChatMessage {
                     role: "assistant".to_string(),
-                    content: "Hello from fake OpenAI".to_string(),
+                    content: Some("Hello from fake OpenAI".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             }],
             usage: None,
@@ -309,7 +311,9 @@ impl OpenAIHttpClient for FakeSuccessWithUsageClient {
             choices: vec![OpenAIChatChoice {
                 message: OpenAIChatMessage {
                     role: "assistant".to_string(),
-                    content: "Hello from fake OpenAI".to_string(),
+                    content: Some("Hello from fake OpenAI".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             }],
             usage: Some(OpenAIUsage {

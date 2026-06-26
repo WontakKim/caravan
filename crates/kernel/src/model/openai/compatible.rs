@@ -71,7 +71,9 @@ mod tests {
                 choices: vec![OpenAIChatChoice {
                     message: OpenAIChatMessage {
                         role: "assistant".to_string(),
-                        content: "Hello from fake OpenAI".to_string(),
+                        content: Some("Hello from fake OpenAI".to_string()),
+                        tool_calls: None,
+                        tool_call_id: None,
                     },
                 }],
                 usage: None,

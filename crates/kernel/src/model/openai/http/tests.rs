@@ -24,7 +24,9 @@ impl OpenAIHttpClient for FakeSuccessClient {
             choices: vec![OpenAIChatChoice {
                 message: OpenAIChatMessage {
                     role: "assistant".to_string(),
-                    content: "hello".to_string(),
+                    content: Some("hello".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             }],
             usage: None,
@@ -107,7 +109,10 @@ fn fake_success_client_returns_ok() {
     assert!(result.is_ok());
     let response = result.unwrap();
     assert_eq!(response.choices.len(), 1);
-    assert_eq!(response.choices[0].message.content, "hello");
+    assert_eq!(
+        response.choices[0].message.content,
+        Some("hello".to_string())
+    );
 }
 
 #[test]
@@ -193,6 +198,8 @@ fn blocking_client_missing_env_returns_error_before_network() {
             model: "test-model".to_string(),
             messages: vec![],
             stream: false,
+            tools: None,
+            tool_choice: None,
         },
     };
     let result = client.send_chat_completion(&plan);
@@ -243,7 +250,10 @@ fn decode_chat_response_valid_json_returns_response() {
     assert!(result.is_ok());
     let response = result.unwrap();
     assert_eq!(response.choices.len(), 1);
-    assert_eq!(response.choices[0].message.content, "hello");
+    assert_eq!(
+        response.choices[0].message.content,
+        Some("hello".to_string())
+    );
 }
 
 // --- redact_secret helper tests ---

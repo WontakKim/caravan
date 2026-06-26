@@ -350,7 +350,9 @@ impl OpenAIHttpClient for FakeUsageOpenAIClient {
             choices: vec![OpenAIChatChoice {
                 message: OpenAIChatMessage {
                     role: "assistant".to_string(),
-                    content: "Hello from fake OpenAI".to_string(),
+                    content: Some("Hello from fake OpenAI".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
                 },
             }],
             usage: Some(OpenAIUsage {
@@ -536,18 +538,20 @@ impl OpenAIHttpClient for FakeReadFileToolRequestClient {
         _plan: &OpenAIRequestPlan,
     ) -> OpenAIHttpResult<OpenAIChatResponse> {
         Ok(OpenAIChatResponse {
-                choices: vec![OpenAIChatChoice {
-                    message: OpenAIChatMessage {
-                        role: "assistant".to_string(),
-                        content: "preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string(),
-                    },
-                }],
-                usage: Some(OpenAIUsage {
-                    prompt_tokens: 8,
-                    completion_tokens: 4,
-                    total_tokens: 12,
-                }),
-            })
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: Some("preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            }],
+            usage: Some(OpenAIUsage {
+                prompt_tokens: 8,
+                completion_tokens: 4,
+                total_tokens: 12,
+            }),
+        })
     }
 }
 
@@ -595,14 +599,16 @@ impl OpenAIHttpClient for FakeListFilesToolRequestClient {
         _plan: &OpenAIRequestPlan,
     ) -> OpenAIHttpResult<OpenAIChatResponse> {
         Ok(OpenAIChatResponse {
-                choices: vec![OpenAIChatChoice {
-                    message: OpenAIChatMessage {
-                        role: "assistant".to_string(),
-                        content: "preamble\nCARAVAN_TOOL_REQUEST\ntool=list_files\npath=.\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string(),
-                    },
-                }],
-                usage: None,
-            })
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: Some("preamble\nCARAVAN_TOOL_REQUEST\ntool=list_files\npath=.\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            }],
+            usage: None,
+        })
     }
 }
 
@@ -650,14 +656,16 @@ impl OpenAIHttpClient for FakeSentinelPathClient {
         _plan: &OpenAIRequestPlan,
     ) -> OpenAIHttpResult<OpenAIChatResponse> {
         Ok(OpenAIChatResponse {
-                choices: vec![OpenAIChatChoice {
-                    message: OpenAIChatMessage {
-                        role: "assistant".to_string(),
-                        content: "preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=/definitely/not/a/real/caravan/sentinel/file\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string(),
-                    },
-                }],
-                usage: None,
-            })
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: Some("preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=/definitely/not/a/real/caravan/sentinel/file\nEND_CARAVAN_TOOL_REQUEST\npostamble".to_string()),
+                    tool_calls: None,
+                    tool_call_id: None,
+                },
+            }],
+            usage: None,
+        })
     }
 }
 
