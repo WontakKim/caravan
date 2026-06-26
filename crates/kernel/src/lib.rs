@@ -42,8 +42,9 @@ pub use model::tool_request::{
     ModelToolRequest, ModelToolRequestKind, parse_first_model_tool_request,
 };
 pub use model::tool_use::{
-    ModelStepOutput, ModelStepRequest, ModelToolCall, ModelToolDefinition, ModelToolExchange,
-    ModelToolResult,
+    MODEL_TOOL_RESULT_MAX_BYTES, ModelStepOutput, ModelStepRequest, ModelToolCall,
+    ModelToolDefinition, ModelToolExchange, ModelToolResult, format_tool_error_for_model,
+    format_tool_output_for_model, model_tool_call_to_request,
 };
 pub use model::types::{ModelAdapterKind, ModelProvider};
 pub use model::{
