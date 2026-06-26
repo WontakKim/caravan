@@ -35,7 +35,7 @@ routes requests through a model gateway, and exposes read-only workspace tools.
 | **Model gateway** | `crates/kernel/src/model/gateway.rs` | Routes a compiled `ModelRequest` to the correct provider adapter via `complete_step` (accepts tool definitions and an optional prior tool exchange; returns `ModelStepOutput::Assistant` or `ModelStepOutput::ToolCall`), records `ModelRoute` / `ModelUsage` events. |
 | **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; calls `ModelGateway::complete_step` with the read-only tool definitions (T-10 prompt rule). If the first call returns a native tool call, executes the tool once and makes a second `complete_step` call with the result — bounded to **at most 2 model calls and 1 tool execution** per turn; no agent loop. |
 | **Native tool types** | `crates/kernel/src/model/tool_use.rs` | Provider-neutral native tool types: `ModelStepRequest`, `ModelStepOutput` (`Assistant`\|`ToolCall`), `ModelToolDefinition`, `ModelToolCall`, `ModelToolResult`, `ModelToolExchange`. Includes `model_tool_call_to_request` (validator — treats model arguments as untrusted) and `format_tool_output_for_model` / `format_tool_error_for_model` (result formatters, capped at 16 KiB). |
-| **Read-only workspace tools** | `crates/kernel/src/tool/registry.rs`, `crates/tui/src/app/tools.rs` | `/tool list` enumerates registered tools; `/tool read <path>` reads a file from the workspace. Both are read-only and auto-allowed without an approval step. These are the only tool commands that belong to the baseline surface. |
+| **Read-only workspace tools** | `crates/kernel/src/tool/registry.rs`, `crates/tui/src/app/tools.rs` | `/tool list` enumerates registered tools; `/tool read <path>` reads a file from the workspace; `/tool search <query>` searches for text across workspace files (`search_text`). All three are read-only and auto-allowed without an approval step. These are the only tool commands that belong to the baseline surface. |
 | **Storage / event log** | `crates/kernel/src/storage.rs`, `events/` | Append-only JSONL persistence; replays across restarts. |
 
 > **`CLAUDE.md` may contain secrets.** There is no automatic secret detection.
@@ -301,8 +301,8 @@ constraints are enforced:
   issues a second `complete_step` with the result and **no tools** so the model
   produces a final `Assistant` response. The round trip is bounded: **at most
   2 model calls and 1 tool execution** per turn; a second tool call from the model
-  is rejected. Only the two read-only tools (`list_files`, `read_file`) are
-  exposed on this path — no write, shell, or approval flow. The dormant text
+  is rejected. Only the three read-only tools (`list_files`, `read_file`,
+  `search_text`) are exposed on this path — no write, shell, or approval flow. The dormant text
   protocol (`model/tool_request.rs`) and the `/request` / write-preview layers
   are not connected to this path.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a

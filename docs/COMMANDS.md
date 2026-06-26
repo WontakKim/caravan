@@ -41,6 +41,7 @@ default UX surface: they observe the filesystem without mutating it.
 |---------|-------------|
 | `/tool list [path]` | List files under the workspace root (or a sub-path); read-only. On success, automatically attaches the bounded listing as the next message's Workspace Context (one-shot). |
 | `/tool read <path>` | Read a UTF-8 text file under the workspace root; read-only. On success, automatically attaches the bounded file content as the next message's Workspace Context (one-shot). |
+| `/tool search <query>` | Search for text across workspace files; read-only. On success, automatically attaches the bounded results as the next message's Workspace Context (one-shot). |
 
 > **Manual path vs. native path:** `/tool list` and `/tool read` are the *manual*
 > path — they execute a tool on direct user request and stage the result as
