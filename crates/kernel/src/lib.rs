@@ -41,6 +41,10 @@ pub use model::runtime_config::{ModelConfigError, ModelRuntimeConfig};
 pub use model::tool_request::{
     ModelToolRequest, ModelToolRequestKind, parse_first_model_tool_request,
 };
+pub use model::tool_use::{
+    ModelStepOutput, ModelStepRequest, ModelToolCall, ModelToolDefinition, ModelToolExchange,
+    ModelToolResult,
+};
 pub use model::types::{ModelAdapterKind, ModelProvider};
 pub use model::{
     ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest, ModelResult,

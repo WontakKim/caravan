@@ -4,6 +4,7 @@ pub mod openai;
 pub mod registry;
 pub mod runtime_config;
 pub mod tool_request;
+pub mod tool_use;
 pub mod types;
 
 use crate::model::types::{ModelAdapterKind, ModelProvider};
@@ -21,6 +22,7 @@ pub struct ModelOutput {
     pub usage: Option<ModelUsage>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ModelRequest {
     pub prompt: String,
     pub user_message: String,
@@ -39,6 +41,15 @@ pub trait ModelAdapter {
         context: &ModelAdapterContext,
         request: &ModelRequest,
     ) -> ModelResult<ModelOutput>;
+
+    fn complete_step(
+        &self,
+        context: &ModelAdapterContext,
+        request: &crate::model::tool_use::ModelStepRequest,
+    ) -> ModelResult<crate::model::tool_use::ModelStepOutput> {
+        self.complete(context, &request.request)
+            .map(crate::model::tool_use::ModelStepOutput::Assistant)
+    }
 }
 
 pub struct MockModelAdapter;
