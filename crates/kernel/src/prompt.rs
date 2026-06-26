@@ -78,9 +78,9 @@ Operating Rules:\n\
 - Automatic write or shell execution is not available in this baseline.\n\
 - Experimental harness commands may exist but are not part of the default agent contract.\n\
 - Use the provided read-only tools when workspace inspection is necessary.\n\
-- Request at most one workspace tool per turn.\n\
+- You may request up to two read-only workspace tools per turn, one per response.\n\
 - Do not invent tool results.\n\
-- After receiving a tool result, answer the user's original task without requesting another tool.\n\
+- After receiving the second tool result, or earlier if sufficient, answer without requesting another tool.\n\
 - Only read-only workspace tools are available in this baseline.\n\n\
 Output:\n\
 Respond to the current user message.",
@@ -131,9 +131,9 @@ Operating Rules:\n\
 - Automatic write or shell execution is not available in this baseline.\n\
 - Experimental harness commands may exist but are not part of the default agent contract.\n\
 - Use the provided read-only tools when workspace inspection is necessary.\n\
-- Request at most one workspace tool per turn.\n\
+- You may request up to two read-only workspace tools per turn, one per response.\n\
 - Do not invent tool results.\n\
-- After receiving a tool result, answer the user's original task without requesting another tool.\n\
+- After receiving the second tool result, or earlier if sufficient, answer without requesting another tool.\n\
 - Only read-only workspace tools are available in this baseline.\n\n\
 Output:\n\
 Respond to the current user message.",
