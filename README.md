@@ -6,7 +6,7 @@ that lets you interact with an assistant the same way Claude Code does:
 - **Plain text** is the primary interaction — submit a message and the assistant responds via the mock Run/Turn flow.
 - **`CLAUDE.md` project memory** is read from the workspace root at session start and
   injected into the main prompt when present (see `project_memory` module in `crates/kernel`).
-- **Basic read-only workspace tools** are available via `/tool list [path]` and `/tool read <path>`; see the default command table below.
+- **Basic read-only workspace tools** are available via `/tool list [path]`, `/tool read <path>`, and `/tool search <query>` (`list_files`, `read_file`, `search_text`); see the default command table below.
 - **Advanced harness commands** (`/context`, `/request`, `/approval`, write-sandbox `/tool` variants) exist internally and experimentally but are **not the primary baseline UX**; they are documented in the appendix below.
 
 > **File mutation is still not implemented.** `/tool plan-write`, `/tool preview-write`, and
@@ -79,6 +79,7 @@ The commands below are the **default surface** — they match what `/help` shows
 | `/allowed-tools`      | List the tools that are currently allowed                         |
 | `/tool list [path]`   | List files under the workspace root (or a sub-path)               |
 | `/tool read <path>`   | Read a UTF-8 text file under the workspace root                   |
+| `/tool search <query>` | Search for text across files in the workspace                   |
 
 ## Experimental Harness Appendix
 
