@@ -288,7 +288,9 @@ fn search_text_no_matches_returns_empty_search_results() {
     );
 
     match result {
-        Ok(ToolOutput::SearchResults { matches, truncated, .. }) => {
+        Ok(ToolOutput::SearchResults {
+            matches, truncated, ..
+        }) => {
             assert!(matches.is_empty(), "expected empty matches");
             assert!(!truncated, "expected truncated=false");
         }

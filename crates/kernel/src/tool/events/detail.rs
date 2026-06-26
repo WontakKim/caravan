@@ -34,7 +34,9 @@ pub(super) fn format_tool_result_detail(
         ToolOutput::WritePreview { preview, .. } => {
             format!("tool={} {}", tool_name, preview.detail())
         }
-        ToolOutput::SearchResults { matches, truncated, .. } => {
+        ToolOutput::SearchResults {
+            matches, truncated, ..
+        } => {
             format!(
                 "tool={} path={:?} matches={} truncated={}",
                 tool_name,

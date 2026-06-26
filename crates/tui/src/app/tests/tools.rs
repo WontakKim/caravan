@@ -1688,11 +1688,7 @@ fn tool_search_hit_emits_policy_call_result_and_stages_context() {
     let store_dir = TempDir::new();
     let workspace_dir = TempDir::new();
 
-    std::fs::write(
-        workspace_dir.path().join("greet.txt"),
-        "hello world\n",
-    )
-    .unwrap();
+    std::fs::write(workspace_dir.path().join("greet.txt"), "hello world\n").unwrap();
 
     let store = EventStore::new(store_dir.path());
     let mut app = App::with_store_gateway_and_workspace_root(
@@ -1721,7 +1717,9 @@ fn tool_search_hit_emits_policy_call_result_and_stages_context() {
     );
     // No ToolContextAttach emitted on automatic staging.
     assert!(
-        !events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        !events
+            .iter()
+            .any(|e| e.kind == EventKind::ToolContextAttach),
         "no ToolContextAttach must appear on automatic search staging"
     );
 
@@ -1862,7 +1860,9 @@ fn context_attach_last_tool_works_with_search_candidate() {
     // A ToolContextAttach event must be emitted for explicit attach.
     let events = app.event_log.events();
     assert!(
-        events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        events
+            .iter()
+            .any(|e| e.kind == EventKind::ToolContextAttach),
         "ToolContextAttach must be emitted for explicit /context attach-last-tool"
     );
 }

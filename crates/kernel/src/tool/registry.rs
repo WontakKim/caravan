@@ -59,10 +59,23 @@ pub enum ToolRequest {
 /// Outputs produced by the tool harness.
 #[derive(Debug, PartialEq)]
 pub enum ToolOutput {
-    FileList { path: String, entries: Vec<String> },
-    FileContent { path: String, content: String },
-    WritePreview { path: String, preview: WritePreview },
-    SearchResults { query: String, matches: Vec<SearchMatch>, truncated: bool },
+    FileList {
+        path: String,
+        entries: Vec<String>,
+    },
+    FileContent {
+        path: String,
+        content: String,
+    },
+    WritePreview {
+        path: String,
+        preview: WritePreview,
+    },
+    SearchResults {
+        query: String,
+        matches: Vec<SearchMatch>,
+        truncated: bool,
+    },
 }
 
 /// Structured error taxonomy for tool execution failures.

@@ -102,8 +102,7 @@ impl super::App {
                     truncated,
                     ..
                 }) => {
-                    let tool_ctx =
-                        ManualToolContext::from_search_text(&query, matches, truncated);
+                    let tool_ctx = ManualToolContext::from_search_text(&query, matches, truncated);
                     self.last_tool_output_candidate = Some(tool_ctx.clone());
                     self.pending_manual_tool_context = Some(tool_ctx);
                     self.push_tool_search_output(&query, matches, truncated);
