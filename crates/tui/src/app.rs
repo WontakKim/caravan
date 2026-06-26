@@ -180,7 +180,7 @@ impl App {
     /// flow.
     fn push_run_output_to_log(&mut self, output: &kernel::runner::MockRunOutput) {
         self.log.push(format!("User: {}", output.user_message));
-        if let Some(activity) = &output.tool_activity {
+        for activity in &output.tool_activities {
             self.log
                 .push(format!("Tool: {} {}", activity.name, activity.path));
             if activity.succeeded {

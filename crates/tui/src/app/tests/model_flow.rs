@@ -324,11 +324,11 @@ fn make_succeeded_output(path: &str) -> MockRunOutput {
         run_id: "run-test".to_string(),
         turn_id: "turn-test".to_string(),
         detected_model_tool_request: None,
-        tool_activity: Some(ModelToolActivity {
+        tool_activities: vec![ModelToolActivity {
             name: "read_file".to_string(),
             path: path.to_string(),
             succeeded: true,
-        }),
+        }],
     }
 }
 
@@ -340,11 +340,11 @@ fn make_failed_output(path: &str) -> MockRunOutput {
         run_id: "run-test".to_string(),
         turn_id: "turn-test".to_string(),
         detected_model_tool_request: None,
-        tool_activity: Some(ModelToolActivity {
+        tool_activities: vec![ModelToolActivity {
             name: "read_file".to_string(),
             path: path.to_string(),
             succeeded: false,
-        }),
+        }],
     }
 }
 
@@ -545,5 +545,110 @@ fn attach_last_tool_after_native_output_attaches_manual_sentinel_not_native_resu
     assert_eq!(
         attached.content, sentinel.content,
         "attached context content must equal the manual sentinel"
+    );
+}
+
+// --- Test (f): two_activities in vec order before Assistant: -----------------
+// Verifies that push_run_output_to_log emits both activity blocks (Tool: +
+// Tool completed:) in vec order, and that all activity lines precede the
+// Assistant: line.
+
+#[test]
+fn two_activities_in_tool_activities_both_logged_in_vec_order_before_assistant() {
+    let mut app = App::new();
+
+    let a1 = ModelToolActivity {
+        name: "read_file".to_string(),
+        path: "first.txt".to_string(),
+        succeeded: true,
+    };
+    let a2 = ModelToolActivity {
+        name: "list_files".to_string(),
+        path: "src/".to_string(),
+        succeeded: false,
+    };
+
+    let output = MockRunOutput {
+        user_message: "two tool turn".to_string(),
+        assistant_response: "Done with two tools.".to_string(),
+        run_id: "run-two".to_string(),
+        turn_id: "turn-two".to_string(),
+        detected_model_tool_request: None,
+        tool_activities: vec![a1, a2],
+    };
+
+    app.push_run_output_to_log(&output);
+
+    // Both first-activity lines must be present.
+    let tool1_line = "Tool: read_file first.txt".to_string();
+    let completed1_line = "Tool completed: read_file first.txt".to_string();
+    // Both second-activity lines must be present.
+    let tool2_line = "Tool: list_files src/".to_string();
+    let failed2_line = "Tool failed: list_files src/".to_string();
+
+    assert!(app.log.contains(&tool1_line), "log must contain '{tool1_line}'; log={:?}", app.log);
+    assert!(app.log.contains(&completed1_line), "log must contain '{completed1_line}'; log={:?}", app.log);
+    assert!(app.log.contains(&tool2_line), "log must contain '{tool2_line}'; log={:?}", app.log);
+    assert!(app.log.contains(&failed2_line), "log must contain '{failed2_line}'; log={:?}", app.log);
+
+    let idx = |needle: &str| app.log.iter().position(|l| l == needle).unwrap();
+    let tool1_idx = idx(&tool1_line);
+    let completed1_idx = idx(&completed1_line);
+    let tool2_idx = idx(&tool2_line);
+    let failed2_idx = idx(&failed2_line);
+    let assistant_idx = app.log.iter().position(|l| l.starts_with("Assistant:")).unwrap();
+
+    // Vec order: first activity block fully precedes second activity block.
+    assert!(tool1_idx < completed1_idx, "Tool: must precede Tool completed: for first activity");
+    assert!(completed1_idx < tool2_idx, "first activity block must precede second activity block");
+    assert!(tool2_idx < failed2_idx, "Tool: must precede Tool failed: for second activity");
+
+    // All activity lines must precede the Assistant: line.
+    assert!(failed2_idx < assistant_idx, "all activity lines must precede Assistant:");
+}
+
+// --- Test (g): two_activities do not set last_tool_output_candidate ----------
+// Verifies the state-isolation invariant: push_run_output_to_log MUST NOT
+// touch last_tool_output_candidate or pending_manual_tool_context even when
+// tool_activities is non-empty.
+
+#[test]
+fn two_activities_rendering_does_not_set_last_tool_output_candidate_or_pending_context() {
+    let mut app = App::new();
+
+    // Confirm both fields start as None.
+    assert!(app.last_tool_output_candidate.is_none());
+    assert!(app.pending_manual_tool_context.is_none());
+
+    let output = MockRunOutput {
+        user_message: "iso two".to_string(),
+        assistant_response: "iso response".to_string(),
+        run_id: "run-iso".to_string(),
+        turn_id: "turn-iso".to_string(),
+        detected_model_tool_request: None,
+        tool_activities: vec![
+            ModelToolActivity {
+                name: "read_file".to_string(),
+                path: "iso-a.txt".to_string(),
+                succeeded: true,
+            },
+            ModelToolActivity {
+                name: "list_files".to_string(),
+                path: ".".to_string(),
+                succeeded: true,
+            },
+        ],
+    };
+
+    app.push_run_output_to_log(&output);
+
+    // Both fields must remain None after processing native tool activities.
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "last_tool_output_candidate must remain None after push_run_output_to_log with two activities"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must remain None after push_run_output_to_log with two activities"
     );
 }

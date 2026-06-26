@@ -1334,8 +1334,9 @@ fn native_tool_read_file_two_call_success_event_order() {
         "second request must NOT carry tools"
     );
 
-    // tool_activity is Some and succeeded.
-    let activity = output.tool_activity.expect("tool_activity must be Some");
+    // tool_activities has one entry and it succeeded.
+    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    let activity = &output.tool_activities[0];
     assert!(activity.succeeded);
     assert_eq!(activity.name, "read_file");
 
@@ -1433,7 +1434,8 @@ fn native_tool_list_files_no_path_arg_defaults_to_dot() {
         "must have ToolResult"
     );
 
-    let activity = output.tool_activity.expect("tool_activity must be Some");
+    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    let activity = &output.tool_activities[0];
     assert_eq!(activity.name, "list_files");
     // The default path is captured from the validated ToolRequest, not the raw args.
     assert_eq!(activity.path, ".", "list_files default path must be '.'");
@@ -1493,10 +1495,11 @@ fn native_tool_read_file_not_found_still_completes_second_call() {
     );
     assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
 
-    // tool_activity reflects the failure.
-    let activity = output.tool_activity.expect("tool_activity must be Some");
+    // tool_activities reflects the failure.
+    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    let activity = &output.tool_activities[0];
     assert_eq!(activity.name, "read_file");
-    assert!(!activity.succeeded, "tool_activity.succeeded must be false");
+    assert!(!activity.succeeded, "tool_activities[0].succeeded must be false");
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -1746,8 +1749,8 @@ fn native_tool_second_tool_call_not_supported_sentinel_in_event_log() {
         model_error_event.detail
     );
 
-    // tool_activity is Some (from first tool execution).
-    assert!(output.tool_activity.is_some());
+    // tool_activities is non-empty (from first tool execution).
+    assert!(!output.tool_activities.is_empty());
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -1796,8 +1799,8 @@ fn native_tool_second_call_adapter_failure_no_second_model_route() {
     assert!(kinds.contains(&EventKind::RunFail));
     assert!(!kinds.contains(&EventKind::RunComplete));
 
-    // tool_activity is Some even on second-call failure.
-    assert!(output.tool_activity.is_some());
+    // tool_activities is non-empty even on second-call failure.
+    assert!(!output.tool_activities.is_empty());
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -2019,10 +2022,10 @@ fn native_tool_dormant_text_protocol_stays_plain_assistant_turn() {
         output.detected_model_tool_request.is_none(),
         "detected_model_tool_request must be None for dormant text protocol"
     );
-    // tool_activity must be None.
+    // tool_activities must be empty.
     assert!(
-        output.tool_activity.is_none(),
-        "tool_activity must be None for plain assistant turn"
+        output.tool_activities.is_empty(),
+        "tool_activities must be empty for plain assistant turn"
     );
 
     // Exactly ONE ModelRoute (direct assistant, no round-trip).
@@ -2126,8 +2129,9 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
         "no RunFail on success"
     );
 
-    // tool_activity is Some and succeeded.
-    let activity = output.tool_activity.expect("tool_activity must be Some");
+    // tool_activities has one entry and it succeeded.
+    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    let activity = &output.tool_activities[0];
     assert!(activity.succeeded);
     assert_eq!(activity.name, "search_text");
 
@@ -2202,8 +2206,8 @@ fn native_tool_search_text_second_tool_call_not_supported() {
         model_error_event.detail
     );
 
-    // tool_activity is Some (from first tool execution).
-    assert!(output.tool_activity.is_some());
+    // tool_activities is non-empty (from first tool execution).
+    assert!(!output.tool_activities.is_empty());
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -2238,10 +2242,10 @@ fn native_tool_default_mock_gateway_unchanged_assistant_only_flow() {
     assert!(!kinds.contains(&EventKind::RunFail), "no RunFail");
     assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
 
-    // tool_activity is None on the direct-assistant path.
+    // tool_activities is empty on the direct-assistant path.
     assert!(
-        output.tool_activity.is_none(),
-        "tool_activity must be None for Mock gateway"
+        output.tool_activities.is_empty(),
+        "tool_activities must be empty for Mock gateway"
     );
     assert!(
         output.detected_model_tool_request.is_none(),

@@ -26,7 +26,7 @@ pub struct MockRunOutput {
     pub run_id: String,
     pub turn_id: String,
     pub detected_model_tool_request: Option<crate::model_tool_request::ModelToolRequest>,
-    pub tool_activity: Option<ModelToolActivity>,
+    pub tool_activities: Vec<ModelToolActivity>,
 }
 
 fn emit_usage(event_log: &mut EventLog, usage: &ModelUsage) {
@@ -111,7 +111,7 @@ pub fn run_mock_turn(
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
                 detected_model_tool_request: None,
-                tool_activity: None,
+                tool_activities: vec![],
             }
         }
         Ok(ModelStepResponse {
@@ -140,7 +140,7 @@ pub fn run_mock_turn(
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
                 detected_model_tool_request: None,
-                tool_activity: None,
+                tool_activities: vec![],
             }
         }
         Ok(ModelStepResponse {
@@ -169,7 +169,7 @@ pub fn run_mock_turn(
                         run_id: run_id.to_string(),
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
-                        tool_activity: None,
+                        tool_activities: vec![],
                     };
                 }
                 Ok(req) => req,
@@ -220,7 +220,7 @@ pub fn run_mock_turn(
                         run_id: run_id.to_string(),
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
-                        tool_activity: None,
+                        tool_activities: vec![],
                     };
                 }
                 Err(ToolError::ApprovalRequired { reason }) => {
@@ -242,7 +242,7 @@ pub fn run_mock_turn(
                         run_id: run_id.to_string(),
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
-                        tool_activity: None,
+                        tool_activities: vec![],
                     };
                 }
                 Err(other) => {
@@ -290,7 +290,7 @@ pub fn run_mock_turn(
                         run_id: run_id.to_string(),
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
-                        tool_activity: Some(activity),
+                        tool_activities: vec![activity],
                     }
                 }
                 Ok(ModelStepResponse {
@@ -318,7 +318,7 @@ pub fn run_mock_turn(
                         run_id: run_id.to_string(),
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
-                        tool_activity: Some(activity),
+                        tool_activities: vec![activity],
                     }
                 }
                 Ok(ModelStepResponse {
@@ -349,7 +349,7 @@ pub fn run_mock_turn(
                         run_id: run_id.to_string(),
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
-                        tool_activity: Some(activity),
+                        tool_activities: vec![activity],
                     }
                 }
             }
