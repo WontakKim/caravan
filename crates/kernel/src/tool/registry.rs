@@ -4,6 +4,9 @@
 //! (`execute`) lands in T-2; `ReadFile`/`FileContent` variants land in T-3.
 
 mod path;
+mod search;
+
+pub(super) use search::{SearchMatch, SearchOutcome};
 
 use std::fs;
 
