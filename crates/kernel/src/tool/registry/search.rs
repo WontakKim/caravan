@@ -20,7 +20,7 @@ pub const SEARCH_MAX_MATCHES: usize = 50;
 
 /// Maximum line length (in bytes) stored in a [`SearchMatch`]'s `text` field.
 /// Lines longer than this are truncated at the nearest UTF-8 char boundary.
-pub const SEARCH_MAX_LINE_CHARS: usize = 240;
+pub const SEARCH_MAX_LINE_BYTES: usize = 240;
 
 /// Directory base-names that are never recursed into.
 pub const SKIP_DIR_NAMES: &[&str] = &[".git", ".caravan", "target", "node_modules"];
@@ -32,7 +32,7 @@ pub struct SearchMatch {
     pub path: String,
     /// 1-based line number within the file.
     pub line: usize,
-    /// Line content, truncated to [`SEARCH_MAX_LINE_CHARS`] bytes at the
+    /// Line content, truncated to [`SEARCH_MAX_LINE_BYTES`] bytes at the
     /// nearest valid UTF-8 char boundary.
     pub text: String,
 }
@@ -127,19 +127,12 @@ fn walk_dir(dir: &Path, canonical_root: &Path, query: &str, out: &mut Vec<Search
                 return true;
             }
         } else if file_type.is_symlink() {
-            // Resolve the symlink using following metadata.
-            let following_meta = match fs::metadata(&entry_path) {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
-            if following_meta.is_file() {
-                // Symlinked file: confinement check determines if it is
-                // inside the workspace before any read.
-                if search_file(&entry_path, canonical_root, query, out) {
-                    return true;
-                }
+            // Delegate to search_file, which canonicalizes and confines BEFORE
+            // any metadata/read. It rejects non-files, so a symlink to a
+            // directory is skipped and never recursed into.
+            if search_file(&entry_path, canonical_root, query, out) {
+                return true;
             }
-            // Symlink to a directory or other: skip — never recurse.
         }
     }
 
@@ -165,28 +158,38 @@ fn search_file(
         return false;
     }
 
-    // Size check: strictly greater than the limit is skipped.
-    let len = match fs::metadata(path) {
-        Ok(m) => m.len(),
+    // Workspace-relative path; also enforces the skip-dir policy so a symlink
+    // aliasing content under a skipped directory (e.g. `.git`) is not searched.
+    let rel = match canonical_file.strip_prefix(canonical_root) {
+        Ok(p) => p,
         Err(_) => return false,
     };
-    if len > SEARCH_MAX_FILE_BYTES {
+    if has_skipped_parent(rel) {
+        return false;
+    }
+    let rel_path = rel.to_string_lossy().into_owned();
+
+    // Metadata/read operate on the confined canonical path. Rejecting non-files
+    // here means a symlink to a directory is skipped without a read attempt.
+    let meta = match fs::metadata(&canonical_file) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    // Size check: strictly greater than the limit is skipped.
+    if meta.len() > SEARCH_MAX_FILE_BYTES {
         return false;
     }
 
     // Read bytes and validate UTF-8 strictly.
-    let bytes = match fs::read(path) {
+    let bytes = match fs::read(&canonical_file) {
         Ok(b) => b,
         Err(_) => return false,
     };
     let content = match String::from_utf8(bytes) {
         Ok(s) => s,
-        Err(_) => return false,
-    };
-
-    // Workspace-relative path for all matches in this file.
-    let rel_path = match canonical_file.strip_prefix(canonical_root) {
-        Ok(p) => p.to_string_lossy().into_owned(),
         Err(_) => return false,
     };
 
@@ -196,7 +199,7 @@ fn search_file(
             return true;
         }
         if line_str.contains(query) {
-            let text = truncate_to_byte_boundary(line_str, SEARCH_MAX_LINE_CHARS);
+            let text = truncate_to_byte_boundary(line_str, SEARCH_MAX_LINE_BYTES);
             out.push(SearchMatch {
                 path: rel_path.clone(),
                 line: idx + 1,
@@ -206,6 +209,22 @@ fn search_file(
     }
 
     out.len() >= SEARCH_MAX_MATCHES + 1
+}
+
+/// Returns `true` if any parent directory component of the workspace-relative
+/// `rel` path is a skipped directory name. This enforces the skip-dir policy
+/// even when a symlink inside the workspace aliases content that lives under a
+/// skipped directory (which normal traversal never descends into).
+fn has_skipped_parent(rel: &Path) -> bool {
+    rel.parent()
+        .into_iter()
+        .flat_map(|p| p.components())
+        .any(|component| match component {
+            std::path::Component::Normal(name) => {
+                SKIP_DIR_NAMES.iter().any(|s| OsStr::new(s) == name)
+            }
+            _ => false,
+        })
 }
 
 /// Truncates `s` to at most `max_bytes` bytes, walking back to the nearest
@@ -438,7 +457,7 @@ mod tests {
     #[test]
     fn search_long_line_truncated_at_utf8_char_boundary() {
         let dir = TempDir::new();
-        // Build a line where a naive s[..SEARCH_MAX_LINE_CHARS] would panic:
+        // Build a line where a naive s[..SEARCH_MAX_LINE_BYTES] would panic:
         //   79 × "あ" (237 bytes) + "ab" (2 bytes) + "あ" (3 bytes) = 242 bytes prefix
         //   then " NEEDLE" (7 bytes) → total 249 bytes.
         // Truncating at byte 240 lands inside the 3-byte "あ" at bytes 239-241,
@@ -454,7 +473,7 @@ mod tests {
         let text = &result.matches[0].text;
         // Must be valid UTF-8 (no panic on creation) and shorter than the original.
         assert!(
-            text.len() <= SEARCH_MAX_LINE_CHARS,
+            text.len() <= SEARCH_MAX_LINE_BYTES,
             "text.len()={}",
             text.len()
         );
@@ -561,5 +580,29 @@ mod tests {
                 m.path
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn search_symlinked_alias_into_skip_dir_is_not_searched() {
+        let workspace = TempDir::new();
+        // Secret content lives under a skipped directory (.git).
+        std::fs::create_dir(workspace.path().join(".git")).unwrap();
+        std::fs::write(workspace.path().join(".git").join("config"), "NEEDLE\n").unwrap();
+        // An in-workspace symlink aliases that skipped-dir content from the root.
+        std::os::unix::fs::symlink(
+            workspace.path().join(".git").join("config"),
+            workspace.path().join("alias.txt"),
+        )
+        .unwrap();
+
+        let result = search_workspace(workspace.path(), "NEEDLE").unwrap();
+        // The skip-dir policy must hold even through the symlink alias: the
+        // canonical target lives under `.git`, so it must not be searched.
+        assert!(
+            result.matches.is_empty(),
+            "skip-dir content must not be reachable via a symlink alias, got: {:?}",
+            result.matches
+        );
     }
 }
