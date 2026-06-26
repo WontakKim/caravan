@@ -1,8 +1,17 @@
+use std::path::Path;
+
 use crate::events::{EventKind, EventLog, RunId, TurnId};
 use crate::manual_context::ManualToolContext;
 use crate::model::ModelRequest;
 use crate::model_gateway::ModelGateway;
 use crate::project_memory::ProjectMemory;
+
+#[derive(Debug, Clone)]
+pub struct ModelToolActivity {
+    pub name: String,
+    pub path: String,
+    pub succeeded: bool,
+}
 
 pub struct MockRunOutput {
     pub user_message: String,
@@ -10,15 +19,19 @@ pub struct MockRunOutput {
     pub run_id: String,
     pub turn_id: String,
     pub detected_model_tool_request: Option<crate::model_tool_request::ModelToolRequest>,
+    pub tool_activity: Option<ModelToolActivity>,
 }
 
 pub fn run_mock_turn(
     event_log: &mut EventLog,
     message: &str,
     gateway: &ModelGateway,
+    workspace_root: &Path,
     manual_tool_context: Option<&ManualToolContext>,
     project_memory: Option<&ProjectMemory>,
 ) -> MockRunOutput {
+    // workspace_root is threaded here as a seam for T-8; not yet used in this task.
+    let _ = workspace_root;
     let run_id = RunId(format!("run-{}", event_log.next_seq_value()));
     event_log.append(
         EventKind::RunCreate,
@@ -79,6 +92,7 @@ pub fn run_mock_turn(
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
                 detected_model_tool_request: None,
+                tool_activity: None,
             }
         }
         Err(err) => {
@@ -93,6 +107,7 @@ pub fn run_mock_turn(
                 run_id: run_id.to_string(),
                 turn_id: turn_id.to_string(),
                 detected_model_tool_request: None,
+                tool_activity: None,
             }
         }
     }

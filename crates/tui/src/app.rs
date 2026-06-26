@@ -161,6 +161,7 @@ impl App {
                     &mut self.event_log,
                     &message,
                     &self.model_gateway,
+                    &self.workspace_root,
                     pending_context.as_ref(),
                     Some(&project_memory),
                 );

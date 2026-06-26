@@ -3,6 +3,7 @@ use kernel::{
     EventSeq, EventStore, MockRunOutput, ModelAdapter, ModelAdapterContext, ModelAdapterKind,
     ModelConfig, ModelConfigError, ModelError, ModelGateway, ModelOutput, ModelProfile,
     ModelProvider, ModelRequest, ModelResponse, ModelResult, ModelRoute, ModelRuntimeConfig,
+    ModelStepOutput, ModelStepRequest, ModelStepResponse, ModelToolActivity, ModelToolDefinition,
     ModelUsage, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError, OpenAIHttpResult,
     ParsedInput, RunId, StubOpenAIHttpClient, TranscriptMessage, TranscriptRole, TurnId,
     WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentError, WriteIntentMode, WriteIntentSource,
@@ -73,6 +74,7 @@ fn run_mock_turn_event_sequence() {
         &mut log,
         "hello caravan",
         &ModelGateway::default(),
+        std::path::Path::new("."),
         None,
         None,
     );
@@ -92,6 +94,11 @@ fn importability_checks() {
     let _: Option<EventStore> = None;
     let _: Option<MockRunOutput> = None;
     let _: Option<ModelAdapterContext> = None;
+    let _: Option<ModelStepRequest> = None;
+    let _: Option<ModelStepOutput> = None;
+    let _: Option<ModelStepResponse> = None;
+    let _: Option<ModelToolDefinition> = None;
+    let _: Option<ModelToolActivity> = None;
     let _: Option<ModelAdapterKind> = None;
     let _: Option<ModelConfig> = None;
     let _: Option<ModelConfigError> = None;

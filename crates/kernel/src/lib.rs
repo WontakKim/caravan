@@ -52,7 +52,7 @@ pub use model::{
     ModelUsage,
 };
 pub use project_memory::*;
-pub use runner::{MockRunOutput, run_mock_turn};
+pub use runner::{MockRunOutput, ModelToolActivity, run_mock_turn};
 pub use storage::EventStore;
 pub use tool::events::ToolEventRunner;
 pub use tool::policy::{ToolPolicyDecision, ToolPolicyEngine, ToolPolicyOutcome};
