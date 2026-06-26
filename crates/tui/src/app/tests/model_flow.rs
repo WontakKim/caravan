@@ -586,25 +586,57 @@ fn two_activities_in_tool_activities_both_logged_in_vec_order_before_assistant()
     let tool2_line = "Tool: list_files src/".to_string();
     let failed2_line = "Tool failed: list_files src/".to_string();
 
-    assert!(app.log.contains(&tool1_line), "log must contain '{tool1_line}'; log={:?}", app.log);
-    assert!(app.log.contains(&completed1_line), "log must contain '{completed1_line}'; log={:?}", app.log);
-    assert!(app.log.contains(&tool2_line), "log must contain '{tool2_line}'; log={:?}", app.log);
-    assert!(app.log.contains(&failed2_line), "log must contain '{failed2_line}'; log={:?}", app.log);
+    assert!(
+        app.log.contains(&tool1_line),
+        "log must contain '{tool1_line}'; log={:?}",
+        app.log
+    );
+    assert!(
+        app.log.contains(&completed1_line),
+        "log must contain '{completed1_line}'; log={:?}",
+        app.log
+    );
+    assert!(
+        app.log.contains(&tool2_line),
+        "log must contain '{tool2_line}'; log={:?}",
+        app.log
+    );
+    assert!(
+        app.log.contains(&failed2_line),
+        "log must contain '{failed2_line}'; log={:?}",
+        app.log
+    );
 
     let idx = |needle: &str| app.log.iter().position(|l| l == needle).unwrap();
     let tool1_idx = idx(&tool1_line);
     let completed1_idx = idx(&completed1_line);
     let tool2_idx = idx(&tool2_line);
     let failed2_idx = idx(&failed2_line);
-    let assistant_idx = app.log.iter().position(|l| l.starts_with("Assistant:")).unwrap();
+    let assistant_idx = app
+        .log
+        .iter()
+        .position(|l| l.starts_with("Assistant:"))
+        .unwrap();
 
     // Vec order: first activity block fully precedes second activity block.
-    assert!(tool1_idx < completed1_idx, "Tool: must precede Tool completed: for first activity");
-    assert!(completed1_idx < tool2_idx, "first activity block must precede second activity block");
-    assert!(tool2_idx < failed2_idx, "Tool: must precede Tool failed: for second activity");
+    assert!(
+        tool1_idx < completed1_idx,
+        "Tool: must precede Tool completed: for first activity"
+    );
+    assert!(
+        completed1_idx < tool2_idx,
+        "first activity block must precede second activity block"
+    );
+    assert!(
+        tool2_idx < failed2_idx,
+        "Tool: must precede Tool failed: for second activity"
+    );
 
     // All activity lines must precede the Assistant: line.
-    assert!(failed2_idx < assistant_idx, "all activity lines must precede Assistant:");
+    assert!(
+        failed2_idx < assistant_idx,
+        "all activity lines must precede Assistant:"
+    );
 }
 
 // --- Test (g): two_activities do not set last_tool_output_candidate ----------

@@ -207,8 +207,7 @@ pub fn run_mock_turn(
             let ctx = ToolExecutionContext {
                 workspace_root: workspace_root.to_path_buf(),
             };
-            let tool_outcome1 =
-                ToolEventRunner::new_readonly().run(event_log, &ctx, tool_request1);
+            let tool_outcome1 = ToolEventRunner::new_readonly().run(event_log, &ctx, tool_request1);
 
             let (result1, tool1_succeeded) = match tool_outcome1 {
                 Ok(output) => {
@@ -506,8 +505,7 @@ pub fn run_mock_turn(
                                     ),
                                 );
                             }
-                            event_log
-                                .append(EventKind::AssistantMessage, out.response.clone());
+                            event_log.append(EventKind::AssistantMessage, out.response.clone());
                             // Aggregate usage across all three model responses.
                             if let Some(aggregated) =
                                 aggregate_usage(aggregate_usage(usage1, usage2), out.usage)

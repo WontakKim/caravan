@@ -1336,7 +1336,11 @@ fn native_tool_read_file_two_call_success_event_order() {
     );
 
     // tool_activities has one entry and it succeeded.
-    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    assert_eq!(
+        output.tool_activities.len(),
+        1,
+        "tool_activities must have one entry"
+    );
     let activity = &output.tool_activities[0];
     assert!(activity.succeeded);
     assert_eq!(activity.name, "read_file");
@@ -1435,7 +1439,11 @@ fn native_tool_list_files_no_path_arg_defaults_to_dot() {
         "must have ToolResult"
     );
 
-    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    assert_eq!(
+        output.tool_activities.len(),
+        1,
+        "tool_activities must have one entry"
+    );
     let activity = &output.tool_activities[0];
     assert_eq!(activity.name, "list_files");
     // The default path is captured from the validated ToolRequest, not the raw args.
@@ -1497,10 +1505,17 @@ fn native_tool_read_file_not_found_still_completes_second_call() {
     assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
 
     // tool_activities reflects the failure.
-    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    assert_eq!(
+        output.tool_activities.len(),
+        1,
+        "tool_activities must have one entry"
+    );
     let activity = &output.tool_activities[0];
     assert_eq!(activity.name, "read_file");
-    assert!(!activity.succeeded, "tool_activities[0].succeeded must be false");
+    assert!(
+        !activity.succeeded,
+        "tool_activities[0].succeeded must be false"
+    );
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -1746,7 +1761,10 @@ fn native_tool_second_tool_call_executed_as_exec_2_run_completes() {
     // Turn must succeed.
     assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
     assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
-    assert!(!kinds.contains(&EventKind::ModelError), "must not ModelError");
+    assert!(
+        !kinds.contains(&EventKind::ModelError),
+        "must not ModelError"
+    );
 
     // Recorded request count is exactly 3.
     assert_eq!(client.request_count(), 3, "exactly 3 HTTP requests");
@@ -2136,7 +2154,11 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
     );
 
     // tool_activities has one entry and it succeeded.
-    assert_eq!(output.tool_activities.len(), 1, "tool_activities must have one entry");
+    assert_eq!(
+        output.tool_activities.len(),
+        1,
+        "tool_activities must have one entry"
+    );
     let activity = &output.tool_activities[0];
     assert!(activity.succeeded);
     assert_eq!(activity.name, "search_text");
@@ -2195,7 +2217,10 @@ fn native_tool_search_text_second_tool_call_executed_as_exec_2() {
     // Turn must succeed.
     assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
     assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
-    assert!(!kinds.contains(&EventKind::ModelError), "must not ModelError");
+    assert!(
+        !kinds.contains(&EventKind::ModelError),
+        "must not ModelError"
+    );
 
     // Recorded request count is exactly 3.
     assert_eq!(client.request_count(), 3);
@@ -2287,7 +2312,10 @@ fn search_text_then_read_file_three_call_success_event_order() {
 
     // Two ToolPolicy / ToolCall / ToolResult groups.
     assert_eq!(
-        kinds.iter().filter(|&&k| k == EventKind::ToolPolicy).count(),
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ToolPolicy)
+            .count(),
         2,
         "exactly two ToolPolicy events"
     );
@@ -2316,13 +2344,22 @@ fn search_text_then_read_file_three_call_success_event_order() {
     );
 
     // Turn must succeed.
-    assert!(kinds.contains(&EventKind::AssistantMessage), "must have AssistantMessage");
+    assert!(
+        kinds.contains(&EventKind::AssistantMessage),
+        "must have AssistantMessage"
+    );
     assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
     assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
-    assert!(!kinds.contains(&EventKind::ModelError), "must not ModelError");
+    assert!(
+        !kinds.contains(&EventKind::ModelError),
+        "must not ModelError"
+    );
 
     // Usage aggregated: 10+20+30=60, 3+4+8=15, 13+24+38=75.
-    let usage_event = events.iter().find(|e| e.kind == EventKind::ModelUsage).expect("ModelUsage");
+    let usage_event = events
+        .iter()
+        .find(|e| e.kind == EventKind::ModelUsage)
+        .expect("ModelUsage");
     assert_eq!(
         usage_event.detail,
         "prompt_tokens=60 completion_tokens=15 total_tokens=75"
@@ -2331,8 +2368,14 @@ fn search_text_then_read_file_three_call_success_event_order() {
     // Request tools policy: [true, true, false].
     assert_eq!(client.request_count(), 3, "exactly 3 HTTP requests");
     assert!(client.request_had_tools(0), "step 1 must carry tools");
-    assert!(client.request_had_tools(1), "step 2 must carry tools (budget remains)");
-    assert!(!client.request_had_tools(2), "step 3 must NOT carry tools (budget exhausted)");
+    assert!(
+        client.request_had_tools(1),
+        "step 2 must carry tools (budget remains)"
+    );
+    assert!(
+        !client.request_had_tools(2),
+        "step 3 must NOT carry tools (budget exhausted)"
+    );
 
     // tool_activities: [search_text, read_file] both succeeded.
     assert_eq!(output.tool_activities.len(), 2);
@@ -2455,22 +2498,34 @@ fn third_tool_call_rejected_with_model_error_and_run_fail() {
     );
 
     // Must RunFail with ModelError containing the sentinel.
-    assert!(kinds.contains(&EventKind::ModelError), "must have ModelError");
+    assert!(
+        kinds.contains(&EventKind::ModelError),
+        "must have ModelError"
+    );
     assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
-    assert!(!kinds.contains(&EventKind::RunComplete), "must not RunComplete");
+    assert!(
+        !kinds.contains(&EventKind::RunComplete),
+        "must not RunComplete"
+    );
 
     let model_error_event = events
         .iter()
         .find(|e| e.kind == EventKind::ModelError)
         .unwrap();
     assert!(
-        model_error_event.detail.contains("third_tool_call_not_supported"),
+        model_error_event
+            .detail
+            .contains("third_tool_call_not_supported"),
         "ModelError must contain 'third_tool_call_not_supported': {}",
         model_error_event.detail
     );
 
     // tool_activities must contain both executed tool activities.
-    assert_eq!(output.tool_activities.len(), 2, "two tool activities before rejection");
+    assert_eq!(
+        output.tool_activities.len(),
+        2,
+        "two tool activities before rejection"
+    );
     assert_eq!(output.tool_activities[0].name, "read_file");
     assert_eq!(output.tool_activities[1].name, "list_files");
 
@@ -2543,8 +2598,7 @@ fn usage_aggregation_three_model_responses_sums_all_fields() {
     assert_eq!(usage_events.len(), 1, "exactly one ModelUsage");
 
     assert_eq!(
-        usage_events[0].detail,
-        "prompt_tokens=60 completion_tokens=18 total_tokens=78",
+        usage_events[0].detail, "prompt_tokens=60 completion_tokens=18 total_tokens=78",
         "usage must be independently summed across all three model responses"
     );
 
@@ -2642,8 +2696,14 @@ fn third_tool_call_no_usage_on_run_fail() {
     let events = event_log.events();
 
     // Must RunFail.
-    assert!(events.iter().any(|e| e.kind == EventKind::RunFail), "must RunFail");
-    assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete), "must not RunComplete");
+    assert!(
+        events.iter().any(|e| e.kind == EventKind::RunFail),
+        "must RunFail"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::RunComplete),
+        "must not RunComplete"
+    );
 
     // NO ModelUsage event on the RunFail path.
     assert!(
@@ -2704,7 +2764,8 @@ fn tool_result_detail_is_summary_only() {
 
     // Also assert no other event type leaks the sentinel through the event log.
     for event in events.iter() {
-        if event.kind == EventKind::ToolResult || event.kind == EventKind::ModelOutputChunk
+        if event.kind == EventKind::ToolResult
+            || event.kind == EventKind::ModelOutputChunk
             || event.kind == EventKind::AssistantMessage
         {
             // ModelOutputChunk and AssistantMessage may theoretically include the
@@ -2752,13 +2813,25 @@ fn native_tool_single_read_file_still_works_after_bounded_pipeline() {
 
     // Two ModelRoute events (exec 1 + final assistant).
     assert_eq!(
-        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
         2,
         "two ModelRoute events for single-tool path"
     );
     // ONE ToolCall, ONE ToolResult.
-    assert_eq!(kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(), 1);
-    assert_eq!(kinds.iter().filter(|&&k| k == EventKind::ToolResult).count(), 1);
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        1
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ToolResult)
+            .count(),
+        1
+    );
     assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
     assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
 
@@ -2767,7 +2840,10 @@ fn native_tool_single_read_file_still_works_after_bounded_pipeline() {
     // Two HTTP requests; second carries tools (budget remains after exec 1 success).
     assert_eq!(client.request_count(), 2);
     assert!(client.request_had_tools(0), "request 0 must carry tools");
-    assert!(client.request_had_tools(1), "request 1 must carry tools (budget remains)");
+    assert!(
+        client.request_had_tools(1),
+        "request 1 must carry tools (budget remains)"
+    );
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -2806,7 +2882,10 @@ fn native_tool_first_exec_error_second_request_carries_no_tools() {
 
     // ToolError must be present (not ToolResult).
     assert!(kinds.contains(&EventKind::ToolError), "must have ToolError");
-    assert!(!kinds.contains(&EventKind::ToolResult), "must NOT have ToolResult");
+    assert!(
+        !kinds.contains(&EventKind::ToolResult),
+        "must NOT have ToolResult"
+    );
 
     // Turn still reaches RunComplete (model explains the error).
     assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
@@ -2855,7 +2934,9 @@ fn native_tool_two_tool_turn_does_not_stage_workspace_context() {
 
     // ToolContextAttach must NOT be emitted by the native tool flow.
     assert!(
-        !events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        !events
+            .iter()
+            .any(|e| e.kind == EventKind::ToolContextAttach),
         "native tool flow must not emit ToolContextAttach"
     );
 
@@ -2897,14 +2978,26 @@ fn native_tool_two_tool_calls_in_second_response_is_adapter_error() {
 
     // Only ONE ModelRoute (from exec 1); second call returns adapter error.
     assert_eq!(
-        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
         1,
         "only one ModelRoute — second call adapter error"
     );
-    assert!(kinds.contains(&EventKind::ToolResult), "exec 1 must have ToolResult");
-    assert!(kinds.contains(&EventKind::ModelError), "must have ModelError");
+    assert!(
+        kinds.contains(&EventKind::ToolResult),
+        "exec 1 must have ToolResult"
+    );
+    assert!(
+        kinds.contains(&EventKind::ModelError),
+        "must have ModelError"
+    );
     assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
-    assert!(!kinds.contains(&EventKind::RunComplete), "must not RunComplete");
+    assert!(
+        !kinds.contains(&EventKind::RunComplete),
+        "must not RunComplete"
+    );
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
