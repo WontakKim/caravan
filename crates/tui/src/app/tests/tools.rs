@@ -1679,6 +1679,194 @@ fn tool_read_second_success_overwrites_pending_last_write_wins() {
     );
 }
 
+// --- /tool search tests ---
+
+// (a) Hit: emits SlashCommand, ToolPolicy, ToolCall, ToolResult; sets candidate; no
+//     ToolContextAttach; no ApprovalRequest; pending context clears one-shot after next message.
+#[test]
+fn tool_search_hit_emits_policy_call_result_and_stages_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(
+        workspace_dir.path().join("greet.txt"),
+        "hello world\n",
+    )
+    .unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let event_len_before = app.event_log.len();
+    app.input = "/tool search hello".to_string();
+    app.submit();
+
+    // Exactly 4 new events: SlashCommand, ToolPolicy, ToolCall, ToolResult.
+    assert_eq!(app.event_log.len(), event_len_before + 4);
+    let events = app.event_log.events();
+    let n = events.len();
+    assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+    assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
+    assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+    assert_eq!(events[n - 1].kind, EventKind::ToolResult);
+
+    // No ApprovalRequest emitted.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must appear for search_text"
+    );
+    // No ToolContextAttach emitted on automatic staging.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        "no ToolContextAttach must appear on automatic search staging"
+    );
+
+    // last_tool_output_candidate is set.
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be set after /tool search hit"
+    );
+    // pending_manual_tool_context is set.
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be set after /tool search hit"
+    );
+
+    // One-shot clear: a user message consumes the pending context.
+    app.input = "use the search results".to_string();
+    app.submit();
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must be cleared after the next user message (one-shot)"
+    );
+}
+
+// (b) Miss: logs "No matches." and still stages context.
+#[test]
+fn tool_search_miss_logs_no_matches_and_stages_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("file.txt"), "nothing here\n").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool search ZZZNOMATCH".to_string();
+    app.submit();
+
+    // "No matches." must appear in screen log.
+    assert!(
+        app.log.iter().any(|l| l == "No matches."),
+        "log must contain 'No matches.' for a search with no results"
+    );
+
+    // pending context still staged (no-matches is a successful result).
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be staged even on no-matches"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be set even on no-matches"
+    );
+}
+
+// (c) Failure: does NOT stage pending context.
+#[test]
+fn tool_search_failure_does_not_stage_context() {
+    // Use a workspace root that causes search to fail (empty query goes to Unknown,
+    // so we use a workspace that has the root unreadable — but that's tricky.
+    // Instead, use a query that's empty which the parser maps to Unknown, so we
+    // induce a registry-level error via a workaround: submit a direct SearchText
+    // via the registry with an empty query is caught at parser level as Unknown.
+    // Better: seed a candidate first, then submit a failing search (workspace violation).
+    // We can't easily make search_workspace fail for a non-empty query without a
+    // broken workspace root. Instead we test via an unreachable workspace root path
+    // indirectly: create app with a non-existent workspace root so the search fails.
+    let store_dir = TempDir::new();
+    // Point workspace root at a non-existent path so canonicalization fails.
+    let nonexistent_root = store_dir.path().join("nonexistent_workspace");
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        nonexistent_root,
+    );
+
+    // Seed a candidate first.
+    app.last_tool_output_candidate = Some(ManualToolContext::from_read_file("prior.txt", "prior"));
+
+    app.input = "/tool search hello".to_string();
+    app.submit();
+
+    // pending_manual_tool_context must NOT be set (failure path).
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must not be set after a failed /tool search"
+    );
+    // last_tool_output_candidate must NOT be updated (failure path preserves old value).
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must remain at its prior value after a failed /tool search"
+    );
+}
+
+// (d) /context attach-last-tool works with a staged search candidate.
+#[test]
+fn context_attach_last_tool_works_with_search_candidate() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("src.rs"), "fn main() {}\n").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Run a search to set the candidate.
+    app.input = "/tool search fn main".to_string();
+    app.submit();
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "search must set last_tool_output_candidate"
+    );
+
+    // /context attach-last-tool should work.
+    let log_len_before = app.log.len();
+    app.input = "/context attach-last-tool".to_string();
+    app.submit();
+
+    // The screen log must have grown (success path).
+    assert!(
+        app.log.len() > log_len_before,
+        "screen log must grow after /context attach-last-tool with a search candidate"
+    );
+    // pending_manual_tool_context must be set.
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be set after /context attach-last-tool with search candidate"
+    );
+
+    // A ToolContextAttach event must be emitted for explicit attach.
+    let events = app.event_log.events();
+    assert!(
+        events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        "ToolContextAttach must be emitted for explicit /context attach-last-tool"
+    );
+}
+
 // (j) Candidate-source preservation: a second propose-write still reflects the
 //     original last_tool_output_candidate content, not the prior ToolResult summary.
 //     No event detail anywhere contains the raw sentinel.

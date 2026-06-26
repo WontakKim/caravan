@@ -57,7 +57,8 @@ pub use storage::EventStore;
 pub use tool::events::ToolEventRunner;
 pub use tool::policy::{ToolPolicyDecision, ToolPolicyEngine, ToolPolicyOutcome};
 pub use tool::registry::{
-    ToolError, ToolExecutionContext, ToolName, ToolOutput, ToolRegistry, ToolRequest, ToolRisk,
+    SearchMatch, ToolError, ToolExecutionContext, ToolName, ToolOutput, ToolRegistry, ToolRequest,
+    ToolRisk,
 };
 pub use tool::schema::{ToolCatalog, ToolInputSpec, ToolSpec};
 pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};

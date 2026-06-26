@@ -5,6 +5,7 @@ pub enum ToolCommand {
     PlanWrite { path: String },
     PreviewWrite { path: String },
     ProposeWrite { path: String },
+    Search { query: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

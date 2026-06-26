@@ -103,6 +103,20 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
         ToolOutput::WritePreview { .. } => {
             "[write preview not available on the read-only path]".to_string()
         }
+        ToolOutput::SearchResults {
+            query,
+            matches,
+            truncated,
+        } => {
+            let mut lines = vec![format!("Search results for \"{}\":", query)];
+            for m in matches {
+                lines.push(format!("{}:{}: {}", m.path, m.line, m.text));
+            }
+            if *truncated {
+                lines.push("... [truncated]".to_string());
+            }
+            lines.join("\n")
+        }
     };
     limit_model_tool_text(rendered)
 }

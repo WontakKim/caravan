@@ -72,7 +72,8 @@ impl ToolPolicyEngine {
         let risk = match request {
             ToolRequest::ListFiles { .. }
             | ToolRequest::ReadFile { .. }
-            | ToolRequest::PreviewWrite { .. } => ToolRisk::ReadOnly,
+            | ToolRequest::PreviewWrite { .. }
+            | ToolRequest::SearchText { .. } => ToolRisk::ReadOnly,
             ToolRequest::PlanWrite { .. } => ToolRisk::WorkspaceWrite,
         };
 

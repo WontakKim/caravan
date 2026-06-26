@@ -606,6 +606,52 @@ fn tool_preview_write_extra_token_is_unknown() {
     ));
 }
 
+// --- /tool search parsing tests ---
+
+#[test]
+fn tool_search_with_single_word_query() {
+    assert_eq!(
+        parse_input("/tool search TODO"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Search {
+            query: "TODO".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_search_with_multi_word_query() {
+    assert_eq!(
+        parse_input("/tool search function main"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Search {
+            query: "function main".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_search_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool search"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_grep_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool grep something"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_find_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool find something"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
 // --- /tool propose-write parsing tests ---
 
 #[test]

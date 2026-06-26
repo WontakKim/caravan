@@ -93,6 +93,47 @@ impl ManualToolContext {
         }
     }
 
+    /// Builds a context from a `search_text` tool result.
+    ///
+    /// The stored `content` is a newline-joined `path:line: text` listing
+    /// bounded to [`MANUAL_TOOL_CONTEXT_MAX_BYTES`] bytes with char-boundary
+    /// truncation, mirroring [`from_read_file`].
+    pub fn from_search_text(
+        query: &str,
+        matches: &[crate::tool::registry::SearchMatch],
+        _truncated: bool,
+    ) -> Self {
+        let source = format!("tool=search_text query=\"{query}\"");
+        let marker = "\n... [truncated]";
+
+        let content: String = matches
+            .iter()
+            .map(|m| format!("{}:{}: {}", m.path, m.line, m.text))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        if content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
+            return Self {
+                source,
+                content,
+                truncated: false,
+            };
+        }
+
+        let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - marker.len();
+        let mut cut = budget;
+        while cut > 0 && !content.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let truncated_content = format!("{}{}", &content[..cut], marker);
+
+        Self {
+            source,
+            content: truncated_content,
+            truncated: true,
+        }
+    }
+
     /// Returns a summary-only string suitable for event detail — does NOT
     /// embed the raw content.
     pub fn attach_summary(&self) -> String {

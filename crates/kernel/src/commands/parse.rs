@@ -53,7 +53,11 @@ pub fn parse_input(input: &str) -> ParsedInput {
                             path: path.to_string(),
                         })
                     }
-                    // Any other subcommand, or "read"/"plan-write"/"preview-write"/"propose-write" with empty/multi-token path
+                    // Search accepts a multi-word query (no whitespace guard).
+                    "search" if !path.is_empty() => Command::Tool(ToolCommand::Search {
+                        query: path.to_string(),
+                    }),
+                    // Any other subcommand, or commands with missing/invalid args
                     _ => Command::Unknown(input.to_string()),
                 }
             }

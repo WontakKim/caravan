@@ -181,7 +181,9 @@ pub fn run_mock_turn(
             let activity_path = match &tool_request {
                 ToolRequest::ListFiles { path } => path.clone(),
                 ToolRequest::ReadFile { path } => path.clone(),
-                _ => String::new(),
+                ToolRequest::PlanWrite { path } => path.clone(),
+                ToolRequest::PreviewWrite { path, .. } => path.clone(),
+                ToolRequest::SearchText { query } => query.clone(),
             };
 
             let ctx = ToolExecutionContext {

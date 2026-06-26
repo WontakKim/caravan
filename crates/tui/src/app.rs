@@ -139,7 +139,7 @@ impl App {
                     }
                     Command::AllowedTools => {
                         self.log
-                            .push("Allowed tools: list_files, read_file".to_string());
+                            .push("Allowed tools: list_files, read_file, search_text".to_string());
                     }
                     Command::Tool(tc) => self.handle_tool_command(tc),
                     Command::Context(cc) => self.handle_context_command(cc),

@@ -1,4 +1,4 @@
-use kernel::{WRITE_DIFF_PREVIEW_LINES, WritePreview, WritePreviewKind};
+use kernel::{SearchMatch, WRITE_DIFF_PREVIEW_LINES, WritePreview, WritePreviewKind};
 
 impl super::App {
     /// Pushes a sorted directory listing to the screen log, capped at
@@ -90,6 +90,37 @@ impl super::App {
             .push("Use /approval status to inspect pending approvals.".to_string());
         self.log
             .push("Use /approval approve <seq> or /approval reject <seq> to resolve.".to_string());
+    }
+
+    /// Pushes search results to the screen log.
+    ///
+    /// On success with matches, emits a header followed by `"<path>:<line>: <text>"` lines
+    /// capped at [`super::TOOL_READ_PREVIEW_BYTES`], then `"... [truncated]"` when the
+    /// output is truncated. On no matches, emits the header followed by `"No matches."`.
+    pub(super) fn push_tool_search_output(
+        &mut self,
+        query: &str,
+        matches: &[SearchMatch],
+        truncated: bool,
+    ) {
+        self.log.push(format!("Search results for \"{}\":", query));
+        if matches.is_empty() {
+            self.log.push("No matches.".to_string());
+            return;
+        }
+        let mut bytes_used: usize = 0;
+        for m in matches {
+            let line = format!("{}:{}: {}", m.path, m.line, m.text);
+            if bytes_used + line.len() > super::TOOL_READ_PREVIEW_BYTES {
+                self.log.push("... [truncated]".to_string());
+                return;
+            }
+            bytes_used += line.len();
+            self.log.push(line);
+        }
+        if truncated {
+            self.log.push("... [truncated]".to_string());
+        }
     }
 
     /// Pushes a single human-readable error line derived from a [`kernel::ToolError`].

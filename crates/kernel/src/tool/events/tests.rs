@@ -724,6 +724,65 @@ fn approval_request_event_survives_persistence_round_trip() {
     );
 }
 
+// --- SearchText integration tests ---
+
+#[test]
+fn search_text_run_emits_tool_policy_call_result() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("hello.txt"), "hello world\n").expect("write file");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::SearchText {
+            query: "hello".to_string(),
+        },
+    );
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert_eq!(log.len(), 3);
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+    assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
+}
+
+#[test]
+fn search_text_result_detail_is_summary_only_no_matched_line_text() {
+    let dir = TempDir::new();
+    let secret_line = "UNIQUE_SECRET_MATCH_TEXT_KERNEL_99887";
+    std::fs::write(dir.path().join("secret.txt"), format!("{secret_line}\n")).expect("write file");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner
+        .run(
+            &mut log,
+            &ctx,
+            ToolRequest::SearchText {
+                query: "UNIQUE_SECRET_MATCH_TEXT".to_string(),
+            },
+        )
+        .ok();
+
+    let detail = &log.get(2).unwrap().detail;
+    assert!(
+        detail.contains("matches="),
+        "expected matches= in detail: {detail}"
+    );
+    assert!(
+        detail.contains("truncated="),
+        "expected truncated= in detail: {detail}"
+    );
+    assert!(
+        !detail.contains(secret_line),
+        "detail must not contain matched line text: {detail}"
+    );
+}
+
 // --- PreviewWrite tests ---
 
 const PROPOSED_CONTENT_SENTINEL: &str = "PROPOSED_CONTENT_SENTINEL_XYZ_9182736";

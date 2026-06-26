@@ -61,6 +61,7 @@ impl ToolEventRunner {
             ToolRequest::ReadFile { path } => ("read_file", path.clone()),
             ToolRequest::PlanWrite { path } => ("write_file", path.clone()),
             ToolRequest::PreviewWrite { path, .. } => ("preview_write", path.clone()),
+            ToolRequest::SearchText { query } => ("search_text", query.clone()),
         };
 
         let outcome = self.policy.evaluate(&request);

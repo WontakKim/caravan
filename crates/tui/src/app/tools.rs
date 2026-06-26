@@ -91,6 +91,35 @@ impl super::App {
             return;
         }
 
+        // Early-return: Search runs a workspace text search and auto-stages a context.
+        if let ToolCommand::Search { query } = tc {
+            let request = ToolRequest::SearchText {
+                query: query.clone(),
+            };
+            match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
+                Ok(ToolOutput::SearchResults {
+                    ref matches,
+                    truncated,
+                    ..
+                }) => {
+                    let tool_ctx =
+                        ManualToolContext::from_search_text(&query, matches, truncated);
+                    self.last_tool_output_candidate = Some(tool_ctx.clone());
+                    self.pending_manual_tool_context = Some(tool_ctx);
+                    self.push_tool_search_output(&query, matches, truncated);
+                    self.log.push(
+                        "This tool output will be used as workspace context for your next message."
+                            .to_string(),
+                    );
+                }
+                Ok(_) => unreachable!("SearchText only produces SearchResults output"),
+                Err(error) => {
+                    self.push_tool_error_output(error);
+                }
+            }
+            return;
+        }
+
         let (request, display_path) = match tc {
             ToolCommand::List { path } => {
                 let dp = path.clone();
@@ -103,6 +132,7 @@ impl super::App {
             ToolCommand::PlanWrite { .. } => unreachable!("handled above"),
             ToolCommand::PreviewWrite { .. } => unreachable!("handled above"),
             ToolCommand::ProposeWrite { .. } => unreachable!("handled above"),
+            ToolCommand::Search { .. } => unreachable!("handled above"),
         };
         match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
             Ok(ToolOutput::FileList { entries, .. }) => {
@@ -127,6 +157,9 @@ impl super::App {
             }
             Ok(ToolOutput::WritePreview { .. }) => {
                 unreachable!("handled in PreviewWrite early-return")
+            }
+            Ok(ToolOutput::SearchResults { .. }) => {
+                unreachable!("List/Read never produces SearchResults")
             }
             Err(error) => {
                 self.push_tool_error_output(error);

@@ -56,6 +56,20 @@ impl super::App {
                         Ok(ToolOutput::WritePreview { .. }) => unreachable!(
                             "preview-write is operator-only; never produced by /request run"
                         ),
+                        Ok(ToolOutput::SearchResults {
+                            ref query,
+                            ref matches,
+                            truncated,
+                        }) => {
+                            // SearchResults is not expected from /request run today
+                            // (only list_files/read_file are reconstructed), but we degrade
+                            // gracefully rather than panicking on a public ToolOutput variant.
+                            self.push_tool_search_output(query, matches, truncated);
+                            self.pending_model_tool_request = None;
+                            self.log.push(
+                                "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
+                            );
+                        }
                         Err(error) => {
                             self.push_tool_error_output(error);
                             // Keep pending_model_tool_request unchanged on failure.

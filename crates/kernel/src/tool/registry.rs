@@ -6,7 +6,7 @@
 mod path;
 mod search;
 
-pub(super) use search::{SearchMatch, SearchOutcome};
+pub use search::SearchMatch;
 
 use std::fs;
 
@@ -20,6 +20,7 @@ use crate::write_preview::{WritePreview, preview_write_intent};
 pub enum ToolName {
     ListFiles,
     ReadFile,
+    SearchText,
 }
 
 /// Risk classification for a tool.
@@ -52,6 +53,7 @@ pub enum ToolRequest {
     ReadFile { path: String },
     PlanWrite { path: String },
     PreviewWrite { path: String, content: String },
+    SearchText { query: String },
 }
 
 /// Outputs produced by the tool harness.
@@ -60,6 +62,7 @@ pub enum ToolOutput {
     FileList { path: String, entries: Vec<String> },
     FileContent { path: String, content: String },
     WritePreview { path: String, preview: WritePreview },
+    SearchResults { query: String, matches: Vec<SearchMatch>, truncated: bool },
 }
 
 /// Structured error taxonomy for tool execution failures.
@@ -106,6 +109,14 @@ impl ToolRegistry {
             }),
             ToolRequest::PreviewWrite { path, content } => {
                 self.preview_write(context, path, content)
+            }
+            ToolRequest::SearchText { query } => {
+                let outcome = search::search_workspace(&context.workspace_root, &query)?;
+                Ok(ToolOutput::SearchResults {
+                    query,
+                    matches: outcome.matches,
+                    truncated: outcome.truncated,
+                })
             }
         }
     }

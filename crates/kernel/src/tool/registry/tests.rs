@@ -251,3 +251,47 @@ fn read_file_non_utf8_returns_non_utf8() {
 fn tool_risk_read_only_as_str() {
     assert_eq!(ToolRisk::ReadOnly.as_str(), "read_only");
 }
+
+#[test]
+fn search_text_returns_search_results() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("hello.txt"), "hello world\n").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::SearchText {
+            query: "hello".to_string(),
+        },
+    );
+
+    assert!(
+        matches!(result, Ok(ToolOutput::SearchResults { .. })),
+        "expected SearchResults, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn search_text_no_matches_returns_empty_search_results() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("file.txt"), "no match here\n").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::SearchText {
+            query: "ZZZNOMATCH".to_string(),
+        },
+    );
+
+    match result {
+        Ok(ToolOutput::SearchResults { matches, truncated, .. }) => {
+            assert!(matches.is_empty(), "expected empty matches");
+            assert!(!truncated, "expected truncated=false");
+        }
+        other => panic!("expected SearchResults, got {:?}", other),
+    }
+}
