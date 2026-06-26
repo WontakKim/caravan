@@ -1,14 +1,17 @@
 use super::*;
 use crate::events::{EventKind, EventLog};
 use crate::model::ModelError;
-use crate::model::openai::http::{OpenAIHttpClient, OpenAIHttpResult};
+use crate::model::openai::http::{OpenAIHttpClient, OpenAIHttpError, OpenAIHttpResult};
 use crate::model::openai::request::OpenAIRequestPlan;
 use crate::model::openai::types::{
-    OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIUsage,
+    OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIToolCall,
+    OpenAIToolCallFunction, OpenAIUsage,
 };
 use crate::model_config::{ModelConfig, ModelProfile};
 use crate::model_gateway::ModelGateway;
 use crate::model_types::{ModelAdapterKind, ModelProvider};
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 
 #[test]
 fn run_mock_turn_appends_correct_event_sequence() {
@@ -1077,4 +1080,1009 @@ fn run_mock_turn_with_project_memory_includes_memory_in_prompt_compile() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ============================================================================
+// QueuedFakeClient — stateful scripted HTTP client for native tool round-trip
+// integration tests.
+//
+// Interior mutability via Mutex is required because send_chat_completion takes
+// &self while both the response queue and the request log must be mutated.
+// ============================================================================
+
+struct QueuedFakeClient {
+    responses: Mutex<VecDeque<OpenAIChatResponse>>,
+    /// Records whether each request carried a `tools` field (true = had tools).
+    requests: Mutex<Vec<bool>>,
+}
+
+impl QueuedFakeClient {
+    fn new(responses: Vec<OpenAIChatResponse>) -> Self {
+        Self {
+            responses: Mutex::new(VecDeque::from(responses)),
+            requests: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn request_count(&self) -> usize {
+        self.requests.lock().unwrap().len()
+    }
+
+    fn request_had_tools(&self, idx: usize) -> bool {
+        self.requests.lock().unwrap()[idx]
+    }
+}
+
+// Implement the trait for Arc<QueuedFakeClient> so the gateway can own the
+// Box<dyn OpenAIHttpClient> while the test keeps an Arc clone for inspection.
+impl OpenAIHttpClient for Arc<QueuedFakeClient> {
+    fn send_chat_completion(
+        &self,
+        plan: &OpenAIRequestPlan,
+    ) -> OpenAIHttpResult<OpenAIChatResponse> {
+        self.requests
+            .lock()
+            .unwrap()
+            .push(plan.body.tools.is_some());
+        self.responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .ok_or_else(|| OpenAIHttpError::RequestFailure {
+                message: "QueuedFakeClient: response queue exhausted".to_string(),
+            })
+    }
+}
+
+// --- Response builders -------------------------------------------------------
+
+fn openai_config() -> ModelConfig {
+    ModelConfig {
+        active_profile: ModelProfile {
+            provider: crate::model_types::ModelProvider::OpenAI,
+            model: "gpt-4o".into(),
+            adapter: crate::model_types::ModelAdapterKind::OpenAICompatibleAdapter,
+        },
+    }
+}
+
+fn assistant_resp(content: &str, usage: Option<OpenAIUsage>) -> OpenAIChatResponse {
+    OpenAIChatResponse {
+        choices: vec![OpenAIChatChoice {
+            message: OpenAIChatMessage {
+                role: "assistant".to_string(),
+                content: Some(content.to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        }],
+        usage,
+    }
+}
+
+fn tool_call_resp(
+    name: &str,
+    id: &str,
+    args: &str,
+    usage: Option<OpenAIUsage>,
+) -> OpenAIChatResponse {
+    OpenAIChatResponse {
+        choices: vec![OpenAIChatChoice {
+            message: OpenAIChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_calls: Some(vec![OpenAIToolCall {
+                    id: id.to_string(),
+                    kind: "function".to_string(),
+                    function: OpenAIToolCallFunction {
+                        name: name.to_string(),
+                        arguments: args.to_string(),
+                    },
+                }]),
+                tool_call_id: None,
+            },
+        }],
+        usage,
+    }
+}
+
+/// A response with two identical tool calls — rejected at the adapter level.
+fn two_tool_calls_resp() -> OpenAIChatResponse {
+    let tc = OpenAIToolCall {
+        id: "call-dup".to_string(),
+        kind: "function".to_string(),
+        function: OpenAIToolCallFunction {
+            name: "list_files".to_string(),
+            arguments: "{}".to_string(),
+        },
+    };
+    OpenAIChatResponse {
+        choices: vec![OpenAIChatChoice {
+            message: OpenAIChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_calls: Some(vec![tc.clone(), tc]),
+                tool_call_id: None,
+            },
+        }],
+        usage: None,
+    }
+}
+
+/// Create a new temp dir, write a small file, and return the dir path.
+fn make_temp_workspace(filename: &str, content: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CTR: AtomicU64 = AtomicU64::new(0);
+    let id = CTR.fetch_add(1, Ordering::Relaxed);
+    let dir =
+        std::env::temp_dir().join(format!("kernel_runner_test_{}_{}", std::process::id(), id));
+    std::fs::create_dir_all(&dir).unwrap();
+    if !filename.is_empty() {
+        std::fs::write(dir.join(filename), content).unwrap();
+    }
+    dir
+}
+
+// --- Test (a): read_file two-call success -----------------------------------
+
+#[test]
+fn native_tool_read_file_two_call_success_event_order() {
+    let workspace = make_temp_workspace("hello.txt", "hello content");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-1",
+            r#"{"path":"hello.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 12,
+            }),
+        ),
+        assistant_resp(
+            "Here is what I found.",
+            Some(OpenAIUsage {
+                prompt_tokens: 8,
+                completion_tokens: 3,
+                total_tokens: 9,
+            }),
+        ),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "read hello.txt",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Assert event order up to first variable-length block.
+    assert_eq!(kinds[0], EventKind::RunCreate);
+    assert_eq!(kinds[1], EventKind::RunStart);
+    assert_eq!(kinds[2], EventKind::TurnStart);
+    assert_eq!(kinds[3], EventKind::PromptCompile);
+    assert_eq!(kinds[4], EventKind::ModelRoute);
+    assert_eq!(kinds[5], EventKind::ToolPolicy);
+    assert_eq!(kinds[6], EventKind::ToolCall);
+    assert_eq!(kinds[7], EventKind::ToolResult);
+
+    // After ToolResult: second ModelRoute, then chunks, AssistantMessage, RunComplete.
+    let second_route_idx = kinds
+        .iter()
+        .rposition(|&k| k == EventKind::ModelRoute)
+        .unwrap();
+    assert!(
+        second_route_idx > 4,
+        "second ModelRoute must be after first"
+    );
+
+    let run_complete_idx = kinds
+        .iter()
+        .position(|&k| k == EventKind::RunComplete)
+        .expect("RunComplete must be present");
+    let last_event = kinds.last().unwrap();
+    assert_eq!(*last_event, EventKind::RunComplete);
+
+    let assistant_msg_idx = kinds
+        .iter()
+        .position(|&k| k == EventKind::AssistantMessage)
+        .unwrap();
+    assert!(assistant_msg_idx > second_route_idx);
+    assert!(assistant_msg_idx < run_complete_idx);
+
+    // Exactly ONE PromptCompile.
+    let pc_count = kinds
+        .iter()
+        .filter(|&&k| k == EventKind::PromptCompile)
+        .count();
+    assert_eq!(pc_count, 1, "exactly one PromptCompile");
+
+    // Exactly TWO ModelRoute.
+    let mr_count = kinds
+        .iter()
+        .filter(|&&k| k == EventKind::ModelRoute)
+        .count();
+    assert_eq!(mr_count, 2, "exactly two ModelRoute events");
+
+    // Exactly ONE ToolCall.
+    let tc_count = kinds.iter().filter(|&&k| k == EventKind::ToolCall).count();
+    assert_eq!(tc_count, 1, "exactly one ToolCall event");
+
+    // No RunFail.
+    assert!(
+        !kinds.contains(&EventKind::RunFail),
+        "no RunFail on success path"
+    );
+
+    // Fake recorded exactly 2 requests; second has tools == None.
+    assert_eq!(client.request_count(), 2, "exactly 2 HTTP requests");
+    assert!(
+        client.request_had_tools(0),
+        "first request must carry tools"
+    );
+    assert!(
+        !client.request_had_tools(1),
+        "second request must NOT carry tools"
+    );
+
+    // tool_activity is Some and succeeded.
+    let activity = output.tool_activity.expect("tool_activity must be Some");
+    assert!(activity.succeeded);
+    assert_eq!(activity.name, "read_file");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (a) continued: usage detail is exact ----------------------------
+
+#[test]
+fn native_tool_read_file_two_call_usage_detail_is_aggregated() {
+    let workspace = make_temp_workspace("hello.txt", "content");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-1",
+            r#"{"path":"hello.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 12,
+            }),
+        ),
+        assistant_resp(
+            "Done.",
+            Some(OpenAIUsage {
+                prompt_tokens: 8,
+                completion_tokens: 3,
+                total_tokens: 9,
+            }),
+        ),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "read hello.txt",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let usage_event = events
+        .iter()
+        .find(|e| e.kind == EventKind::ModelUsage)
+        .expect("ModelUsage must be present");
+    // Independent sums: 10+8=18, 5+3=8, 12+9=21 (NOT 18+8=26 for total).
+    assert_eq!(
+        usage_event.detail,
+        "prompt_tokens=18 completion_tokens=8 total_tokens=21"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (b): list_files two-call success (path omitted -> default ".") ---
+
+#[test]
+fn native_tool_list_files_no_path_arg_defaults_to_dot() {
+    let workspace = make_temp_workspace("", "");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // list_files with no path argument — gateway will see arguments: {}
+        tool_call_resp("list_files", "call-2", "{}", None),
+        assistant_resp("Listed.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "list files",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    assert!(
+        kinds.contains(&EventKind::RunComplete),
+        "must reach RunComplete"
+    );
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+    assert!(kinds.contains(&EventKind::ToolCall), "must have ToolCall");
+    assert!(
+        kinds.contains(&EventKind::ToolResult),
+        "must have ToolResult"
+    );
+
+    let activity = output.tool_activity.expect("tool_activity must be Some");
+    assert_eq!(activity.name, "list_files");
+    // The default path is captured from the validated ToolRequest, not the raw args.
+    assert_eq!(activity.path, ".", "list_files default path must be '.'");
+    assert!(activity.succeeded);
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (c): tool execution error (read_file missing -> NotFound) ---------
+
+#[test]
+fn native_tool_read_file_not_found_still_completes_second_call() {
+    let workspace = make_temp_workspace("", "");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-3",
+            r#"{"path":"missing_sentinel_file.txt"}"#,
+            None,
+        ),
+        assistant_resp("Could not read the file.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "read missing file",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // ToolError must be present (not ToolResult).
+    assert!(kinds.contains(&EventKind::ToolError), "must have ToolError");
+    assert!(
+        !kinds.contains(&EventKind::ToolResult),
+        "must NOT have ToolResult on error path"
+    );
+
+    // Second model call still happens — two ModelRoute events.
+    let mr_count = kinds
+        .iter()
+        .filter(|&&k| k == EventKind::ModelRoute)
+        .count();
+    assert_eq!(mr_count, 2, "two ModelRoute events even on tool error");
+
+    assert!(
+        kinds.contains(&EventKind::RunComplete),
+        "must reach RunComplete"
+    );
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+
+    // tool_activity reflects the failure.
+    let activity = output.tool_activity.expect("tool_activity must be Some");
+    assert_eq!(activity.name, "read_file");
+    assert!(!activity.succeeded, "tool_activity.succeeded must be false");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (d): bridge-level invalid first call (ONE ModelRoute, no tool events) ---
+
+#[test]
+fn native_tool_unsupported_tool_name_is_bridge_error_one_model_route() {
+    let workspace = make_temp_workspace("", "");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // unsupported tool name — passes gateway validation (object args), fails bridge
+        tool_call_resp("shell_exec", "call-bad", r#"{"cmd":"ls"}"#, None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "run shell",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        1,
+        "exactly one ModelRoute for bridge error"
+    );
+    assert!(
+        kinds.contains(&EventKind::ModelError),
+        "must have ModelError"
+    );
+    assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
+    assert!(!kinds.contains(&EventKind::ToolPolicy), "no ToolPolicy");
+    assert!(!kinds.contains(&EventKind::ToolCall), "no ToolCall");
+    assert!(!kinds.contains(&EventKind::ToolResult), "no ToolResult");
+    assert!(!kinds.contains(&EventKind::RunComplete), "no RunComplete");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn native_tool_read_file_missing_path_is_bridge_error_one_model_route() {
+    let workspace = make_temp_workspace("", "");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // read_file with no path — object args pass gateway, missing path fails bridge
+        tool_call_resp("read_file", "call-nopath", "{}", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "read without path",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        1,
+        "exactly one ModelRoute for bridge error"
+    );
+    assert!(kinds.contains(&EventKind::ModelError));
+    assert!(kinds.contains(&EventKind::RunFail));
+    assert!(!kinds.contains(&EventKind::ToolPolicy));
+    assert!(!kinds.contains(&EventKind::ToolCall));
+    assert!(!kinds.contains(&EventKind::RunComplete));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (e): adapter-level invalid first call (NO ModelRoute) -------------
+
+#[test]
+fn native_tool_two_tool_calls_in_first_response_is_adapter_error_no_model_route() {
+    let workspace = make_temp_workspace("", "");
+    let client = Arc::new(QueuedFakeClient::new(vec![two_tool_calls_resp()]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "trigger adapter error",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        0,
+        "NO ModelRoute for adapter-level error"
+    );
+    assert!(kinds.contains(&EventKind::ModelError));
+    assert!(kinds.contains(&EventKind::RunFail));
+    assert!(!kinds.contains(&EventKind::ToolPolicy));
+    assert!(!kinds.contains(&EventKind::ToolCall));
+    assert!(!kinds.contains(&EventKind::RunComplete));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn native_tool_non_object_arguments_in_first_response_is_adapter_error_no_model_route() {
+    let workspace = make_temp_workspace("", "");
+    // non-object arguments: `"not an object"` — rejected by to_model_step_output
+    let client = Arc::new(QueuedFakeClient::new(vec![OpenAIChatResponse {
+        choices: vec![OpenAIChatChoice {
+            message: OpenAIChatMessage {
+                role: "assistant".to_string(),
+                content: None,
+                tool_calls: Some(vec![OpenAIToolCall {
+                    id: "call-bad-args".to_string(),
+                    kind: "function".to_string(),
+                    function: OpenAIToolCallFunction {
+                        name: "list_files".to_string(),
+                        arguments: r#""not_an_object""#.to_string(),
+                    },
+                }]),
+                tool_call_id: None,
+            },
+        }],
+        usage: None,
+    }]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "non-object args",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        0,
+        "NO ModelRoute for adapter-level error"
+    );
+    assert!(kinds.contains(&EventKind::ModelError));
+    assert!(kinds.contains(&EventKind::RunFail));
+    assert!(!kinds.contains(&EventKind::ToolCall));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (f): second response is exactly one tool call (rejected) ----------
+
+#[test]
+fn native_tool_second_tool_call_not_supported_sentinel_in_event_log() {
+    let workspace = make_temp_workspace("note.txt", "hi");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-f1", r#"{"path":"note.txt"}"#, None),
+        // Second response is another tool call — must be rejected.
+        tool_call_resp("list_files", "call-f2", "{}", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "read then list",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Two ModelRoute events (first tool call + second model call).
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        2,
+        "two ModelRoute events"
+    );
+    // Exactly ONE ToolCall (the first one).
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        1,
+        "exactly one ToolCall — no second execution"
+    );
+    // ModelError and RunFail must be present.
+    assert!(kinds.contains(&EventKind::ModelError));
+    assert!(kinds.contains(&EventKind::RunFail));
+    assert!(!kinds.contains(&EventKind::RunComplete));
+
+    // Recorded request count is exactly 2.
+    assert_eq!(client.request_count(), 2);
+
+    // Error detail must contain the sentinel string.
+    let model_error_event = events
+        .iter()
+        .find(|e| e.kind == EventKind::ModelError)
+        .unwrap();
+    assert!(
+        model_error_event
+            .detail
+            .contains("second_tool_call_not_supported"),
+        "ModelError must contain 'second_tool_call_not_supported': {}",
+        model_error_event.detail
+    );
+
+    // tool_activity is Some (from first tool execution).
+    assert!(output.tool_activity.is_some());
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (g): second response is adapter/wire failure (NO second ModelRoute) ---
+
+#[test]
+fn native_tool_second_call_adapter_failure_no_second_model_route() {
+    let workspace = make_temp_workspace("data.txt", "data");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-g1", r#"{"path":"data.txt"}"#, None),
+        // Second response has >=2 tool calls -> adapter returns Err -> no second ModelRoute.
+        two_tool_calls_resp(),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "read data",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Exactly ONE ModelRoute (first call succeeded, second call is adapter error).
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        1,
+        "only one ModelRoute — second call is adapter error, no second ModelRoute"
+    );
+    assert!(
+        kinds.contains(&EventKind::ToolResult),
+        "ToolResult from first execution"
+    );
+    assert!(kinds.contains(&EventKind::ModelError));
+    assert!(kinds.contains(&EventKind::RunFail));
+    assert!(!kinds.contains(&EventKind::RunComplete));
+
+    // tool_activity is Some even on second-call failure.
+    assert!(output.tool_activity.is_some());
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (h): usage aggregation --------------------------------------------
+
+#[test]
+fn native_tool_usage_aggregated_independently_total_is_sum_of_totals() {
+    // call1 usage(prompt=10,completion=5,total=12) + call2 usage(prompt=8,completion=3,total=9)
+    // -> prompt_tokens=18 completion_tokens=8 total_tokens=21 (NOT 26 = 18+8)
+    let workspace = make_temp_workspace("u.txt", "u");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-h1",
+            r#"{"path":"u.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 12,
+            }),
+        ),
+        assistant_resp(
+            "Aggregated.",
+            Some(OpenAIUsage {
+                prompt_tokens: 8,
+                completion_tokens: 3,
+                total_tokens: 9,
+            }),
+        ),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "aggregate usage",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let usage_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == EventKind::ModelUsage)
+        .collect();
+    assert_eq!(usage_events.len(), 1, "exactly one ModelUsage");
+    assert_eq!(
+        usage_events[0].detail, "prompt_tokens=18 completion_tokens=8 total_tokens=21",
+        "independent sum: 10+8=18, 5+3=8, 12+9=21 (not 26)"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn native_tool_usage_call1_has_usage_call2_none_emits_call1_usage() {
+    let workspace = make_temp_workspace("v.txt", "v");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-hi1",
+            r#"{"path":"v.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+        ),
+        assistant_resp("No usage for second call.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "h-i usage",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let usage_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == EventKind::ModelUsage)
+        .collect();
+    assert_eq!(usage_events.len(), 1, "exactly one ModelUsage");
+    assert_eq!(
+        usage_events[0].detail,
+        "prompt_tokens=10 completion_tokens=5 total_tokens=15"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn native_tool_usage_neither_call_has_usage_emits_no_model_usage() {
+    let workspace = make_temp_workspace("w.txt", "w");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-hii1", r#"{"path":"w.txt"}"#, None),
+        assistant_resp("No usage anywhere.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "h-ii usage",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelUsage),
+        "no ModelUsage when neither call has usage"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[test]
+fn native_tool_run_fail_turn_emits_no_model_usage_even_if_first_call_had_usage() {
+    let workspace = make_temp_workspace("x.txt", "x");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-hiii1",
+            r#"{"path":"x.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 20,
+                completion_tokens: 10,
+                total_tokens: 30,
+            }),
+        ),
+        // Second call is adapter error -> RunFail -> NO ModelUsage.
+        two_tool_calls_resp(),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "h-iii usage",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    assert!(
+        events.iter().any(|e| e.kind == EventKind::RunFail),
+        "must RunFail"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelUsage),
+        "RunFail path must emit NO ModelUsage"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test (i): dormant text protocol (CARAVAN_TOOL_REQUEST in content, no native tool) ---
+
+#[test]
+fn native_tool_dormant_text_protocol_stays_plain_assistant_turn() {
+    // The response content contains a CARAVAN_TOOL_REQUEST block but has NO
+    // native tool_calls. This must be treated as a plain assistant turn.
+    let content_with_block = "preamble\nCARAVAN_TOOL_REQUEST\ntool=read_file\npath=README.md\nEND_CARAVAN_TOOL_REQUEST\npostamble";
+    let client = Arc::new(QueuedFakeClient::new(vec![assistant_resp(
+        content_with_block,
+        None,
+    )]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "hello",
+        &gateway,
+        std::path::Path::new("."),
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Plain success path: no tool events.
+    assert!(!kinds.contains(&EventKind::ToolPolicy), "no ToolPolicy");
+    assert!(!kinds.contains(&EventKind::ToolCall), "no ToolCall");
+    assert!(!kinds.contains(&EventKind::ToolResult), "no ToolResult");
+    assert!(!kinds.contains(&EventKind::ToolError), "no ToolError");
+    assert!(
+        !kinds.contains(&EventKind::ModelToolRequest),
+        "no ModelToolRequest"
+    );
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+
+    // detected_model_tool_request must be None.
+    assert!(
+        output.detected_model_tool_request.is_none(),
+        "detected_model_tool_request must be None for dormant text protocol"
+    );
+    // tool_activity must be None.
+    assert!(
+        output.tool_activity.is_none(),
+        "tool_activity must be None for plain assistant turn"
+    );
+
+    // Exactly ONE ModelRoute (direct assistant, no round-trip).
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        1,
+        "exactly one ModelRoute for plain assistant response"
+    );
+}
+
+// --- Test (j): default Mock gateway (unchanged assistant-only flow) ----------
+
+#[test]
+fn native_tool_default_mock_gateway_unchanged_assistant_only_flow() {
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    let output = run_mock_turn(
+        &mut event_log,
+        "hello",
+        &gateway,
+        std::path::Path::new("."),
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // No tool events.
+    assert!(!kinds.contains(&EventKind::ToolPolicy), "no ToolPolicy");
+    assert!(!kinds.contains(&EventKind::ToolCall), "no ToolCall");
+    assert!(!kinds.contains(&EventKind::ToolResult), "no ToolResult");
+    assert!(!kinds.contains(&EventKind::ToolError), "no ToolError");
+    assert!(
+        !kinds.contains(&EventKind::ModelToolRequest),
+        "no ModelToolRequest"
+    );
+    assert!(!kinds.contains(&EventKind::RunFail), "no RunFail");
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+
+    // tool_activity is None on the direct-assistant path.
+    assert!(
+        output.tool_activity.is_none(),
+        "tool_activity must be None for Mock gateway"
+    );
+    assert!(
+        output.detected_model_tool_request.is_none(),
+        "detected_model_tool_request must be None"
+    );
+
+    // Exactly ONE ModelRoute.
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        1,
+        "exactly one ModelRoute for Mock gateway"
+    );
 }
