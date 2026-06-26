@@ -709,7 +709,7 @@ fn approval_execute_is_unknown() {
 // --- help catalog parity tests ---
 
 #[test]
-fn help_catalog_has_23_entries_in_exact_order() {
+fn help_catalog_has_24_entries_in_exact_order() {
     let entries = command_help_entries();
     let commands: Vec<&str> = entries.iter().map(|e| e.command).collect();
     assert_eq!(
@@ -725,6 +725,7 @@ fn help_catalog_has_23_entries_in_exact_order() {
             "/allowed-tools",
             "/tool list [path]",
             "/tool read <path>",
+            "/tool search <query>",
             "/context attach-last-tool",
             "/context clear",
             "/context status",
