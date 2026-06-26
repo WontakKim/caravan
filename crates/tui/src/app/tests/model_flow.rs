@@ -3,7 +3,10 @@ use super::common::*;
 use std::collections::HashMap;
 
 use kernel::events::{EventKind, EventLog, EventSeq};
+use kernel::manual_context::ManualToolContext;
 use kernel::model_runtime_config::ModelRuntimeConfig;
+use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
+use kernel::runner::{MockRunOutput, ModelToolActivity};
 use kernel::storage::EventStore;
 
 #[test]
@@ -298,5 +301,249 @@ fn hello_caravan_mock_flow_yields_expected_response_and_model_route() {
     assert_eq!(
         model_route.detail,
         "provider=mock model=mock-model adapter=MockModelAdapter"
+    );
+}
+
+// ============================================================================
+// Native tool activity screen-log + state-isolation tests
+//
+// These tests drive App::push_run_output_to_log (the private helper that
+// submit() delegates to after run_mock_turn) directly with synthetic
+// MockRunOutput values.  This avoids the need to inject a fake HTTP client
+// into the kernel gateway while still exercising the exact code path that
+// submit() runs.
+// ============================================================================
+
+// Helper: build a synthetic MockRunOutput for a succeeded native read_file turn.
+// The assistant_response is always a short summary — the raw file body is never
+// placed in the output fields, which is what "no full tool output in the log" tests.
+fn make_succeeded_output(path: &str) -> MockRunOutput {
+    MockRunOutput {
+        user_message: format!("read {path}"),
+        assistant_response: format!("I read {path}."),
+        run_id: "run-test".to_string(),
+        turn_id: "turn-test".to_string(),
+        detected_model_tool_request: None,
+        tool_activity: Some(ModelToolActivity {
+            name: "read_file".to_string(),
+            path: path.to_string(),
+            succeeded: true,
+        }),
+    }
+}
+
+// Helper: build a synthetic MockRunOutput for a failed native read_file turn.
+fn make_failed_output(path: &str) -> MockRunOutput {
+    MockRunOutput {
+        user_message: format!("read {path}"),
+        assistant_response: format!("Could not read {path}."),
+        run_id: "run-test".to_string(),
+        turn_id: "turn-test".to_string(),
+        detected_model_tool_request: None,
+        tool_activity: Some(ModelToolActivity {
+            name: "read_file".to_string(),
+            path: path.to_string(),
+            succeeded: false,
+        }),
+    }
+}
+
+// --- Test (a): screen-log contains Tool:/Tool completed: before Assistant: ---
+
+#[test]
+fn native_tool_screen_log_has_tool_and_tool_completed_before_assistant() {
+    let mut app = App::new();
+    // The raw file body is never placed in the MockRunOutput fields — the
+    // helper only logs concise activity lines, never raw tool output.
+    let file_body = "the quick brown fox — must not appear in the log";
+    let output = make_succeeded_output("fox.txt");
+
+    // Drive the helper that submit() uses internally.
+    app.push_run_output_to_log(&output);
+
+    let tool_line = "Tool: read_file fox.txt".to_string();
+    let completed_line = "Tool completed: read_file fox.txt".to_string();
+
+    assert!(
+        app.log.contains(&tool_line),
+        "log must contain 'Tool: read_file fox.txt'; log={:?}",
+        app.log
+    );
+    assert!(
+        app.log.contains(&completed_line),
+        "log must contain 'Tool completed: read_file fox.txt'; log={:?}",
+        app.log
+    );
+    assert!(
+        app.log.iter().any(|l| l.starts_with("Assistant:")),
+        "log must contain an 'Assistant:' line"
+    );
+
+    // Order: Tool: < Tool completed: < Assistant:
+    let tool_idx = app.log.iter().position(|l| l == &tool_line).unwrap();
+    let completed_idx = app.log.iter().position(|l| l == &completed_line).unwrap();
+    let assistant_idx = app
+        .log
+        .iter()
+        .position(|l| l.starts_with("Assistant:"))
+        .unwrap();
+    assert!(
+        tool_idx < completed_idx,
+        "Tool: must precede Tool completed:"
+    );
+    assert!(
+        completed_idx < assistant_idx,
+        "Tool completed: must precede Assistant:"
+    );
+
+    // The raw file body must not appear anywhere in the screen log — the
+    // helper only logs summary lines, never raw content.
+    assert!(
+        !app.log.iter().any(|l| l.contains(file_body)),
+        "screen log must not contain raw file body"
+    );
+}
+
+// --- Test (b): failing tool turn logs "Tool failed: ..." ---------------------
+
+#[test]
+fn native_tool_screen_log_has_tool_failed_when_tool_errors() {
+    let mut app = App::new();
+    let output = make_failed_output("missing_sentinel.txt");
+
+    app.push_run_output_to_log(&output);
+
+    assert!(
+        app.log
+            .contains(&"Tool: read_file missing_sentinel.txt".to_string()),
+        "log must contain 'Tool: read_file missing_sentinel.txt'; log={:?}",
+        app.log
+    );
+    assert!(
+        app.log
+            .contains(&"Tool failed: read_file missing_sentinel.txt".to_string()),
+        "log must contain 'Tool failed: read_file missing_sentinel.txt'; log={:?}",
+        app.log
+    );
+    assert!(
+        !app.log
+            .iter()
+            .any(|l| l.contains("Tool completed: read_file")),
+        "log must NOT contain 'Tool completed:' when tool failed"
+    );
+}
+
+// --- Test (c): sentinel state isolation --------------------------------------
+// last_tool_output_candidate and pending_model_tool_request must NOT be
+// touched by a native tool turn (neither cleared nor overwritten).
+
+#[test]
+fn native_tool_output_does_not_modify_sentinel_manual_state_fields() {
+    let mut app = App::new();
+
+    // Plant non-None sentinels in the manual-flow state fields.
+    let sentinel_mtc = ManualToolContext::from_read_file("sentinel-manual.txt", "sentinel content");
+    let sentinel_mtr = ModelToolRequest {
+        kind: ModelToolRequestKind::ReadFile,
+        path: "sentinel-model-tool.txt".to_string(),
+    };
+    app.last_tool_output_candidate = Some(sentinel_mtc.clone());
+    app.pending_model_tool_request = Some(sentinel_mtr.clone());
+
+    // Run the code path that processes native tool activity.
+    let output = make_succeeded_output("iso.txt");
+    app.push_run_output_to_log(&output);
+
+    // Both sentinel fields must be unchanged after processing native tool output.
+    let ltoc = app
+        .last_tool_output_candidate
+        .as_ref()
+        .expect("last_tool_output_candidate must still be Some after native tool output");
+    assert_eq!(
+        ltoc.source, sentinel_mtc.source,
+        "source must match sentinel"
+    );
+    assert_eq!(
+        ltoc.content, sentinel_mtc.content,
+        "content must match sentinel"
+    );
+    assert_eq!(
+        ltoc.truncated, sentinel_mtc.truncated,
+        "truncated must match sentinel"
+    );
+
+    assert_eq!(
+        app.pending_model_tool_request,
+        Some(sentinel_mtr),
+        "pending_model_tool_request must still equal the sentinel after native tool output"
+    );
+}
+
+// --- Test (d): pending_manual_tool_context one-shot .take() ------------------
+// If pending_manual_tool_context is set before a turn it is consumed by
+// submit() via .take() and is NOT replaced by the native tool result.
+
+#[test]
+fn submit_consumes_pending_manual_tool_context_via_take_and_does_not_replace_it() {
+    let mut app = App::new();
+
+    // Set a pending manual context before the turn.
+    let pre_context =
+        ManualToolContext::from_read_file("pre-manual.txt", "pre-manual content for context");
+    app.pending_manual_tool_context = Some(pre_context);
+
+    // Run a plain user-message turn through submit() (Mock gateway: no native tool).
+    app.input = "hello".to_string();
+    app.submit();
+
+    // The one-shot .take() must have consumed the context; nothing replaced it.
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must be None after submit() consumed it"
+    );
+}
+
+// --- Test (e): attach-last-tool after native turn uses the sentinel -----------
+// /context attach-last-tool must attach the most recent MANUAL /tool output
+// (last_tool_output_candidate), not the native tool result.
+
+#[test]
+fn attach_last_tool_after_native_output_attaches_manual_sentinel_not_native_result() {
+    let mut app = App::new();
+
+    // Plant the sentinel as the most-recent manual tool output candidate.
+    let sentinel =
+        ManualToolContext::from_read_file("manual-sentinel.txt", "manual sentinel content");
+    app.last_tool_output_candidate = Some(sentinel.clone());
+
+    // Process native tool output — this must NOT overwrite last_tool_output_candidate.
+    let output = make_succeeded_output("native.txt");
+    app.push_run_output_to_log(&output);
+
+    // The sentinel must still be in last_tool_output_candidate.
+    let candidate_after = app
+        .last_tool_output_candidate
+        .as_ref()
+        .expect("last_tool_output_candidate must still be Some after native tool output");
+    assert_eq!(
+        candidate_after.source, sentinel.source,
+        "last_tool_output_candidate source must equal sentinel"
+    );
+
+    // /context attach-last-tool must attach the sentinel, not the native result.
+    app.input = "/context attach-last-tool".to_string();
+    app.submit();
+
+    let attached = app
+        .pending_manual_tool_context
+        .as_ref()
+        .expect("pending_manual_tool_context must be Some after attach-last-tool");
+    assert_eq!(
+        attached.source, sentinel.source,
+        "attached context source must equal the manual sentinel, not native result"
+    );
+    assert_eq!(
+        attached.content, sentinel.content,
+        "attached context content must equal the manual sentinel"
     );
 }

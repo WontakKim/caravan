@@ -165,15 +165,38 @@ impl App {
                     pending_context.as_ref(),
                     Some(&project_memory),
                 );
-                self.log.push(format!("User: {}", output.user_message));
-                if !output.assistant_response.is_empty() {
-                    self.log
-                        .push(format!("Assistant: {}", output.assistant_response));
-                }
+                self.push_run_output_to_log(&output);
             }
         }
 
         self.input.clear();
+    }
+
+    /// Pushes `User:`, optional native tool activity (`Tool:` / `Tool completed:` or
+    /// `Tool failed:`), and `Assistant:` lines from a completed run turn to the
+    /// screen log.  This method MUST NOT touch `last_tool_output_candidate`,
+    /// `pending_manual_tool_context`, or `pending_model_tool_request`; those
+    /// fields are owned exclusively by the manual `/tool` + `/context` command
+    /// flow.
+    fn push_run_output_to_log(&mut self, output: &kernel::runner::MockRunOutput) {
+        self.log.push(format!("User: {}", output.user_message));
+        if let Some(activity) = &output.tool_activity {
+            self.log
+                .push(format!("Tool: {} {}", activity.name, activity.path));
+            if activity.succeeded {
+                self.log.push(format!(
+                    "Tool completed: {} {}",
+                    activity.name, activity.path
+                ));
+            } else {
+                self.log
+                    .push(format!("Tool failed: {} {}", activity.name, activity.path));
+            }
+        }
+        if !output.assistant_response.is_empty() {
+            self.log
+                .push(format!("Assistant: {}", output.assistant_response));
+        }
     }
 
     pub fn help_lines() -> Vec<String> {
