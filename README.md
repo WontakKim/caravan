@@ -1254,12 +1254,15 @@ error, not a policy denial.
 
 ### What Does NOT Emit `ToolPolicy`
 
-- **`ModelToolRequest` parser (dormant/experimental)** — the `CARAVAN_TOOL_REQUEST`
-  block parser is an experimental harness layer that is **not connected to the
-  default runtime**. When the parser is exercised (e.g. in tests or via the
+- **`ModelToolRequest` parser (dormant/experimental)** — the dormant text-protocol
+  parser (`model/tool_request.rs`) is an experimental harness layer that is **not
+  connected to the default runtime**. When exercised (e.g. in tests or via the
   experimental `/request` seam), it records only a `ModelToolRequest` event; no
   tool is executed and no `ToolPolicy` event is emitted. Under normal assistant
-  turns the parser is not invoked, so no `ModelToolRequest` event is produced either.
+  turns the parser is not invoked, so no `ModelToolRequest` event is produced.
+  Native tool calls (via the API `tools` field) bypass this parser entirely and go
+  through the runner's native round trip — see
+  [Native Read-only Tool Calling](#native-read-only-tool-calling).
 - **The basic mock flow** — plain text submitted to the mock runner produces
   the standard `UserMessage → RunCreate → … → RunComplete` sequence with no
   `ToolPolicy` event, because no tool is executed.
@@ -1683,164 +1686,89 @@ tool (name, slash command, risk, description, and inputs).
 > experimentation and is not wired into the `compile_prompt_with_context` path
 > used by the standard Run/Turn flow.
 
-### No Automatic Tool Calling
+### Tool Execution Paths
 
-All tool execution is manual:
+**Manual path** — slash commands run tools directly:
 
 1. Run `/tool list [path]` or `/tool read <path>` to execute a read-only tool.
 2. Run `/context attach-last-tool` to stage the tool output as pending prompt context.
 3. Submit your next plain-text message — the tool output is injected into the
    `Workspace Context:` section of the compiled prompt for that turn only.
 
-Automatic or model-driven tool calling is explicitly out of scope for this POC.
+**Native path** — when a real model adapter is active, the model may call
+`list_files` or `read_file` natively via the API `tools` field; the runner
+handles the round trip automatically (see
+[Native Read-only Tool Calling](#native-read-only-tool-calling)).
 
-## Model Tool Request Detection (Detect-Only)
+Note: `ToolCatalog::render_prompt_section()` (the plain-text schema block
+generator) is experimental-harness-only and is **not** wired into the default
+prompt. The native path uses `readonly_model_definitions()` instead, which
+emits provider-neutral JSON Schema tool definitions.
 
-> **Status: Dormant / Experimental — disabled in the default runtime.**
-> The `CARAVAN_TOOL_REQUEST` parser and the `/request` commands described in this
-> section are an experimental harness layer. They are **not connected to the
-> default runtime** and are not invoked during normal assistant turns. The default
-> workflow is entirely `/tool read` / `/tool list` centered (see
-> [Tool Commands](#tool-commands)). This section is retained for reference while
-> the detection seam is dormant.
+## Native Read-only Tool Calling
 
-The experimental parser can recognise a `CARAVAN_TOOL_REQUEST` block embedded in
-a response string and, when exercised (e.g. in tests or through the internal
-`/request` seam), record a `ModelToolRequest` event in the Event Log. This is a
-**detect-only** mechanism — Caravan does **not** execute the requested tool
-automatically, and the parser is **not** wired into the live assistant response
-path.
+When a real model adapter is active, Caravan delivers the `list_files` and
+`read_file` tool schemas to the model via the API `tools` field on each turn.
+If the model responds with a native tool call, the runner executes the tool once
+and makes a second model call so the model can incorporate the result — then the
+turn completes. This is distinct from the manual `/tool` commands, which execute
+tools directly on user request.
 
-### `CARAVAN_TOOL_REQUEST` Block Format
+### Round-trip bound
 
-The block format below describes what the dormant parser recognises. The
-delimiter lines must appear as bare text — no angle brackets or other
-decoration — and keys use `=` as the separator.
+The native round trip is **bounded to at most 2 model calls and 1 tool
+execution** per user message:
 
-**`read_file` example:**
+1. **First model call** — `ModelGateway::complete_step` is called with the
+   compiled prompt and the read-only tool definitions (`list_files`, `read_file`).
+   The model returns either a direct `Assistant` response (turn ends, 0 tools
+   executed) or a `ToolCall` step (proceed to step 2).
+2. **Tool execution** — the runner validates the call via
+   `model_tool_call_to_request` (in `crates/kernel/src/model/tool_use.rs`),
+   executes the tool through `ToolEventRunner`, and formats the result with
+   `format_tool_output_for_model` (capped at 16 KiB). Standard
+   `ToolPolicy → ToolCall → ToolResult|ToolError` events are recorded.
+3. **Second model call** — `complete_step` is called again with the tool result
+   as the prior exchange and **no tools** so the model cannot request another
+   tool. The model produces a final `Assistant` response.
+4. If the second call returns another tool call, the runner rejects it with a
+   hard error (`RunFail`) — at most one native tool call per turn.
 
-```
-CARAVAN_TOOL_REQUEST
-tool=read_file
-path=README.md
-END_CARAVAN_TOOL_REQUEST
-```
+### Scope
 
-**`list_files` example:**
+- **Read-only only:** only `list_files` and `read_file` are exposed natively; no
+  write, shell, delete, or network tools exist on this path.
+- **No approval flow:** read-only tools are auto-allowed by `ToolPolicyEngine`;
+  no `ApprovalRequest` event is emitted on the native path.
+- **No agent loop:** `complete_step` is called at most twice per turn regardless
+  of what the model requests.
+- **Mock adapter:** `MockModelAdapter` always returns an `Assistant` response and
+  never issues a native tool call, so the default mock flow (`provider=mock`) is
+  unchanged — 1 model call, 0 tool executions.
 
-```
-CARAVAN_TOOL_REQUEST
-tool=list_files
-path=.
-END_CARAVAN_TOOL_REQUEST
-```
+### Relationship to manual `/tool` commands
 
-When the experimental parser is explicitly exercised and a block matching these
-markers is present, it records a `ModelToolRequest` event whose detail carries
-the detected block contents. Under default runtime conditions the parser is never
-called, so no `ModelToolRequest` event is produced from assistant responses.
+The native path and the manual `/tool read` / `/tool list` commands are
+**independent**. Both execute tools through the same `ToolRegistry` and record
+the same `ToolPolicy → ToolCall → ToolResult|ToolError` event sequence.
+The difference is who initiates the call:
 
-### What Detection Does NOT Do
+| Path | Initiator | Trigger |
+|------|-----------|---------|
+| Manual | User slash command (`/tool read`, `/tool list`) | Explicit user input |
+| Native | Model (via API `tools` field) | Model chooses to call a tool in its response |
 
-The experimental detect-only parser does **not**:
+`/context attach-last-tool` applies only to the manual path — it stages the most
+recent slash-command tool output. Native tool results are fed directly back to
+the model in the second `complete_step` call and do not populate the manual
+workspace context.
 
-- Execute the named tool.
-- Produce a `ToolCall`, `ToolResult`, or `ToolError` event — those events are
-  emitted only when the user explicitly runs a `/tool` command.
+### Dormant compatibility layer
 
-The `ModelToolRequest` event is a trace only. No tool runs, no output is
-produced, and the prompt for the next turn is unaffected.
-
-### Standard Manual Flow (Default Runtime)
-
-The standard way to run a tool is always a direct slash command — regardless of
-what the assistant response suggests:
-
-1. Run `/tool read <path>` or `/tool list [path]` directly.
-2. Run `/context attach-last-tool` to stage the tool output as pending context.
-3. Submit your next plain-text message — the tool output is injected into the
-   `Workspace Context:` section of the compiled prompt for that turn only.
-
-The assistant may suggest a tool in its prose response; you still run the command
-manually. There is no automatic execution in the default runtime.
-
-### `/request` Commands (Experimental — Dormant)
-
-The `/request` commands below are part of the dormant experimental seam. They
-are available in the binary but are **not connected to the default runtime** —
-no ordinary assistant turn populates the pending request state they operate on.
-
-#### `/request status`
-
-Shows the currently pending model tool request (if any was set via the
-experimental seam). The output includes:
-
-- The suggested `/tool` command to run (e.g. `/tool read <path>` or
-  `/tool list <path>`).
-- A reminder to run `/context attach-last-tool` as the next step after the tool
-  command completes.
-
-`/request status` is **read-only** — it does not run the model, does not execute
-any tool, and does not modify the pending state.
-
-#### `/request run`
-
-Explicitly executes the pending model tool request as a read-only tool. Because
-the default runtime does not populate the pending request, this command will
-typically report `No pending model tool request.` in normal operation. It is
-retained for experimental use.
-
-**Success path** — when a pending request exists and the tool executes without
-error:
-
-1. A `SlashCommand` event is recorded for the `/request run` command.
-2. A `ToolCall` event is appended immediately before the tool runs, carrying the
-   tool name and input arguments.
-3. A `ToolResult` event is appended after a successful execution, carrying a
-   summary of the output (never the full file content).
-4. A preview of the tool output is shown in the screen log.
-5. The manual tool output candidate is updated so that a subsequent
-   `/context attach-last-tool` picks up this result.
-6. The pending model tool request is cleared (observable via `/request status`).
-7. A prompt to run `/context attach-last-tool` is shown in the screen log.
-
-**Failure path** — when the tool executes but returns an error:
-
-1. A `SlashCommand` event is recorded.
-2. A `ToolCall` event is appended.
-3. A `ToolError` event is appended, carrying the tool name and error detail.
-4. The pending model tool request is **kept** — the request remains pending so
-   you can correct the problem and retry.
-
-**No-pending path** — when no request is currently pending:
-
-- The message `No pending model tool request.` is shown in the screen log.
-- No tool is run, no model is called, and no event is appended beyond the
-  `SlashCommand` event for `/request run`.
-
-#### `/request clear`
-
-Removes the pending model tool request. After `/request clear`, `/request status`
-reports that no request is pending.
-
-`/request clear` is **read-only** — it does not run the model and does not execute
-any tool.
-
-#### Behavior Contract (Experimental Seam)
-
-The following invariants apply to the pending model tool request state when the
-experimental seam is active:
-
-- A detected `ModelToolRequest` replaces any previously pending request — there
-  is at most one pending request at a time.
-- The pending request is **not** executed automatically; Caravan never runs a
-  tool on behalf of the model.
-- A plain model response does **not** clear the pending request — it remains
-  pending until explicitly cleared via `/request clear`.
-- A successful `/tool` command does **not** auto-clear the pending request — you
-  must run `/request clear` explicitly when you are done with it.
-- The pending state is **in-memory only** — it is not persisted to
-  `.caravan/events.jsonl` and is not restored across restarts.
+The text-protocol parser in `crates/kernel/src/model/tool_request.rs` and the
+`/request` / `/approval` write-preview commands remain a dormant compatibility
+layer. They are not invoked during a normal turn and are not connected to the
+native path described above.
 
 ## Manual Verification
 

@@ -42,6 +42,15 @@ default UX surface: they observe the filesystem without mutating it.
 | `/tool list [path]` | List files under the workspace root (or a sub-path); read-only. On success, automatically attaches the bounded listing as the next message's Workspace Context (one-shot). |
 | `/tool read <path>` | Read a UTF-8 text file under the workspace root; read-only. On success, automatically attaches the bounded file content as the next message's Workspace Context (one-shot). |
 
+> **Manual path vs. native path:** `/tool list` and `/tool read` are the *manual*
+> path — they execute a tool on direct user request and stage the result as
+> Workspace Context for the next prompt. When a real model adapter is active, the
+> model may also call `list_files` / `read_file` *natively* via the API `tools`
+> field (at most 1 tool call per turn, bounded to 2 model calls total); that result
+> is fed directly back to the model and does **not** populate the manual Workspace
+> Context. `/context attach-last-tool` applies only to the manual path.
+> See the README "Native Read-only Tool Calling" section for details.
+
 > **Sensitive-file warning:** A successful `/tool read` or `/tool list` automatically
 > includes the bounded output in the next prompt sent to the model. Do **not** use
 > these commands on sensitive files or directories — such as private keys,

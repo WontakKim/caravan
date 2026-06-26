@@ -31,8 +31,9 @@ routes requests through a model gateway, and exposes read-only workspace tools.
 | **Project Memory** | `crates/kernel/src/project_memory.rs` | Loads `CLAUDE.md` from the workspace root at session start and exposes it as `ProjectMemory`. The content is injected into the compiled prompt so the assistant has persistent project context across turns. If no `CLAUDE.md` is present, a "not found" fallback is used. Capped at 32 KiB; truncation is flagged. |
 | **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Workspace Context / Operating Rules / Output` sections from `ProjectMemory`, `ConversationTranscript`, and (when attached — automatically by a successful `/tool read`/`/tool list`, or explicitly via `/context attach-last-tool`) `ManualToolContext`. The default prompt does not include an "Available Tools" section; tool/approval/write behavior belongs to the experimental harness layer and is not advertised in the baseline prompt. |
 | **Conversation transcript** | `crates/kernel/src/transcript.rs` | Read-only projection of `UserMessage` and `AssistantMessage` events; feeds the `Conversation:` prompt section for in-session history. |
-| **Model gateway** | `crates/kernel/src/model/gateway.rs` | Routes a compiled `ModelRequest` to the correct provider adapter (`ModelGateway`), returns a `ModelResponse`, and records `ModelRoute` / `ModelUsage` events. Knows nothing about tools or the prompt structure. |
-| **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; submits the compiled prompt to `ModelGateway` and appends result events. |
+| **Model gateway** | `crates/kernel/src/model/gateway.rs` | Routes a compiled `ModelRequest` to the correct provider adapter via `complete_step` (accepts tool definitions and an optional prior tool exchange; returns `ModelStepOutput::Assistant` or `ModelStepOutput::ToolCall`), records `ModelRoute` / `ModelUsage` events. |
+| **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; calls `ModelGateway::complete_step` with the read-only tool definitions (T-10 prompt rule). If the first call returns a native tool call, executes the tool once and makes a second `complete_step` call with the result — bounded to **at most 2 model calls and 1 tool execution** per turn; no agent loop. |
+| **Native tool types** | `crates/kernel/src/model/tool_use.rs` | Provider-neutral native tool types: `ModelStepRequest`, `ModelStepOutput` (`Assistant`\|`ToolCall`), `ModelToolDefinition`, `ModelToolCall`, `ModelToolResult`, `ModelToolExchange`. Includes `model_tool_call_to_request` (validator — treats model arguments as untrusted) and `format_tool_output_for_model` / `format_tool_error_for_model` (result formatters, capped at 16 KiB). |
 | **Read-only workspace tools** | `crates/kernel/src/tool/registry.rs`, `crates/tui/src/app/tools.rs` | `/tool list` enumerates registered tools; `/tool read <path>` reads a file from the workspace. Both are read-only and auto-allowed without an approval step. These are the only tool commands that belong to the baseline surface. |
 | **Storage / event log** | `crates/kernel/src/storage.rs`, `events/` | Append-only JSONL persistence; replays across restarts. |
 
@@ -106,14 +107,15 @@ crates/kernel/src/
 ├── model/               # Model family (canonical home; top-level model_* are facades into here)
 │   ├── mod.rs           # ModelAdapter trait + ModelRequest/Output/Error/Usage (core); submodule decls + root re-exports
 │   ├── config.rs        # ModelConfig / ModelProfile (static configuration)
-│   ├── gateway.rs       # ModelGateway / ModelResponse / ModelRoute (routing logic)
+│   ├── gateway.rs       # ModelGateway / ModelResponse / ModelRoute (routing logic); complete_step — accepts ModelStepRequest (prompt + tool definitions + optional prior tool exchange) and returns ModelStepResponse (route + ModelStepOutput::Assistant|ToolCall)
 │   ├── gateway/         # gateway submodule
 │   │   └── tests.rs     # Unit tests
-│   ├── registry.rs      # Adapter registry: maps ModelAdapterKind → ModelAdapter impl
+│   ├── registry.rs      # Adapter registry: maps ModelAdapterKind → ModelAdapter impl; complete_step selects the adapter and delegates
 │   ├── runtime_config.rs    # ModelRuntimeConfig loaded from process environment
 │   ├── runtime_config/      # runtime_config submodule
 │   │   └── tests.rs         # Unit tests
 │   ├── tool_request.rs  # ModelToolRequest parser — dormant experimental harness module; parses tool-call blocks from model output but is not connected to the default runtime path and is not invoked during a normal baseline session
+│   ├── tool_use.rs      # Provider-neutral native tool types (ModelStepRequest, ModelStepOutput, ModelToolDefinition, ModelToolCall, ModelToolResult, ModelToolExchange); model_tool_call_to_request validator; format_tool_output_for_model / format_tool_error_for_model formatters. Wired into the runner for the single native tool round trip; complete_step on ModelAdapter (default impl delegates to complete), registry, and gateway is the entry point for the native path.
 │   ├── types.rs         # ModelAdapterKind / ModelProvider enums
 │   └── openai/          # OpenAI-compatible HTTP adapter
 │       ├── mod.rs
@@ -290,9 +292,21 @@ constraints are enforced:
   the prompt text placed in the `ModelRequest`. The experimental `ToolCatalog`
   prompt section (`tool::schema`) is no longer part of the default prompt. It does
   not touch the event log.
+- **Native tool round trip** (`model/tool_use.rs` + `runner.rs`): On each turn
+  the runner passes `ToolCatalog::readonly().readonly_model_definitions()` to
+  `ModelGateway::complete_step`. If the first call returns
+  `ModelStepOutput::ToolCall`, the runner validates the call via
+  `model_tool_call_to_request`, executes the tool through `ToolEventRunner`, and
+  issues a second `complete_step` with the result and **no tools** so the model
+  produces a final `Assistant` response. The round trip is bounded: **at most
+  2 model calls and 1 tool execution** per turn; a second tool call from the model
+  is rejected. Only the two read-only tools (`list_files`, `read_file`) are
+  exposed on this path — no write, shell, or approval flow. The dormant text
+  protocol (`model/tool_request.rs`) and the `/request` / write-preview layers
+  are not connected to this path.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a
-  `ModelRequest` and returns `ModelOutput`. It has no knowledge of tools,
-  prompts, or the event log.
+  `ModelStepRequest` (via `complete_step`) and returns `ModelStepOutput`. It has
+  no knowledge of prompts or the event log.
 - **Tool (`tool/`)** owns the harness: schema, registry, policy, and event
   runner. It records `ToolPolicy` / `ApprovalRequest` / `ToolCall` /
   `ToolResult` / `ToolError` events but does not interact with the model layer
