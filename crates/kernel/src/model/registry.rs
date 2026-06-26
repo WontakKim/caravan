@@ -4,6 +4,7 @@ use crate::model::openai::config::OpenAICompatibleConfig;
 use crate::model::openai::http::{
     BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, StubOpenAIHttpClient,
 };
+use crate::model::tool_use::{ModelStepOutput, ModelStepRequest};
 use crate::model::types::ModelAdapterKind;
 use crate::model::{
     MockModelAdapter, ModelAdapter, ModelAdapterContext, ModelError, ModelOutput, ModelRequest,
@@ -73,6 +74,24 @@ impl ModelAdapterRegistry {
             }
         }
     }
+
+    pub fn complete_step(
+        &self,
+        profile: &ModelProfile,
+        request: &ModelStepRequest,
+    ) -> Result<ModelStepOutput, ModelError> {
+        let context = ModelAdapterContext {
+            provider: profile.provider,
+            model: profile.model.clone(),
+            adapter: profile.adapter,
+        };
+        match profile.adapter {
+            ModelAdapterKind::MockModelAdapter => self.mock.complete_step(&context, request),
+            ModelAdapterKind::OpenAICompatibleAdapter => {
+                self.openai_compatible.complete_step(&context, request)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -81,7 +100,11 @@ mod tests {
     use crate::model::config::ModelConfig;
     use crate::model::openai::http::OpenAIHttpResult;
     use crate::model::openai::request::OpenAIRequestPlan;
-    use crate::model::openai::types::{OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse};
+    use crate::model::openai::types::{
+        OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIToolCall,
+        OpenAIToolCallFunction,
+    };
+    use crate::model::tool_use::{ModelStepRequest, ModelToolDefinition};
     use crate::model::types::ModelProvider;
 
     struct FakeSuccessClient;
@@ -97,6 +120,34 @@ mod tests {
                         role: "assistant".to_string(),
                         content: Some("Hello from fake OpenAI".to_string()),
                         tool_calls: None,
+                        tool_call_id: None,
+                    },
+                }],
+                usage: None,
+            })
+        }
+    }
+
+    struct FakeToolCallClient;
+
+    impl OpenAIHttpClient for FakeToolCallClient {
+        fn send_chat_completion(
+            &self,
+            _plan: &OpenAIRequestPlan,
+        ) -> OpenAIHttpResult<OpenAIChatResponse> {
+            Ok(OpenAIChatResponse {
+                choices: vec![OpenAIChatChoice {
+                    message: OpenAIChatMessage {
+                        role: "assistant".to_string(),
+                        content: None,
+                        tool_calls: Some(vec![OpenAIToolCall {
+                            id: "call-99".to_string(),
+                            kind: "function".to_string(),
+                            function: OpenAIToolCallFunction {
+                                name: "list_files".to_string(),
+                                arguments: r#"{"path":"."}"#.to_string(),
+                            },
+                        }]),
                         tool_call_id: None,
                     },
                 }],
@@ -248,6 +299,57 @@ mod tests {
                 ),
                 "unexpected message: {message}"
             );
+        }
+    }
+
+    fn make_step_request(user_message: &str) -> ModelStepRequest {
+        ModelStepRequest {
+            request: ModelRequest {
+                prompt: "any".into(),
+                user_message: user_message.into(),
+            },
+            tools: vec![ModelToolDefinition {
+                name: "list_files".into(),
+                description: "List files in a directory".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }],
+            prior_tool_exchange: None,
+        }
+    }
+
+    #[test]
+    fn complete_step_mock_profile_returns_assistant_output() {
+        let registry = ModelAdapterRegistry::default();
+        let profile = ModelConfig::default().active_profile;
+        let step = make_step_request("hello caravan");
+        let output = registry.complete_step(&profile, &step).unwrap();
+        match output {
+            ModelStepOutput::Assistant(o) => {
+                assert_eq!(o.response, "Mock response for: hello caravan");
+            }
+            ModelStepOutput::ToolCall { .. } => panic!("expected Assistant variant"),
+        }
+    }
+
+    #[test]
+    fn complete_step_with_fake_tool_call_client_returns_tool_call_output() {
+        let registry = ModelAdapterRegistry::with_openai_http_client(
+            OpenAICompatibleConfig::default(),
+            Box::new(FakeToolCallClient),
+        );
+        let profile = ModelProfile {
+            provider: ModelProvider::OpenAI,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        };
+        let step = make_step_request("list my files");
+        let output = registry.complete_step(&profile, &step).unwrap();
+        match output {
+            ModelStepOutput::ToolCall { call, .. } => {
+                assert_eq!(call.id, "call-99");
+                assert_eq!(call.name, "list_files");
+            }
+            ModelStepOutput::Assistant(_) => panic!("expected ToolCall variant"),
         }
     }
 }

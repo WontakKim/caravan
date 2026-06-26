@@ -32,7 +32,7 @@ pub use commands::{
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
 pub use model::config::{ModelConfig, ModelProfile};
-pub use model::gateway::{ModelGateway, ModelResponse, ModelRoute};
+pub use model::gateway::{ModelGateway, ModelResponse, ModelRoute, ModelStepResponse};
 pub use model::openai::http::{
     BlockingOpenAIHttpClient, OpenAIHttpClient, OpenAIHttpClientKind, OpenAIHttpError,
     OpenAIHttpResult, StubOpenAIHttpClient,

@@ -5,6 +5,7 @@ use crate::model::openai::config::OpenAICompatibleConfig;
 use crate::model::openai::http::OpenAIHttpClient;
 use crate::model::registry::ModelAdapterRegistry;
 use crate::model::runtime_config::ModelRuntimeConfig;
+use crate::model::tool_use::{ModelStepOutput, ModelStepRequest};
 use crate::model::types::{ModelAdapterKind, ModelProvider};
 use crate::model::{ModelError, ModelRequest, ModelUsage};
 
@@ -30,6 +31,11 @@ pub struct ModelResponse {
     pub assistant_response: String,
     pub chunks: Vec<String>,
     pub usage: Option<ModelUsage>,
+}
+
+pub struct ModelStepResponse {
+    pub route: ModelRoute,
+    pub output: ModelStepOutput,
 }
 
 pub struct ModelGateway {
@@ -107,6 +113,29 @@ impl ModelGateway {
                 assistant_response: output.response,
                 chunks: output.chunks,
                 usage: output.usage,
+            }),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn complete_step(
+        &self,
+        request: ModelStepRequest,
+    ) -> Result<ModelStepResponse, ModelError> {
+        #[cfg(test)]
+        if let Some(ref err) = self.forced_error {
+            return Err(err.clone());
+        }
+
+        let profile = &self.config.active_profile;
+        match self.registry.complete_step(profile, &request) {
+            Ok(output) => Ok(ModelStepResponse {
+                route: ModelRoute {
+                    provider: profile.provider,
+                    model: profile.model.clone(),
+                    adapter: profile.adapter,
+                },
+                output,
             }),
             Err(e) => Err(e),
         }

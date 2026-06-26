@@ -3,8 +3,10 @@ use crate::model::config::ModelProfile;
 use crate::model::openai::http::{OpenAIHttpClientKind, OpenAIHttpResult};
 use crate::model::openai::request::OpenAIRequestPlan;
 use crate::model::openai::types::{
-    OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIUsage,
+    OpenAIChatChoice, OpenAIChatMessage, OpenAIChatResponse, OpenAIToolCall,
+    OpenAIToolCallFunction, OpenAIUsage,
 };
+use crate::model::tool_use::{ModelStepOutput, ModelStepRequest, ModelToolDefinition};
 
 #[test]
 fn complete_openai_profile_returns_adapter_failure() {
@@ -369,4 +371,102 @@ fn default_gateway_usage_is_none() {
     );
     assert_eq!(response.assistant_response, "Mock response for: ");
     assert!(response.usage.is_none());
+}
+
+// --- complete_step tests ---
+
+fn make_step_request(user_message: &str) -> ModelStepRequest {
+    ModelStepRequest {
+        request: ModelRequest {
+            prompt: "any".into(),
+            user_message: user_message.into(),
+        },
+        tools: vec![ModelToolDefinition {
+            name: "list_files".into(),
+            description: "List files in a directory".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+        }],
+        prior_tool_exchange: None,
+    }
+}
+
+#[test]
+fn complete_step_default_gateway_returns_assistant_output_and_mock_route() {
+    let response = ModelGateway::default()
+        .complete_step(make_step_request("hello caravan"))
+        .unwrap();
+    assert_eq!(
+        response.route.detail(),
+        "provider=mock model=mock-model adapter=MockModelAdapter"
+    );
+    match response.output {
+        ModelStepOutput::Assistant(o) => {
+            assert_eq!(o.response, "Mock response for: hello caravan");
+        }
+        ModelStepOutput::ToolCall { .. } => panic!("expected Assistant variant"),
+    }
+}
+
+struct FakeStepToolCallClient;
+
+impl OpenAIHttpClient for FakeStepToolCallClient {
+    fn send_chat_completion(
+        &self,
+        _plan: &OpenAIRequestPlan,
+    ) -> OpenAIHttpResult<OpenAIChatResponse> {
+        Ok(OpenAIChatResponse {
+            choices: vec![OpenAIChatChoice {
+                message: OpenAIChatMessage {
+                    role: "assistant".to_string(),
+                    content: None,
+                    tool_calls: Some(vec![OpenAIToolCall {
+                        id: "call-42".to_string(),
+                        kind: "function".to_string(),
+                        function: OpenAIToolCallFunction {
+                            name: "list_files".to_string(),
+                            arguments: r#"{"path":"."}"#.to_string(),
+                        },
+                    }]),
+                    tool_call_id: None,
+                },
+            }],
+            usage: None,
+        })
+    }
+}
+
+#[test]
+fn complete_step_with_fake_tool_call_client_returns_tool_call_output() {
+    let config = ModelConfig {
+        active_profile: ModelProfile {
+            provider: ModelProvider::OpenAI,
+            model: "gpt-4o".into(),
+            adapter: ModelAdapterKind::OpenAICompatibleAdapter,
+        },
+    };
+    let gateway =
+        ModelGateway::with_openai_http_client_for_test(config, Box::new(FakeStepToolCallClient));
+    let response = gateway
+        .complete_step(make_step_request("list my files"))
+        .unwrap();
+    match response.output {
+        ModelStepOutput::ToolCall { call, .. } => {
+            assert_eq!(call.id, "call-42");
+            assert_eq!(call.name, "list_files");
+        }
+        ModelStepOutput::Assistant(_) => panic!("expected ToolCall variant"),
+    }
+}
+
+#[test]
+fn complete_step_forced_error_returns_that_error() {
+    let err = ModelError::AdapterFailure {
+        message: "forced test error".into(),
+    };
+    let gateway = ModelGateway::failing_for_test(err.clone());
+    let result = gateway.complete_step(make_step_request("hello"));
+    match result {
+        Err(e) => assert_eq!(e, err),
+        Ok(_) => panic!("expected Err but got Ok"),
+    }
 }
