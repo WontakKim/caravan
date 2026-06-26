@@ -89,12 +89,7 @@ pub(super) fn search_workspace(
 ///
 /// Returns `true` when the collection limit (`SEARCH_MAX_MATCHES + 1`) has
 /// been reached and the caller should stop immediately.
-fn walk_dir(
-    dir: &Path,
-    canonical_root: &Path,
-    query: &str,
-    out: &mut Vec<SearchMatch>,
-) -> bool {
+fn walk_dir(dir: &Path, canonical_root: &Path, query: &str, out: &mut Vec<SearchMatch>) -> bool {
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return false,
@@ -407,7 +402,9 @@ mod tests {
     fn search_file_larger_than_max_bytes_is_skipped() {
         let dir = TempDir::new();
         // File strictly larger than SEARCH_MAX_FILE_BYTES → skipped.
-        let oversized = "NEEDLE".as_bytes().iter()
+        let oversized = "NEEDLE"
+            .as_bytes()
+            .iter()
             .chain(b" ".repeat(SEARCH_MAX_FILE_BYTES as usize - 5).iter())
             .copied()
             .collect::<Vec<u8>>();
@@ -456,7 +453,11 @@ mod tests {
 
         let text = &result.matches[0].text;
         // Must be valid UTF-8 (no panic on creation) and shorter than the original.
-        assert!(text.len() <= SEARCH_MAX_LINE_CHARS, "text.len()={}", text.len());
+        assert!(
+            text.len() <= SEARCH_MAX_LINE_CHARS,
+            "text.len()={}",
+            text.len()
+        );
         // Exact expected value: 79 "あ" + "ab"
         let expected = "あ".repeat(79) + "ab";
         assert_eq!(text, &expected);
