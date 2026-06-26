@@ -66,6 +66,10 @@ static HELP_SECTIONS: &[HelpSection] = &[
                 command: "/tool read <path>",
                 description: "read a UTF-8 text file under the workspace",
             },
+            CommandHelpEntry {
+                command: "/tool search <query>",
+                description: "search for a string across workspace files",
+            },
         ],
     },
     HelpSection {
