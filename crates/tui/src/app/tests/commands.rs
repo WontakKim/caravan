@@ -128,6 +128,7 @@ fn help_lines_exact_content() {
         "  Basic workspace tools:".to_string(),
         "    /tool list [path] - list files under the workspace".to_string(),
         "    /tool read <path> - read a UTF-8 text file under the workspace".to_string(),
+        "    /tool search <query> - search for a string across workspace files".to_string(),
     ];
     assert_eq!(App::help_lines(), expected);
 }

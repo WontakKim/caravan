@@ -2042,12 +2042,7 @@ fn native_tool_dormant_text_protocol_stays_plain_assistant_turn() {
 fn native_tool_search_text_one_call_round_trip_event_order() {
     let workspace = make_temp_workspace("notes.txt", "TODO: fix this later");
     let client = Arc::new(QueuedFakeClient::new(vec![
-        tool_call_resp(
-            "search_text",
-            "call-st1",
-            r#"{"query":"TODO"}"#,
-            None,
-        ),
+        tool_call_resp("search_text", "call-st1", r#"{"query":"TODO"}"#, None),
         assistant_resp("I found the TODO comment.", None),
     ]));
     let gateway = ModelGateway::with_openai_http_client_for_test(
@@ -2082,7 +2077,10 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
         .iter()
         .rposition(|&k| k == EventKind::ModelRoute)
         .unwrap();
-    assert!(second_route_idx > 4, "second ModelRoute must be after first");
+    assert!(
+        second_route_idx > 4,
+        "second ModelRoute must be after first"
+    );
 
     let run_complete_idx = kinds
         .iter()
@@ -2099,7 +2097,10 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
 
     // Exactly TWO ModelRoute events.
     assert_eq!(
-        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
         2,
         "exactly two ModelRoute events"
     );
@@ -2120,7 +2121,10 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
     );
 
     // No RunFail.
-    assert!(!kinds.contains(&EventKind::RunFail), "no RunFail on success");
+    assert!(
+        !kinds.contains(&EventKind::RunFail),
+        "no RunFail on success"
+    );
 
     // tool_activity is Some and succeeded.
     let activity = output.tool_activity.expect("tool_activity must be Some");
@@ -2136,12 +2140,7 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
 fn native_tool_search_text_second_tool_call_not_supported() {
     let workspace = make_temp_workspace("data.txt", "some content");
     let client = Arc::new(QueuedFakeClient::new(vec![
-        tool_call_resp(
-            "search_text",
-            "call-st2a",
-            r#"{"query":"content"}"#,
-            None,
-        ),
+        tool_call_resp("search_text", "call-st2a", r#"{"query":"content"}"#, None),
         // Second response is another tool call — must be rejected.
         tool_call_resp("list_files", "call-st2b", "{}", None),
     ]));
@@ -2164,7 +2163,10 @@ fn native_tool_search_text_second_tool_call_not_supported() {
 
     // Two ModelRoute events (first tool call + second model call).
     assert_eq!(
-        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
         2,
         "two ModelRoute events"
     );
@@ -2177,7 +2179,10 @@ fn native_tool_search_text_second_tool_call_not_supported() {
     );
 
     // ModelError and RunFail must be present.
-    assert!(kinds.contains(&EventKind::ModelError), "must have ModelError");
+    assert!(
+        kinds.contains(&EventKind::ModelError),
+        "must have ModelError"
+    );
     assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
     assert!(!kinds.contains(&EventKind::RunComplete), "no RunComplete");
 

@@ -112,10 +112,9 @@ impl ToolCatalog {
             },
             ModelToolDefinition {
                 name: "search_text".to_string(),
-                description:
-                    "Searches for literal text across UTF-8 files in the workspace. \
+                description: "Searches for literal text across UTF-8 files in the workspace. \
                      Read-only. Bounded results. Non-regex."
-                        .to_string(),
+                    .to_string(),
                 input_schema: serde_json::json!({
                     "type": "object",
                     "properties": {
