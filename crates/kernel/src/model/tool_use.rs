@@ -1,4 +1,124 @@
-use crate::model::{ModelOutput, ModelRequest, ModelUsage};
+use crate::model::{ModelError, ModelOutput, ModelRequest, ModelResult, ModelUsage};
+use crate::tool::registry::{ToolError, ToolOutput, ToolRequest};
+
+/// Maximum bytes the model-facing tool result string may occupy.
+pub const MODEL_TOOL_RESULT_MAX_BYTES: usize = 16 * 1024;
+
+/// Validates a native model tool call into a [`ToolRequest`] without accessing
+/// the filesystem.
+///
+/// The model schema is guidance, not a trust boundary — arguments are treated
+/// as untrusted input and validated independently. Malformed or unsupported
+/// inputs return [`ModelError::AdapterFailure`].
+pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolRequest> {
+    let obj = call
+        .arguments
+        .as_object()
+        .ok_or_else(|| ModelError::AdapterFailure {
+            message: "malformed_tool_arguments: arguments must be a JSON object".to_string(),
+        })?;
+
+    match call.name.as_str() {
+        "list_files" => {
+            let path = match obj.get("path") {
+                None => ".".to_string(),
+                Some(serde_json::Value::String(s)) => {
+                    if s.is_empty() {
+                        ".".to_string()
+                    } else {
+                        s.clone()
+                    }
+                }
+                Some(_) => {
+                    return Err(ModelError::AdapterFailure {
+                        message: "malformed_tool_arguments: list_files path must be a string"
+                            .to_string(),
+                    });
+                }
+            };
+            Ok(ToolRequest::ListFiles { path })
+        }
+        "read_file" => {
+            let path = match obj.get("path") {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                _ => {
+                    return Err(ModelError::AdapterFailure {
+                        message: "malformed_tool_arguments: read_file requires a non-empty path"
+                            .to_string(),
+                    });
+                }
+            };
+            Ok(ToolRequest::ReadFile { path })
+        }
+        name => Err(ModelError::AdapterFailure {
+            message: format!("unsupported_model_tool: {name}"),
+        }),
+    }
+}
+
+/// Formats a [`ToolOutput`] into bounded text for the follow-up model call.
+///
+/// The result is truncated to [`MODEL_TOOL_RESULT_MAX_BYTES`] if needed,
+/// appending a `"\n... [truncated]"` suffix so the total stays within the
+/// limit.
+pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
+    let rendered = match output {
+        ToolOutput::FileList { path, entries } => {
+            format!("Directory: {}\n{}", path, entries.join("\n"))
+        }
+        ToolOutput::FileContent { path, content } => {
+            format!("File: {}\n{}", path, content)
+        }
+        ToolOutput::WritePreview { .. } => {
+            "[write preview not available on the read-only path]".to_string()
+        }
+    };
+
+    if rendered.len() <= MODEL_TOOL_RESULT_MAX_BYTES {
+        return rendered;
+    }
+
+    const SUFFIX: &str = "\n... [truncated]";
+    let keep = MODEL_TOOL_RESULT_MAX_BYTES - SUFFIX.len();
+    // Truncate on a UTF-8 char boundary.
+    let mut cut = keep;
+    while !rendered.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{}", &rendered[..cut], SUFFIX)
+}
+
+/// Formats a [`ToolError`] into a human-readable error string for the model.
+///
+/// The string always begins with `"Error: "` because the OpenAI tool message
+/// carries no machine-readable `is_error` flag — the model only sees this text.
+/// Raw OS error details and secrets are never embedded.
+pub fn format_tool_error_for_model(error: &ToolError) -> String {
+    match error {
+        ToolError::NotFound { path } => {
+            format!("Error: file or directory not found: {path}")
+        }
+        ToolError::NotAFile { path } => {
+            format!("Error: not a file: {path}")
+        }
+        ToolError::NotADirectory { path } => {
+            format!("Error: not a directory: {path}")
+        }
+        ToolError::NonUtf8 { path } => {
+            format!("Error: file is not valid UTF-8 text: {path}")
+        }
+        ToolError::TooLarge { path, max_bytes } => {
+            format!("Error: file too large (max {max_bytes} bytes): {path}")
+        }
+        ToolError::WorkspaceViolation { path } => {
+            format!("Error: path is outside the workspace: {path}")
+        }
+        ToolError::Io { .. } => "Error: I/O error while accessing the workspace.".to_string(),
+        ToolError::PolicyDenied { .. } | ToolError::ApprovalRequired { .. } => {
+            "Error: this operation is not permitted by the active safety policy.".to_string()
+        }
+    }
+}
 
 /// A tool definition passed to the model so it knows what tools are available.
 #[derive(Debug, Clone)]
@@ -184,5 +304,270 @@ mod tests {
             }
             ModelStepOutput::ToolCall { .. } => panic!("expected Assistant variant"),
         }
+    }
+
+    // --- model_tool_call_to_request tests ---
+
+    fn make_call(name: &str, arguments: serde_json::Value) -> ModelToolCall {
+        ModelToolCall {
+            id: "test-id".into(),
+            name: name.into(),
+            arguments,
+        }
+    }
+
+    #[test]
+    fn list_files_with_string_path_returns_list_files_request() {
+        let call = make_call("list_files", serde_json::json!({"path": "src/"}));
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ListFiles {
+                path: "src/".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn list_files_missing_path_defaults_to_dot() {
+        let call = make_call("list_files", serde_json::json!({}));
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ListFiles {
+                path: ".".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn list_files_empty_string_path_defaults_to_dot() {
+        let call = make_call("list_files", serde_json::json!({"path": ""}));
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ListFiles {
+                path: ".".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn list_files_present_non_string_path_returns_adapter_failure() {
+        let call = make_call("list_files", serde_json::json!({"path": 123}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn list_files_non_object_arguments_returns_adapter_failure() {
+        let call = make_call("list_files", serde_json::json!(["src/"]));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure for array arguments"
+        );
+    }
+
+    #[test]
+    fn read_file_non_object_arguments_returns_adapter_failure() {
+        let call = make_call("read_file", serde_json::json!("src/main.rs"));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure for string arguments"
+        );
+    }
+
+    #[test]
+    fn read_file_with_valid_path_returns_read_file_request() {
+        let call = make_call("read_file", serde_json::json!({"path": "Cargo.toml"}));
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ReadFile {
+                path: "Cargo.toml".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn read_file_missing_path_returns_adapter_failure() {
+        let call = make_call("read_file", serde_json::json!({}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::model::ModelError::AdapterFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn read_file_empty_path_returns_adapter_failure() {
+        let call = make_call("read_file", serde_json::json!({"path": ""}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::model::ModelError::AdapterFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn read_file_non_string_path_returns_adapter_failure() {
+        let call = make_call("read_file", serde_json::json!({"path": false}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(matches!(
+            err,
+            crate::model::ModelError::AdapterFailure { .. }
+        ));
+    }
+
+    #[test]
+    fn unsupported_tool_returns_adapter_failure() {
+        let call = make_call("shell_exec", serde_json::json!({"cmd": "ls"}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("unsupported_model_tool"),
+                    "expected unsupported_model_tool in message, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    // --- format_tool_output_for_model tests ---
+
+    #[test]
+    fn file_list_formatting_includes_directory_header_and_newline_joined_entries() {
+        let output = crate::tool::registry::ToolOutput::FileList {
+            path: "src/".to_string(),
+            entries: vec!["main.rs".to_string(), "lib.rs".to_string()],
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert!(formatted.starts_with("Directory: src/\n"));
+        assert!(formatted.contains("main.rs\nlib.rs"));
+    }
+
+    #[test]
+    fn file_content_formatting_includes_file_header() {
+        let output = crate::tool::registry::ToolOutput::FileContent {
+            path: "README.md".to_string(),
+            content: "hello world".to_string(),
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert_eq!(formatted, "File: README.md\nhello world");
+    }
+
+    #[test]
+    fn oversized_content_is_truncated_within_max_bytes() {
+        // Create content that will exceed MODEL_TOOL_RESULT_MAX_BYTES when combined with the header.
+        let header = "File: big.txt\n";
+        let body_size = MODEL_TOOL_RESULT_MAX_BYTES; // definitely over the limit
+        let content = "x".repeat(body_size);
+        let output = crate::tool::registry::ToolOutput::FileContent {
+            path: "big.txt".to_string(),
+            content,
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert!(
+            formatted.len() <= MODEL_TOOL_RESULT_MAX_BYTES,
+            "output length {} exceeds MODEL_TOOL_RESULT_MAX_BYTES {}",
+            formatted.len(),
+            MODEL_TOOL_RESULT_MAX_BYTES
+        );
+        assert!(
+            formatted.ends_with("\n... [truncated]"),
+            "expected truncation suffix"
+        );
+        // Suppress unused variable warning in release mode.
+        let _ = header;
+    }
+
+    // --- format_tool_error_for_model tests ---
+
+    #[test]
+    fn all_tool_error_variants_produce_error_prefix() {
+        use crate::tool::registry::ToolError;
+        let errors: Vec<ToolError> = vec![
+            ToolError::NotFound {
+                path: "a.txt".to_string(),
+            },
+            ToolError::NotAFile {
+                path: "dir/".to_string(),
+            },
+            ToolError::NotADirectory {
+                path: "file.rs".to_string(),
+            },
+            ToolError::NonUtf8 {
+                path: "bin.dat".to_string(),
+            },
+            ToolError::TooLarge {
+                path: "big.bin".to_string(),
+                max_bytes: 65536,
+            },
+            ToolError::WorkspaceViolation {
+                path: "../escape".to_string(),
+            },
+            ToolError::Io {
+                message: "permission denied (os error 13)".to_string(),
+            },
+            ToolError::PolicyDenied {
+                reason: "blocked".to_string(),
+            },
+            ToolError::ApprovalRequired {
+                reason: "write_op".to_string(),
+            },
+        ];
+        for err in &errors {
+            let summary = format_tool_error_for_model(err);
+            assert!(!summary.is_empty(), "summary must not be empty for {err:?}");
+            assert!(
+                summary.starts_with("Error: "),
+                "summary must begin with 'Error: ' for {err:?}, got: {summary:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn io_error_summary_contains_no_raw_os_detail() {
+        use crate::tool::registry::ToolError;
+        let err = ToolError::Io {
+            message: "permission denied (os error 13)".to_string(),
+        };
+        let summary = format_tool_error_for_model(&err);
+        // The raw OS message must not appear in the output.
+        assert!(
+            !summary.contains("permission denied (os error 13)"),
+            "IO summary must not embed raw OS detail: {summary:?}"
+        );
+        assert!(summary.starts_with("Error: "));
+    }
+
+    #[test]
+    fn not_found_summary_contains_path() {
+        use crate::tool::registry::ToolError;
+        let err = ToolError::NotFound {
+            path: "missing.txt".to_string(),
+        };
+        let summary = format_tool_error_for_model(&err);
+        assert!(summary.contains("missing.txt"));
+        assert!(summary.starts_with("Error: "));
+    }
+
+    #[test]
+    fn too_large_summary_contains_max_bytes_and_path() {
+        use crate::tool::registry::ToolError;
+        let err = ToolError::TooLarge {
+            path: "huge.bin".to_string(),
+            max_bytes: 65536,
+        };
+        let summary = format_tool_error_for_model(&err);
+        assert!(summary.contains("65536"));
+        assert!(summary.contains("huge.bin"));
+        assert!(summary.starts_with("Error: "));
     }
 }
