@@ -1708,41 +1708,58 @@ emits provider-neutral JSON Schema tool definitions.
 
 ## Native Read-only Tool Calling
 
-When a real model adapter is active, Caravan delivers the `list_files` and
-`read_file` tool schemas to the model via the API `tools` field on each turn.
-If the model responds with a native tool call, the runner executes the tool once
-and makes a second model call so the model can incorporate the result — then the
-turn completes. This is distinct from the manual `/tool` commands, which execute
-tools directly on user request.
+When a real model adapter is active, Caravan delivers the `list_files`,
+`read_file`, and `search_text` tool schemas to the model via the API `tools`
+field on each turn. If the model responds with a native tool call, the runner
+executes the tool and may make additional model calls so the model can
+incorporate the result — then the turn completes. This is distinct from the
+manual `/tool` commands, which execute tools directly on user request.
+
+> **This is NOT an agent loop, a recursive tool loop, or a planner.** The runner
+> executes a fixed, hard-bounded sequence of model calls and tool executions per
+> turn. The bounds are enforced in code (`MAX_NATIVE_TOOL_CALLS_PER_TURN = 2`,
+> `MAX_MODEL_STEPS_PER_TURN = 3`) and cannot be exceeded regardless of what the
+> model requests.
 
 ### Round-trip bound
 
-The native round trip is **bounded to at most 2 model calls and 1 tool
-execution** per user message:
+The native round trip is **bounded to at most two tool executions and three
+model calls** per user message. A typical two-tool turn looks like:
+
+> `search_text` → `read_file` → answer
+
+The full step sequence:
 
 1. **First model call** — `ModelGateway::complete_step` is called with the
-   compiled prompt and the read-only tool definitions (`list_files`, `read_file`).
-   The model returns either a direct `Assistant` response (turn ends, 0 tools
-   executed) or a `ToolCall` step (proceed to step 2).
-2. **Tool execution** — the runner validates the call via
+   compiled prompt and the read-only tool definitions (`list_files`, `read_file`,
+   `search_text`). The model returns either a direct `Assistant` response (turn
+   ends, 0 tools executed) or a `ToolCall` step (proceed to step 2).
+2. **First tool execution** — the runner validates the call via
    `model_tool_call_to_request` (in `crates/kernel/src/model/tool_use.rs`),
    executes the tool through `ToolEventRunner`, and formats the result with
    `format_tool_output_for_model` (capped at 16 KiB). Standard
    `ToolPolicy → ToolCall → ToolResult|ToolError` events are recorded.
-3. **Second model call** — `complete_step` is called again with the tool result
-   as the prior exchange and **no tools** so the model cannot request another
-   tool. The model produces a final `Assistant` response.
-4. If the second call returns another tool call, the runner rejects it with a
-   hard error (`RunFail`) — at most one native tool call per turn.
+3. **Second model call** — `complete_step` is called again with the first tool
+   result as the prior exchange and the tool definitions still available. The
+   model returns either an `Assistant` response (turn ends, 1 tool executed) or
+   a second `ToolCall` step (proceed to step 4).
+4. **Second tool execution** — the runner executes the second tool call through
+   `ToolEventRunner` exactly as in step 2.
+5. **Third model call** — `complete_step` is called a final time with both tool
+   results as the prior exchange and **no tools** so the model cannot request
+   another tool call. The model produces a final `Assistant` response.
+6. If the third call returns another tool call, the runner rejects it with a hard
+   error (`RunFail`) — at most two native tool calls and three model calls per turn.
 
 ### Scope
 
-- **Read-only only:** only `list_files` and `read_file` are exposed natively; no
-  write, shell, delete, or network tools exist on this path.
+- **Read-only only:** only `list_files`, `read_file`, and `search_text` are
+  exposed natively; no write, shell, delete, or network tools exist on this path.
 - **No approval flow:** read-only tools are auto-allowed by `ToolPolicyEngine`;
   no `ApprovalRequest` event is emitted on the native path.
-- **No agent loop:** `complete_step` is called at most twice per turn regardless
-  of what the model requests.
+- **Not an agent loop:** `complete_step` is called at most three times per turn
+  regardless of what the model requests. This is a hard bound — not an agent
+  loop, recursive tool loop, or planner.
 - **Mock adapter:** `MockModelAdapter` always returns an `Assistant` response and
   never issues a native tool call, so the default mock flow (`provider=mock`) is
   unchanged — 1 model call, 0 tool executions.

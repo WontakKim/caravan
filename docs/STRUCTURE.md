@@ -33,7 +33,7 @@ routes requests through a model gateway, and exposes read-only workspace tools.
 | **Prompt compiler** | `crates/kernel/src/prompt.rs` | Assembles `System / Project Memory / Conversation / Current User / Workspace Context / Operating Rules / Output` sections from `ProjectMemory`, `ConversationTranscript`, and (when attached — automatically by a successful `/tool read`/`/tool list`, or explicitly via `/context attach-last-tool`) `ManualToolContext`. The default prompt does not include an "Available Tools" section; tool/approval/write behavior belongs to the experimental harness layer and is not advertised in the baseline prompt. |
 | **Conversation transcript** | `crates/kernel/src/transcript.rs` | Read-only projection of `UserMessage` and `AssistantMessage` events; feeds the `Conversation:` prompt section for in-session history. |
 | **Model gateway** | `crates/kernel/src/model/gateway.rs` | Routes a compiled `ModelRequest` to the correct provider adapter via `complete_step` (accepts tool definitions and an optional prior tool exchange; returns `ModelStepOutput::Assistant` or `ModelStepOutput::ToolCall`), records `ModelRoute` / `ModelUsage` events. |
-| **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; calls `ModelGateway::complete_step` with the read-only tool definitions (T-10 prompt rule). If the first call returns a native tool call, executes the tool once and makes a second `complete_step` call with the result — bounded to **at most 2 model calls and 1 tool execution** per turn; no agent loop. |
+| **Runner** | `crates/kernel/src/runner.rs` | Owns the `RunCreate → … → RunComplete` lifecycle; calls `ModelGateway::complete_step` with the read-only tool definitions. Implements the bounded read-only tool chain: up to `MAX_NATIVE_TOOL_CALLS_PER_TURN` (2) tool executions across at most `MAX_MODEL_STEPS_PER_TURN` (3) model calls per turn — model call → tool exec → model call → tool exec → final model call (no tools). If the final call returns a tool call, the runner rejects it with `RunFail`. This is a hard bound, not an agent loop. |
 | **Native tool types** | `crates/kernel/src/model/tool_use.rs` | Provider-neutral native tool types: `ModelStepRequest`, `ModelStepOutput` (`Assistant`\|`ToolCall`), `ModelToolDefinition`, `ModelToolCall`, `ModelToolResult`, `ModelToolExchange`. Includes `model_tool_call_to_request` (validator — treats model arguments as untrusted) and `format_tool_output_for_model` / `format_tool_error_for_model` (result formatters, capped at 16 KiB). |
 | **Read-only workspace tools** | `crates/kernel/src/tool/registry.rs`, `crates/tui/src/app/tools.rs` | `/tool list` enumerates registered tools; `/tool read <path>` reads a file from the workspace; `/tool search <query>` searches for text across workspace files (`search_text`). All three are read-only and auto-allowed without an approval step. These are the only tool commands that belong to the baseline surface. |
 | **Storage / event log** | `crates/kernel/src/storage.rs`, `events/` | Append-only JSONL persistence; replays across restarts. |
@@ -295,14 +295,17 @@ constraints are enforced:
   not touch the event log.
 - **Native tool round trip** (`model/tool_use.rs` + `runner.rs`): On each turn
   the runner passes `ToolCatalog::readonly().readonly_model_definitions()` to
-  `ModelGateway::complete_step`. If the first call returns
-  `ModelStepOutput::ToolCall`, the runner validates the call via
-  `model_tool_call_to_request`, executes the tool through `ToolEventRunner`, and
-  issues a second `complete_step` with the result and **no tools** so the model
-  produces a final `Assistant` response. The round trip is bounded: **at most
-  2 model calls and 1 tool execution** per turn; a second tool call from the model
-  is rejected. Only the three read-only tools (`list_files`, `read_file`,
-  `search_text`) are exposed on this path — no write, shell, or approval flow. The dormant text
+  `ModelGateway::complete_step`. The runner implements a bounded read-only tool
+  chain controlled by two constants: `MAX_NATIVE_TOOL_CALLS_PER_TURN = 2` and
+  `MAX_MODEL_STEPS_PER_TURN = 3`. The extended flow is:
+  model call → (optional) tool exec → model call → (optional) tool exec → final
+  model call with no tools. A typical two-tool sequence is `search_text` →
+  `read_file` → answer (three model calls, two tool executions). The third model
+  call is always issued without tools so the model cannot request further tool
+  calls; if it returns a `ToolCall` anyway the runner rejects it with `RunFail`.
+  This is a hard bound — **not an agent loop, recursive tool loop, or planner**.
+  Only the three read-only tools (`list_files`, `read_file`, `search_text`) are
+  exposed on this path — no write, shell, or approval flow. The dormant text
   protocol (`model/tool_request.rs`) and the `/request` / write-preview layers
   are not connected to this path.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a
