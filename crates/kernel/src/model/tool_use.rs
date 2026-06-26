@@ -20,6 +20,13 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
 
     match call.name.as_str() {
         "list_files" => {
+            // Reject unknown fields — mirrors the schema's additionalProperties: false.
+            if obj.keys().any(|k| k != "path") {
+                return Err(ModelError::AdapterFailure {
+                    message: "malformed_tool_arguments: list_files contains an unsupported field"
+                        .to_string(),
+                });
+            }
             let path = match obj.get("path") {
                 None => ".".to_string(),
                 Some(serde_json::Value::String(s)) => {
@@ -39,6 +46,13 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
             Ok(ToolRequest::ListFiles { path })
         }
         "read_file" => {
+            // Reject unknown fields — mirrors the schema's additionalProperties: false.
+            if obj.keys().any(|k| k != "path") {
+                return Err(ModelError::AdapterFailure {
+                    message: "malformed_tool_arguments: read_file contains an unsupported field"
+                        .to_string(),
+                });
+            }
             let path = match obj.get("path") {
                 Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
                 _ => {
@@ -54,6 +68,23 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
             message: format!("unsupported_model_tool: {name}"),
         }),
     }
+}
+
+/// Truncates `rendered` so its total byte length stays `<= MODEL_TOOL_RESULT_MAX_BYTES`,
+/// appending `"\n... [truncated]"` when a cut is needed. The cut is always on a
+/// UTF-8 character boundary.
+fn limit_model_tool_text(rendered: String) -> String {
+    if rendered.len() <= MODEL_TOOL_RESULT_MAX_BYTES {
+        return rendered;
+    }
+    const SUFFIX: &str = "\n... [truncated]";
+    let keep = MODEL_TOOL_RESULT_MAX_BYTES - SUFFIX.len();
+    // Truncate on a UTF-8 char boundary.
+    let mut cut = keep;
+    while !rendered.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    format!("{}{}", &rendered[..cut], SUFFIX)
 }
 
 /// Formats a [`ToolOutput`] into bounded text for the follow-up model call.
@@ -73,28 +104,18 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
             "[write preview not available on the read-only path]".to_string()
         }
     };
-
-    if rendered.len() <= MODEL_TOOL_RESULT_MAX_BYTES {
-        return rendered;
-    }
-
-    const SUFFIX: &str = "\n... [truncated]";
-    let keep = MODEL_TOOL_RESULT_MAX_BYTES - SUFFIX.len();
-    // Truncate on a UTF-8 char boundary.
-    let mut cut = keep;
-    while !rendered.is_char_boundary(cut) {
-        cut -= 1;
-    }
-    format!("{}{}", &rendered[..cut], SUFFIX)
+    limit_model_tool_text(rendered)
 }
 
 /// Formats a [`ToolError`] into a human-readable error string for the model.
 ///
 /// The string always begins with `"Error: "` because the OpenAI tool message
 /// carries no machine-readable `is_error` flag — the model only sees this text.
-/// Raw OS error details and secrets are never embedded.
+/// Raw OS error details and secrets are never embedded. The result is bounded
+/// to [`MODEL_TOOL_RESULT_MAX_BYTES`] via [`limit_model_tool_text`] to guard
+/// against arbitrarily long paths embedded in error variants.
 pub fn format_tool_error_for_model(error: &ToolError) -> String {
-    match error {
+    let rendered = match error {
         ToolError::NotFound { path } => {
             format!("Error: file or directory not found: {path}")
         }
@@ -117,7 +138,8 @@ pub fn format_tool_error_for_model(error: &ToolError) -> String {
         ToolError::PolicyDenied { .. } | ToolError::ApprovalRequired { .. } => {
             "Error: this operation is not permitted by the active safety policy.".to_string()
         }
-    }
+    };
+    limit_model_tool_text(rendered)
 }
 
 /// A tool definition passed to the model so it knows what tools are available.
@@ -569,5 +591,61 @@ mod tests {
         assert!(summary.contains("65536"));
         assert!(summary.contains("huge.bin"));
         assert!(summary.starts_with("Error: "));
+    }
+
+    // --- G-2: unknown-field rejection tests ---
+
+    #[test]
+    fn list_files_with_unknown_field_returns_adapter_failure() {
+        let call = make_call(
+            "list_files",
+            serde_json::json!({"path": ".", "unexpected": true}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("unsupported field"),
+                    "expected 'unsupported field' in message, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_with_unknown_field_returns_adapter_failure() {
+        let call = make_call("read_file", serde_json::json!({"path": "a", "extra": 1}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("unsupported field"),
+                    "expected 'unsupported field' in message, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    // --- G-3: bounded error output test ---
+
+    #[test]
+    fn not_found_error_with_very_long_path_is_bounded() {
+        use crate::tool::registry::ToolError;
+        // Path long enough to push the error message well over MODEL_TOOL_RESULT_MAX_BYTES.
+        let long_path = "x".repeat(MODEL_TOOL_RESULT_MAX_BYTES + 1024);
+        let err = ToolError::NotFound { path: long_path };
+        let summary = format_tool_error_for_model(&err);
+        assert!(
+            summary.len() <= MODEL_TOOL_RESULT_MAX_BYTES,
+            "error output length {} exceeds MODEL_TOOL_RESULT_MAX_BYTES {}",
+            summary.len(),
+            MODEL_TOOL_RESULT_MAX_BYTES
+        );
+        assert!(
+            summary.ends_with("\n... [truncated]"),
+            "expected truncation suffix, got: {summary:?}"
+        );
     }
 }

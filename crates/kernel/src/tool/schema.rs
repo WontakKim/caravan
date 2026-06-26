@@ -116,8 +116,7 @@ impl ToolCatalog {
             "These tools are read-only and are available manually through Caravan slash commands.\n",
         );
         out.push_str(
-            "The model cannot call these tools automatically in this POC — \
-             tool invocation always requires an explicit user command.\n",
+            "The model may also invoke these tools natively during a conversation turn.\n",
         );
         out.push_str(
             "Tool output is not included in the prompt unless the user runs \
@@ -209,8 +208,8 @@ mod tests {
         );
         assert!(section.contains("read_file"), "missing read_file tool name");
         assert!(
-            section.contains("cannot call these tools automatically"),
-            "missing phrase about model not being able to call tools automatically"
+            section.contains("natively during a conversation turn"),
+            "missing phrase about native model tool invocation"
         );
         assert!(
             section.contains("/context attach-last-tool"),

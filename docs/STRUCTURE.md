@@ -15,9 +15,10 @@ key to navigating the codebase.
 > not a harness-first architecture. The **baseline runtime path** is:
 > prompt / project memory / transcript / basic read-only tools (`/tool read`, `/tool list`).
 > This is the primary user experience. The experimental harness layer (including the
-> `model/tool_request.rs` dormant parser and `tool/schema.rs` "Model Tool Request Blocks"
-> generator) exists as a structural seam for future tooling but is not wired into the
-> default runtime path.
+> `model/tool_request.rs` dormant text-protocol parser and `tool/schema.rs` ToolCatalog)
+> exists as a structural seam for future tooling; `schema.rs` provides `readonly_model_definitions()`
+> consumed in production by `runner.rs` for native tool calling, while `render_prompt_section`
+> is not injected into the default prompt.
 
 ### Claude Baseline Layer (primary)
 
@@ -138,7 +139,7 @@ crates/kernel/src/
     ├── registry/        # registry submodule
     │   ├── path.rs      # Workspace path confinement helper (resolve_in_workspace) for safe in-workspace resolution
     │   └── tests.rs     # Unit tests for ToolRegistry and path-safety logic
-    └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog — generates "Model Tool Request Blocks" prompt section; part of the same dormant experimental harness as model/tool_request.rs; this output is not injected into the default prompt
+    └── schema.rs        # ToolSpec, ToolInputSpec, ToolCatalog — provides readonly_model_definitions() consumed in production by runner.rs for native tool calling, plus a plain-text render_prompt_section for the /tool command surface; this section is not injected into the default prompt
 ```
 
 The `commands/` sub-directory follows the same facade pattern as `events/`:
