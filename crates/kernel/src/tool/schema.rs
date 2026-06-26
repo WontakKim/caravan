@@ -4,6 +4,7 @@
 //! renderer for inclusion in model prompts. This is NOT JSON Schema / OpenAI
 //! function-calling / MCP — plain Rust structs and a plain-text renderer only.
 
+use crate::model::tool_use::ModelToolDefinition;
 use crate::tool::registry::ToolRisk;
 
 /// Describes a single input parameter accepted by a tool.
@@ -60,6 +61,48 @@ impl ToolCatalog {
         &self.specs
     }
 
+    /// Returns provider-neutral `ModelToolDefinition`s with JSON Schema for all
+    /// read-only tools. These are suitable for passing in the API `tools` field.
+    pub fn readonly_model_definitions(&self) -> Vec<ModelToolDefinition> {
+        vec![
+            ModelToolDefinition {
+                name: "list_files".to_string(),
+                description:
+                    "Lists direct children of a workspace-relative directory non-recursively. \
+                     Read-only. Defaults path to \".\". Rejects paths outside the workspace."
+                        .to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Workspace-relative directory path. Defaults to '.'."
+                        }
+                    },
+                    "additionalProperties": false
+                }),
+            },
+            ModelToolDefinition {
+                name: "read_file".to_string(),
+                description:
+                    "Reads a workspace-relative UTF-8 text file. Read-only and size-limited. \
+                     Rejects paths outside the workspace."
+                        .to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {
+                            "type": "string",
+                            "description": "Workspace-relative UTF-8 text file path."
+                        }
+                    },
+                    "required": ["path"],
+                    "additionalProperties": false
+                }),
+            },
+        ]
+    }
+
     /// Renders a complete plain-text prompt section describing all available tools.
     ///
     /// The returned string begins with the `Available Tools:` header line and
@@ -79,29 +122,6 @@ impl ToolCatalog {
         out.push_str(
             "Tool output is not included in the prompt unless the user runs \
              `/context attach-last-tool`.\n",
-        );
-
-        out.push_str(
-            "\nModel Tool Request Blocks:\n\
-             You may propose a tool request by emitting a CARAVAN_TOOL_REQUEST block in your \
-             response. Caravan will detect the block and record a ModelToolRequest. The request \
-             is not executed automatically — the user must run the matching /tool command \
-             manually, and tool output enters the prompt only if the user runs \
-             `/context attach-last-tool`. \
-             To inspect the recorded request run `/request status`; \
-             to discard it run `/request clear`.\n\
-             \n\
-             Example (read_file):\n\
-             CARAVAN_TOOL_REQUEST\n\
-             tool=read_file\n\
-             path=README.md\n\
-             END_CARAVAN_TOOL_REQUEST\n\
-             \n\
-             Example (list_files):\n\
-             CARAVAN_TOOL_REQUEST\n\
-             tool=list_files\n\
-             path=.\n\
-             END_CARAVAN_TOOL_REQUEST\n",
         );
 
         for spec in &self.specs {
@@ -197,36 +217,6 @@ mod tests {
             "missing /context attach-last-tool reference"
         );
 
-        // CARAVAN_TOOL_REQUEST block guidance assertions.
-        assert!(
-            section.contains("CARAVAN_TOOL_REQUEST"),
-            "missing CARAVAN_TOOL_REQUEST marker"
-        );
-        assert!(
-            section.contains("tool=read_file"),
-            "missing read_file example block"
-        );
-        assert!(
-            section.contains("tool=list_files"),
-            "missing list_files example block"
-        );
-        assert!(
-            section.contains("not executed automatically"),
-            "missing 'not executed automatically' phrase"
-        );
-        assert!(
-            section.contains("ModelToolRequest"),
-            "missing ModelToolRequest reference"
-        );
-        assert!(
-            section.contains("/request status"),
-            "missing /request status reference"
-        );
-        assert!(
-            section.contains("/request clear"),
-            "missing /request clear reference"
-        );
-
         // Forbidden phrases must NOT appear (built at runtime to avoid grep false-positives).
         let forbidden_auto_exec = ["Caravan will execute", " this automatically"].concat();
         assert!(
@@ -280,5 +270,102 @@ mod tests {
             .find(|i| i.name == "path")
             .expect("path input not found");
         assert!(path_input.required, "read_file path should be required");
+    }
+
+    #[test]
+    fn readonly_model_definitions_returns_exactly_two() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        assert_eq!(defs.len(), 2, "expected exactly 2 model tool definitions");
+    }
+
+    #[test]
+    fn readonly_model_definitions_names_are_list_files_and_read_file() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(
+            names.contains(&"list_files"),
+            "missing list_files definition"
+        );
+        assert!(names.contains(&"read_file"), "missing read_file definition");
+    }
+
+    #[test]
+    fn readonly_model_definitions_list_files_schema() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "list_files")
+            .expect("list_files definition not found");
+
+        assert_eq!(
+            def.input_schema["additionalProperties"],
+            serde_json::json!(false),
+            "list_files schema must have additionalProperties: false"
+        );
+
+        let path_prop = &def.input_schema["properties"]["path"];
+        assert_eq!(
+            path_prop["type"],
+            serde_json::json!("string"),
+            "list_files path property must be type string"
+        );
+
+        // No `required` field (or absent) — list_files path is optional.
+        assert!(
+            def.input_schema.get("required").is_none(),
+            "list_files schema must not have a required field"
+        );
+    }
+
+    #[test]
+    fn readonly_model_definitions_read_file_schema() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "read_file")
+            .expect("read_file definition not found");
+
+        assert_eq!(
+            def.input_schema["additionalProperties"],
+            serde_json::json!(false),
+            "read_file schema must have additionalProperties: false"
+        );
+
+        let path_prop = &def.input_schema["properties"]["path"];
+        assert_eq!(
+            path_prop["type"],
+            serde_json::json!("string"),
+            "read_file path property must be type string"
+        );
+
+        assert_eq!(
+            def.input_schema["required"],
+            serde_json::json!(["path"]),
+            "read_file schema must have required: [\"path\"]"
+        );
+    }
+
+    /// Verifies that no mutating tool definitions are returned. Since the count is exactly 2
+    /// and both are read-only tools (list_files, read_file), any mutating tool would either
+    /// exceed the count or replace one of the known names — both covered by sibling tests.
+    #[test]
+    fn readonly_model_definitions_only_contains_read_only_tools() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        // Exactly 2 definitions, both with known read-only names — no mutating tools present.
+        let forbidden_prefixes = ["plan_", "preview_"];
+        for def in &defs {
+            for prefix in forbidden_prefixes {
+                assert!(
+                    !def.name.starts_with(prefix),
+                    "unexpected mutating tool definition: {}",
+                    def.name
+                );
+            }
+        }
     }
 }
