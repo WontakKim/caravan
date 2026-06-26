@@ -28,7 +28,7 @@ pub struct ToolCatalog {
 }
 
 impl ToolCatalog {
-    /// Returns the read-only catalog containing exactly the two supported tools.
+    /// Returns the read-only catalog containing exactly the three supported tools.
     pub fn readonly() -> Self {
         ToolCatalog {
             specs: vec![
@@ -49,6 +49,16 @@ impl ToolCatalog {
                     inputs: vec![ToolInputSpec {
                         name: "path",
                         description: "Workspace-relative path to the file to read.",
+                        required: true,
+                    }],
+                },
+                ToolSpec {
+                    name: "search_text",
+                    description: "Search for literal text across UTF-8 files in the workspace. Read-only. Bounded results. Non-regex.",
+                    risk: ToolRisk::ReadOnly,
+                    inputs: vec![ToolInputSpec {
+                        name: "query",
+                        description: "Literal text to search for across UTF-8 files in the workspace.",
                         required: true,
                     }],
                 },
@@ -100,6 +110,24 @@ impl ToolCatalog {
                     "additionalProperties": false
                 }),
             },
+            ModelToolDefinition {
+                name: "search_text".to_string(),
+                description:
+                    "Searches for literal text across UTF-8 files in the workspace. \
+                     Read-only. Bounded results. Non-regex."
+                        .to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Literal text to search for across UTF-8 files in the workspace."
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }),
+            },
         ]
     }
 
@@ -130,6 +158,7 @@ impl ToolCatalog {
             let command = match spec.name {
                 "list_files" => "/tool list [path]",
                 "read_file" => "/tool read <path>",
+                "search_text" => "/tool search <query>",
                 other => other,
             };
 
@@ -164,17 +193,18 @@ mod tests {
     use crate::tool::registry::ToolRisk;
 
     #[test]
-    fn readonly_returns_exactly_two_specs() {
+    fn readonly_returns_exactly_three_specs() {
         let catalog = ToolCatalog::readonly();
-        assert_eq!(catalog.specs().len(), 2);
+        assert_eq!(catalog.specs().len(), 3);
     }
 
     #[test]
-    fn readonly_spec_names_are_list_files_and_read_file() {
+    fn readonly_spec_names_are_list_files_read_file_and_search_text() {
         let catalog = ToolCatalog::readonly();
         let names: Vec<&str> = catalog.specs().iter().map(|s| s.name).collect();
         assert!(names.contains(&"list_files"));
         assert!(names.contains(&"read_file"));
+        assert!(names.contains(&"search_text"));
     }
 
     #[test]
@@ -272,22 +302,22 @@ mod tests {
     }
 
     #[test]
-    fn readonly_model_definitions_returns_exactly_two() {
+    fn readonly_model_definitions_returns_exactly_three() {
         let catalog = ToolCatalog::readonly();
         let defs = catalog.readonly_model_definitions();
-        assert_eq!(defs.len(), 2, "expected exactly 2 model tool definitions");
+        assert_eq!(defs.len(), 3, "expected exactly 3 model tool definitions");
     }
 
     #[test]
-    fn readonly_model_definitions_names_are_list_files_and_read_file() {
+    fn readonly_model_definitions_exact_name_set_is_list_files_read_file_search_text() {
         let catalog = ToolCatalog::readonly();
         let defs = catalog.readonly_model_definitions();
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
-        assert!(
-            names.contains(&"list_files"),
-            "missing list_files definition"
+        assert_eq!(
+            names,
+            vec!["list_files", "read_file", "search_text"],
+            "exact ordered name set must be [list_files, read_file, search_text]"
         );
-        assert!(names.contains(&"read_file"), "missing read_file definition");
     }
 
     #[test]
@@ -348,14 +378,15 @@ mod tests {
         );
     }
 
-    /// Verifies that no mutating tool definitions are returned. Since the count is exactly 2
-    /// and both are read-only tools (list_files, read_file), any mutating tool would either
-    /// exceed the count or replace one of the known names — both covered by sibling tests.
+    /// Verifies that no mutating tool definitions are returned. Since the count is exactly 3
+    /// and all are read-only tools (list_files, read_file, search_text), any mutating tool
+    /// would either exceed the count or replace one of the known names — both covered by
+    /// sibling tests.
     #[test]
     fn readonly_model_definitions_only_contains_read_only_tools() {
         let catalog = ToolCatalog::readonly();
         let defs = catalog.readonly_model_definitions();
-        // Exactly 2 definitions, both with known read-only names — no mutating tools present.
+        // Exactly 3 definitions, all with known read-only names — no mutating tools present.
         let forbidden_prefixes = ["plan_", "preview_"];
         for def in &defs {
             for prefix in forbidden_prefixes {
@@ -366,5 +397,64 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn readonly_model_definitions_search_text_schema() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "search_text")
+            .expect("search_text definition not found");
+
+        assert_eq!(
+            def.input_schema["additionalProperties"],
+            serde_json::json!(false),
+            "search_text schema must have additionalProperties: false"
+        );
+
+        let query_prop = &def.input_schema["properties"]["query"];
+        assert_eq!(
+            query_prop["type"],
+            serde_json::json!("string"),
+            "search_text query property must be type string"
+        );
+
+        assert_eq!(
+            def.input_schema["required"],
+            serde_json::json!(["query"]),
+            "search_text schema must have required: [\"query\"]"
+        );
+    }
+
+    #[test]
+    fn render_prompt_section_contains_search_text_command() {
+        let catalog = ToolCatalog::readonly();
+        let section = catalog.render_prompt_section();
+        assert!(
+            section.contains("/tool search <query>"),
+            "missing search_text command '/tool search <query>' in rendered prompt"
+        );
+        assert!(
+            section.contains("search_text"),
+            "missing search_text tool name in rendered prompt"
+        );
+    }
+
+    #[test]
+    fn search_text_query_input_is_required() {
+        let catalog = ToolCatalog::readonly();
+        let search_text_spec = catalog
+            .specs()
+            .iter()
+            .find(|s| s.name == "search_text")
+            .expect("search_text spec not found");
+        let query_input = search_text_spec
+            .inputs
+            .iter()
+            .find(|i| i.name == "query")
+            .expect("query input not found");
+        assert!(query_input.required, "search_text query should be required");
     }
 }

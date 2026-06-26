@@ -2036,6 +2036,173 @@ fn native_tool_dormant_text_protocol_stays_plain_assistant_turn() {
     );
 }
 
+// --- Test: search_text one-call round-trip -----------------------------------
+
+#[test]
+fn native_tool_search_text_one_call_round_trip_event_order() {
+    let workspace = make_temp_workspace("notes.txt", "TODO: fix this later");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "search_text",
+            "call-st1",
+            r#"{"query":"TODO"}"#,
+            None,
+        ),
+        assistant_resp("I found the TODO comment.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "search for TODO",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Assert the fixed prefix of the event sequence.
+    assert_eq!(kinds[0], EventKind::RunCreate);
+    assert_eq!(kinds[1], EventKind::RunStart);
+    assert_eq!(kinds[2], EventKind::TurnStart);
+    assert_eq!(kinds[3], EventKind::PromptCompile);
+    assert_eq!(kinds[4], EventKind::ModelRoute);
+    assert_eq!(kinds[5], EventKind::ToolPolicy);
+    assert_eq!(kinds[6], EventKind::ToolCall);
+    assert_eq!(kinds[7], EventKind::ToolResult);
+
+    // After ToolResult: second ModelRoute, AssistantMessage, RunComplete.
+    let second_route_idx = kinds
+        .iter()
+        .rposition(|&k| k == EventKind::ModelRoute)
+        .unwrap();
+    assert!(second_route_idx > 4, "second ModelRoute must be after first");
+
+    let run_complete_idx = kinds
+        .iter()
+        .position(|&k| k == EventKind::RunComplete)
+        .expect("RunComplete must be present");
+    assert_eq!(*kinds.last().unwrap(), EventKind::RunComplete);
+
+    let assistant_msg_idx = kinds
+        .iter()
+        .position(|&k| k == EventKind::AssistantMessage)
+        .unwrap();
+    assert!(assistant_msg_idx > second_route_idx);
+    assert!(assistant_msg_idx < run_complete_idx);
+
+    // Exactly TWO ModelRoute events.
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        2,
+        "exactly two ModelRoute events"
+    );
+
+    // Exactly ONE ToolCall and ONE ToolResult.
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        1,
+        "exactly one ToolCall"
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ToolResult)
+            .count(),
+        1,
+        "exactly one ToolResult"
+    );
+
+    // No RunFail.
+    assert!(!kinds.contains(&EventKind::RunFail), "no RunFail on success");
+
+    // tool_activity is Some and succeeded.
+    let activity = output.tool_activity.expect("tool_activity must be Some");
+    assert!(activity.succeeded);
+    assert_eq!(activity.name, "search_text");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Test: search_text second-tool-call rejected ------------------------------
+
+#[test]
+fn native_tool_search_text_second_tool_call_not_supported() {
+    let workspace = make_temp_workspace("data.txt", "some content");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "search_text",
+            "call-st2a",
+            r#"{"query":"content"}"#,
+            None,
+        ),
+        // Second response is another tool call — must be rejected.
+        tool_call_resp("list_files", "call-st2b", "{}", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "search then list",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Two ModelRoute events (first tool call + second model call).
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        2,
+        "two ModelRoute events"
+    );
+
+    // Exactly ONE ToolCall (the first search_text call).
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        1,
+        "exactly one ToolCall — no second execution"
+    );
+
+    // ModelError and RunFail must be present.
+    assert!(kinds.contains(&EventKind::ModelError), "must have ModelError");
+    assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
+    assert!(!kinds.contains(&EventKind::RunComplete), "no RunComplete");
+
+    // Recorded request count is exactly 2.
+    assert_eq!(client.request_count(), 2);
+
+    // Error detail must contain the sentinel string.
+    let model_error_event = events
+        .iter()
+        .find(|e| e.kind == EventKind::ModelError)
+        .unwrap();
+    assert!(
+        model_error_event
+            .detail
+            .contains("second_tool_call_not_supported"),
+        "ModelError must contain 'second_tool_call_not_supported': {}",
+        model_error_event.detail
+    );
+
+    // tool_activity is Some (from first tool execution).
+    assert!(output.tool_activity.is_some());
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
 // --- Test (j): default Mock gateway (unchanged assistant-only flow) ----------
 
 #[test]
