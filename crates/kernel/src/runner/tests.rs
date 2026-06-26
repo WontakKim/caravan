@@ -1323,15 +1323,16 @@ fn native_tool_read_file_two_call_success_event_order() {
         "no RunFail on success path"
     );
 
-    // Fake recorded exactly 2 requests; second has tools == None.
+    // Fake recorded exactly 2 requests; second carries tools (budget still remains
+    // after exec 1 success: exec_count=1 < MAX_NATIVE_TOOL_CALLS_PER_TURN=2).
     assert_eq!(client.request_count(), 2, "exactly 2 HTTP requests");
     assert!(
         client.request_had_tools(0),
         "first request must carry tools"
     );
     assert!(
-        !client.request_had_tools(1),
-        "second request must NOT carry tools"
+        client.request_had_tools(1),
+        "second request must carry tools (budget remains after exec 1 success)"
     );
 
     // tool_activities has one entry and it succeeded.
@@ -1686,15 +1687,20 @@ fn native_tool_non_object_arguments_in_first_response_is_adapter_error_no_model_
     let _ = std::fs::remove_dir_all(&workspace);
 }
 
-// --- Test (f): second response is exactly one tool call (rejected) ----------
+// --- Test (f): second response is a tool call — SECOND EXECUTION PATH -------
+// Migrated from the old second_tool_call_not_supported rejection test.
+// The second tool call is now EXECUTED (exec 2), followed by a third model
+// call that returns an assistant message (RunComplete).
 
 #[test]
-fn native_tool_second_tool_call_not_supported_sentinel_in_event_log() {
+fn native_tool_second_tool_call_executed_as_exec_2_run_completes() {
     let workspace = make_temp_workspace("note.txt", "hi");
     let client = Arc::new(QueuedFakeClient::new(vec![
         tool_call_resp("read_file", "call-f1", r#"{"path":"note.txt"}"#, None),
-        // Second response is another tool call — must be rejected.
+        // Second response is another tool call — now EXECUTED as exec 2.
         tool_call_resp("list_files", "call-f2", "{}", None),
+        // Third response is the assistant answer.
+        assistant_resp("Read the file and listed files.", None),
     ]));
     let gateway = ModelGateway::with_openai_http_client_for_test(
         openai_config(),
@@ -1713,44 +1719,44 @@ fn native_tool_second_tool_call_not_supported_sentinel_in_event_log() {
     let events = event_log.events();
     let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
 
-    // Two ModelRoute events (first tool call + second model call).
+    // Three ModelRoute events (first tool call + second tool call + third assistant call).
     assert_eq!(
         kinds
             .iter()
             .filter(|&&k| k == EventKind::ModelRoute)
             .count(),
-        2,
-        "two ModelRoute events"
+        3,
+        "three ModelRoute events for two-tool-exec path"
     );
-    // Exactly ONE ToolCall (the first one).
+    // TWO ToolCall events (both tools executed).
     assert_eq!(
         kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
-        1,
-        "exactly one ToolCall — no second execution"
+        2,
+        "exactly two ToolCall events — both executions ran"
     );
-    // ModelError and RunFail must be present.
-    assert!(kinds.contains(&EventKind::ModelError));
-    assert!(kinds.contains(&EventKind::RunFail));
-    assert!(!kinds.contains(&EventKind::RunComplete));
-
-    // Recorded request count is exactly 2.
-    assert_eq!(client.request_count(), 2);
-
-    // Error detail must contain the sentinel string.
-    let model_error_event = events
-        .iter()
-        .find(|e| e.kind == EventKind::ModelError)
-        .unwrap();
-    assert!(
-        model_error_event
-            .detail
-            .contains("second_tool_call_not_supported"),
-        "ModelError must contain 'second_tool_call_not_supported': {}",
-        model_error_event.detail
+    // TWO ToolResult events.
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ToolResult)
+            .count(),
+        2,
+        "exactly two ToolResult events"
     );
+    // Turn must succeed.
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+    assert!(!kinds.contains(&EventKind::ModelError), "must not ModelError");
 
-    // tool_activities is non-empty (from first tool execution).
-    assert!(!output.tool_activities.is_empty());
+    // Recorded request count is exactly 3.
+    assert_eq!(client.request_count(), 3, "exactly 3 HTTP requests");
+
+    // tool_activities has two entries.
+    assert_eq!(output.tool_activities.len(), 2, "two tool activities");
+    assert_eq!(output.tool_activities[0].name, "read_file");
+    assert!(output.tool_activities[0].succeeded);
+    assert_eq!(output.tool_activities[1].name, "list_files");
+    assert!(output.tool_activities[1].succeeded);
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -2138,15 +2144,19 @@ fn native_tool_search_text_one_call_round_trip_event_order() {
     let _ = std::fs::remove_dir_all(&workspace);
 }
 
-// --- Test: search_text second-tool-call rejected ------------------------------
+// --- Test: search_text → second-tool-call EXECUTED as exec 2 ----------------
+// Migrated from the old second_tool_call_not_supported rejection test.
+// search_text (exec 1) → list_files (exec 2) → assistant (RunComplete).
 
 #[test]
-fn native_tool_search_text_second_tool_call_not_supported() {
+fn native_tool_search_text_second_tool_call_executed_as_exec_2() {
     let workspace = make_temp_workspace("data.txt", "some content");
     let client = Arc::new(QueuedFakeClient::new(vec![
         tool_call_resp("search_text", "call-st2a", r#"{"query":"content"}"#, None),
-        // Second response is another tool call — must be rejected.
+        // Second response is another tool call — now EXECUTED as exec 2.
         tool_call_resp("list_files", "call-st2b", "{}", None),
+        // Third response is the assistant answer.
+        assistant_resp("Found content and listed files.", None),
     ]));
     let gateway = ModelGateway::with_openai_http_client_for_test(
         openai_config(),
@@ -2165,49 +2175,736 @@ fn native_tool_search_text_second_tool_call_not_supported() {
     let events = event_log.events();
     let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
 
-    // Two ModelRoute events (first tool call + second model call).
+    // Three ModelRoute events (exec1 + exec2 + final assistant).
     assert_eq!(
         kinds
             .iter()
             .filter(|&&k| k == EventKind::ModelRoute)
             .count(),
-        2,
-        "two ModelRoute events"
+        3,
+        "three ModelRoute events"
     );
 
-    // Exactly ONE ToolCall (the first search_text call).
+    // TWO ToolCall events (both tools executed).
     assert_eq!(
         kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        2,
+        "exactly two ToolCall events — both executions ran"
+    );
+
+    // Turn must succeed.
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+    assert!(!kinds.contains(&EventKind::ModelError), "must not ModelError");
+
+    // Recorded request count is exactly 3.
+    assert_eq!(client.request_count(), 3);
+
+    // tool_activities has two entries from both executions.
+    assert_eq!(output.tool_activities.len(), 2);
+    assert_eq!(output.tool_activities[0].name, "search_text");
+    assert!(output.tool_activities[0].succeeded);
+    assert_eq!(output.tool_activities[1].name, "list_files");
+    assert!(output.tool_activities[1].succeeded);
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// ============================================================================
+// NEW TESTS — bounded two-tool-exec / three-model-call pipeline (T-3)
+// ============================================================================
+
+// --- search_text → read_file → assistant (three-call success) ---------------
+
+#[test]
+fn search_text_then_read_file_three_call_success_event_order() {
+    let workspace = make_temp_workspace("notes.txt", "TODO: fix this later");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // Step 1: model calls search_text (exec 1).
+        tool_call_resp(
+            "search_text",
+            "call-s1",
+            r#"{"query":"TODO"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 3,
+                total_tokens: 13,
+            }),
+        ),
+        // Step 2: model calls read_file (exec 2, tools re-offered after exec 1 success).
+        tool_call_resp(
+            "read_file",
+            "call-s2",
+            r#"{"path":"notes.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 20,
+                completion_tokens: 4,
+                total_tokens: 24,
+            }),
+        ),
+        // Step 3: model returns assistant answer (no tools offered, budget exhausted).
+        assistant_resp(
+            "Found TODO and read the file.",
+            Some(OpenAIUsage {
+                prompt_tokens: 30,
+                completion_tokens: 8,
+                total_tokens: 38,
+            }),
+        ),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "search then read",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Fixed prefix: RunCreate, RunStart, TurnStart, PromptCompile.
+    assert_eq!(kinds[0], EventKind::RunCreate);
+    assert_eq!(kinds[1], EventKind::RunStart);
+    assert_eq!(kinds[2], EventKind::TurnStart);
+    assert_eq!(kinds[3], EventKind::PromptCompile);
+
+    // Three ModelRoute events (one per model call).
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        3,
+        "exactly three ModelRoute events"
+    );
+
+    // Two ToolPolicy / ToolCall / ToolResult groups.
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolPolicy).count(),
+        2,
+        "exactly two ToolPolicy events"
+    );
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        2,
+        "exactly two ToolCall events"
+    );
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ToolResult)
+            .count(),
+        2,
+        "exactly two ToolResult events"
+    );
+
+    // Exactly ONE PromptCompile (base prompt compiled once per turn).
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::PromptCompile)
+            .count(),
         1,
-        "exactly one ToolCall — no second execution"
+        "exactly one PromptCompile"
     );
 
-    // ModelError and RunFail must be present.
-    assert!(
-        kinds.contains(&EventKind::ModelError),
-        "must have ModelError"
+    // Turn must succeed.
+    assert!(kinds.contains(&EventKind::AssistantMessage), "must have AssistantMessage");
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+    assert!(!kinds.contains(&EventKind::ModelError), "must not ModelError");
+
+    // Usage aggregated: 10+20+30=60, 3+4+8=15, 13+24+38=75.
+    let usage_event = events.iter().find(|e| e.kind == EventKind::ModelUsage).expect("ModelUsage");
+    assert_eq!(
+        usage_event.detail,
+        "prompt_tokens=60 completion_tokens=15 total_tokens=75"
     );
+
+    // Request tools policy: [true, true, false].
+    assert_eq!(client.request_count(), 3, "exactly 3 HTTP requests");
+    assert!(client.request_had_tools(0), "step 1 must carry tools");
+    assert!(client.request_had_tools(1), "step 2 must carry tools (budget remains)");
+    assert!(!client.request_had_tools(2), "step 3 must NOT carry tools (budget exhausted)");
+
+    // tool_activities: [search_text, read_file] both succeeded.
+    assert_eq!(output.tool_activities.len(), 2);
+    assert_eq!(output.tool_activities[0].name, "search_text");
+    assert!(output.tool_activities[0].succeeded);
+    assert_eq!(output.tool_activities[1].name, "read_file");
+    assert!(output.tool_activities[1].succeeded);
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- list_files → read_file → assistant (three-call success) ----------------
+
+#[test]
+fn list_files_then_read_file_three_call_success_event_order() {
+    let workspace = make_temp_workspace("info.txt", "project info");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // Step 1: model calls list_files (exec 1).
+        tool_call_resp("list_files", "call-l1", "{}", None),
+        // Step 2: model calls read_file (exec 2).
+        tool_call_resp("read_file", "call-l2", r#"{"path":"info.txt"}"#, None),
+        // Step 3: model returns assistant answer.
+        assistant_resp("Listed and read the file.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "list then read",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Three ModelRoute events.
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        3,
+        "exactly three ModelRoute events"
+    );
+
+    // Two ToolCall events (both executions ran).
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        2,
+        "exactly two ToolCall events"
+    );
+
+    // Turn must succeed.
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+
+    // tool_activities: [list_files, read_file] both succeeded.
+    assert_eq!(output.tool_activities.len(), 2);
+    assert_eq!(output.tool_activities[0].name, "list_files");
+    assert!(output.tool_activities[0].succeeded);
+    assert_eq!(output.tool_activities[1].name, "read_file");
+    assert!(output.tool_activities[1].succeeded);
+
+    assert_eq!(client.request_count(), 3, "exactly 3 HTTP requests");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Third-response tool call rejected with ModelError + RunFail -------------
+
+#[test]
+fn third_tool_call_rejected_with_model_error_and_run_fail() {
+    let workspace = make_temp_workspace("a.txt", "aaa");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // Step 1: exec 1.
+        tool_call_resp("read_file", "call-t1", r#"{"path":"a.txt"}"#, None),
+        // Step 2: exec 2.
+        tool_call_resp("list_files", "call-t2", "{}", None),
+        // Step 3: model STILL returns a tool call — must be rejected.
+        tool_call_resp("search_text", "call-t3", r#"{"query":"aaa"}"#, None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "three tool calls",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Three ModelRoute events (one per model step; third is emitted before rejection).
+    assert_eq!(
+        kinds
+            .iter()
+            .filter(|&&k| k == EventKind::ModelRoute)
+            .count(),
+        3,
+        "three ModelRoute events including the rejected third"
+    );
+
+    // Only TWO ToolCall events — the third model step's tool call is NOT executed.
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(),
+        2,
+        "exactly two ToolCall events — third tool call not executed"
+    );
+
+    // Must RunFail with ModelError containing the sentinel.
+    assert!(kinds.contains(&EventKind::ModelError), "must have ModelError");
     assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
-    assert!(!kinds.contains(&EventKind::RunComplete), "no RunComplete");
+    assert!(!kinds.contains(&EventKind::RunComplete), "must not RunComplete");
 
-    // Recorded request count is exactly 2.
-    assert_eq!(client.request_count(), 2);
-
-    // Error detail must contain the sentinel string.
     let model_error_event = events
         .iter()
         .find(|e| e.kind == EventKind::ModelError)
         .unwrap();
     assert!(
-        model_error_event
-            .detail
-            .contains("second_tool_call_not_supported"),
-        "ModelError must contain 'second_tool_call_not_supported': {}",
+        model_error_event.detail.contains("third_tool_call_not_supported"),
+        "ModelError must contain 'third_tool_call_not_supported': {}",
         model_error_event.detail
     );
 
-    // tool_activities is non-empty (from first tool execution).
-    assert!(!output.tool_activities.is_empty());
+    // tool_activities must contain both executed tool activities.
+    assert_eq!(output.tool_activities.len(), 2, "two tool activities before rejection");
+    assert_eq!(output.tool_activities[0].name, "read_file");
+    assert_eq!(output.tool_activities[1].name, "list_files");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Usage aggregation across three model responses --------------------------
+
+#[test]
+fn usage_aggregation_three_model_responses_sums_all_fields() {
+    // usage1(prompt=10, completion=5, total=15)
+    // + usage2(prompt=20, completion=6, total=26)
+    // + usage3(prompt=30, completion=7, total=37)
+    // = prompt=60, completion=18, total=78 (each field summed independently).
+    let workspace = make_temp_workspace("b.txt", "b");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-u1",
+            r#"{"path":"b.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 5,
+                total_tokens: 15,
+            }),
+        ),
+        tool_call_resp(
+            "list_files",
+            "call-u2",
+            "{}",
+            Some(OpenAIUsage {
+                prompt_tokens: 20,
+                completion_tokens: 6,
+                total_tokens: 26,
+            }),
+        ),
+        assistant_resp(
+            "Done.",
+            Some(OpenAIUsage {
+                prompt_tokens: 30,
+                completion_tokens: 7,
+                total_tokens: 37,
+            }),
+        ),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "aggregate three",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+
+    // RunComplete must be present.
+    assert!(events.iter().any(|e| e.kind == EventKind::RunComplete));
+
+    // Exactly ONE ModelUsage event.
+    let usage_events: Vec<_> = events
+        .iter()
+        .filter(|e| e.kind == EventKind::ModelUsage)
+        .collect();
+    assert_eq!(usage_events.len(), 1, "exactly one ModelUsage");
+
+    assert_eq!(
+        usage_events[0].detail,
+        "prompt_tokens=60 completion_tokens=18 total_tokens=78",
+        "usage must be independently summed across all three model responses"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Tools re-offered on second request when budget remains, not after -------
+
+#[test]
+fn tools_offered_on_second_request_when_budget_remains() {
+    // exec1=read_file(success) → second request MUST carry tools (budget=1<2)
+    // exec2=list_files(success) → third request MUST NOT carry tools (budget=2=2)
+    let workspace = make_temp_workspace("c.txt", "c");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-b1", r#"{"path":"c.txt"}"#, None),
+        tool_call_resp("list_files", "call-b2", "{}", None),
+        assistant_resp("Done.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "tools policy check",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    assert_eq!(client.request_count(), 3, "exactly 3 HTTP requests");
+    // Request 0: first model call — always carries tool definitions.
+    assert!(client.request_had_tools(0), "request 0 must carry tools");
+    // Request 1: second model call — carries tools (exec 1 succeeded, budget remains).
+    assert!(
+        client.request_had_tools(1),
+        "request 1 must carry tools (budget remains after successful exec 1)"
+    );
+    // Request 2: third model call — NO tools (budget exhausted after exec 2).
+    assert!(
+        !client.request_had_tools(2),
+        "request 2 must NOT carry tools (budget exhausted)"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- No ModelUsage emitted on RunFail path (three tool-call responses) -------
+
+#[test]
+fn third_tool_call_no_usage_on_run_fail() {
+    // Three tool call responses → RunFail at the third step.
+    // ModelUsage MUST NOT be emitted even though steps 1 and 2 carried usage.
+    let workspace = make_temp_workspace("d.txt", "d");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-nu1",
+            r#"{"path":"d.txt"}"#,
+            Some(OpenAIUsage {
+                prompt_tokens: 10,
+                completion_tokens: 2,
+                total_tokens: 12,
+            }),
+        ),
+        tool_call_resp(
+            "list_files",
+            "call-nu2",
+            "{}",
+            Some(OpenAIUsage {
+                prompt_tokens: 15,
+                completion_tokens: 3,
+                total_tokens: 18,
+            }),
+        ),
+        // Third step returns a tool call → RunFail, no usage emitted.
+        tool_call_resp("search_text", "call-nu3", r#"{"query":"d"}"#, None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "three tool calls no usage",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+
+    // Must RunFail.
+    assert!(events.iter().any(|e| e.kind == EventKind::RunFail), "must RunFail");
+    assert!(!events.iter().any(|e| e.kind == EventKind::RunComplete), "must not RunComplete");
+
+    // NO ModelUsage event on the RunFail path.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ModelUsage),
+        "RunFail path must emit NO ModelUsage even though earlier calls had usage"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- ToolResult event detail is summary-only (full content not in EventLog) --
+
+#[test]
+fn tool_result_detail_is_summary_only() {
+    // Write a file whose content contains a distinctive sentinel that MUST NOT
+    // appear in any ToolResult event's detail field.
+    let sentinel = "SENTINEL_CONTENT_XYZZY_CARAVAN_T3_TEST_MARKER_12345";
+    let workspace = make_temp_workspace("secret.txt", sentinel);
+
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        // Exec 1: read the file containing the sentinel.
+        tool_call_resp("read_file", "call-sr1", r#"{"path":"secret.txt"}"#, None),
+        // Exec 2: list files (to exercise two-tool path, ensuring both ToolResult
+        // events are checked).
+        tool_call_resp("list_files", "call-sr2", "{}", None),
+        assistant_resp("I can see the workspace.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "read secret file",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+
+    // The turn must have succeeded (RunComplete) to ensure ToolResult events exist.
+    assert!(
+        events.iter().any(|e| e.kind == EventKind::RunComplete),
+        "must RunComplete so ToolResult events are present"
+    );
+
+    // Assert that no ToolResult event's detail contains the sentinel string.
+    for event in events.iter().filter(|e| e.kind == EventKind::ToolResult) {
+        assert!(
+            !event.detail.contains(sentinel),
+            "ToolResult event detail must not contain full file content (sentinel found): {:?}",
+            event.detail
+        );
+    }
+
+    // Also assert no other event type leaks the sentinel through the event log.
+    for event in events.iter() {
+        if event.kind == EventKind::ToolResult || event.kind == EventKind::ModelOutputChunk
+            || event.kind == EventKind::AssistantMessage
+        {
+            // ModelOutputChunk and AssistantMessage may theoretically include the
+            // sentinel in a real run if the model echoed it back, but with a fake
+            // client that returns fixed content, they won't. We skip these to avoid
+            // coupling the test to fake-client response content.
+            continue;
+        }
+        assert!(
+            !event.detail.contains(sentinel),
+            "Event {:?} must not contain full file content (sentinel found): {:?}",
+            event.kind,
+            event.detail
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Single read_file still works (single-tool path not regressed) -----------
+
+#[test]
+fn native_tool_single_read_file_still_works_after_bounded_pipeline() {
+    let workspace = make_temp_workspace("single.txt", "single content");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-sg1", r#"{"path":"single.txt"}"#, None),
+        assistant_resp("Read the file.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "read single",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Two ModelRoute events (exec 1 + final assistant).
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        2,
+        "two ModelRoute events for single-tool path"
+    );
+    // ONE ToolCall, ONE ToolResult.
+    assert_eq!(kinds.iter().filter(|&&k| k == EventKind::ToolCall).count(), 1);
+    assert_eq!(kinds.iter().filter(|&&k| k == EventKind::ToolResult).count(), 1);
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+
+    assert_eq!(output.tool_activities.len(), 1);
+
+    // Two HTTP requests; second carries tools (budget remains after exec 1 success).
+    assert_eq!(client.request_count(), 2);
+    assert!(client.request_had_tools(0), "request 0 must carry tools");
+    assert!(client.request_had_tools(1), "request 1 must carry tools (budget remains)");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- First-tool ToolError: second call offers NO tools (model explains) ------
+
+#[test]
+fn native_tool_first_exec_error_second_request_carries_no_tools() {
+    // read_file on a missing file → ToolError → second call (assistant) offered NO tools.
+    let workspace = make_temp_workspace("", "");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp(
+            "read_file",
+            "call-e1",
+            r#"{"path":"missing_file_xyz.txt"}"#,
+            None,
+        ),
+        assistant_resp("The file was not found.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    let output = run_mock_turn(
+        &mut event_log,
+        "read missing",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // ToolError must be present (not ToolResult).
+    assert!(kinds.contains(&EventKind::ToolError), "must have ToolError");
+    assert!(!kinds.contains(&EventKind::ToolResult), "must NOT have ToolResult");
+
+    // Turn still reaches RunComplete (model explains the error).
+    assert!(kinds.contains(&EventKind::RunComplete), "must RunComplete");
+    assert!(!kinds.contains(&EventKind::RunFail), "must not RunFail");
+
+    // Two HTTP requests; second must NOT carry tools (tool error → no re-offer).
+    assert_eq!(client.request_count(), 2);
+    assert!(client.request_had_tools(0), "request 0 must carry tools");
+    assert!(
+        !client.request_had_tools(1),
+        "request 1 must NOT carry tools (after tool error)"
+    );
+
+    // tool_activities: one entry, succeeded=false.
+    assert_eq!(output.tool_activities.len(), 1);
+    assert!(!output.tool_activities[0].succeeded);
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Two-tool success does not stage Workspace Context (no ToolContextAttach) -
+
+#[test]
+fn native_tool_two_tool_turn_does_not_stage_workspace_context() {
+    let workspace = make_temp_workspace("e.txt", "e");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-wc1", r#"{"path":"e.txt"}"#, None),
+        tool_call_resp("list_files", "call-wc2", "{}", None),
+        assistant_resp("Done.", None),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "two tool no context",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+
+    // ToolContextAttach must NOT be emitted by the native tool flow.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ToolContextAttach),
+        "native tool flow must not emit ToolContextAttach"
+    );
+
+    // Must still succeed.
+    assert!(events.iter().any(|e| e.kind == EventKind::RunComplete));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- Adapter-level multi-tool in second response still rejected --------------
+
+#[test]
+fn native_tool_two_tool_calls_in_second_response_is_adapter_error() {
+    // The SECOND response has multiple tool calls in a single response
+    // (rejected at the adapter level before we even see a ToolCall).
+    // This should cause a RunFail without ModelRoute for the second call.
+    let workspace = make_temp_workspace("f.txt", "f");
+    let client = Arc::new(QueuedFakeClient::new(vec![
+        tool_call_resp("read_file", "call-ae1", r#"{"path":"f.txt"}"#, None),
+        // Multiple tool calls in one response → adapter error.
+        two_tool_calls_resp(),
+    ]));
+    let gateway = ModelGateway::with_openai_http_client_for_test(
+        openai_config(),
+        Box::new(Arc::clone(&client)),
+    );
+    let mut event_log = EventLog::new();
+    run_mock_turn(
+        &mut event_log,
+        "adapter error on second",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let kinds: Vec<EventKind> = events.iter().map(|e| e.kind).collect();
+
+    // Only ONE ModelRoute (from exec 1); second call returns adapter error.
+    assert_eq!(
+        kinds.iter().filter(|&&k| k == EventKind::ModelRoute).count(),
+        1,
+        "only one ModelRoute — second call adapter error"
+    );
+    assert!(kinds.contains(&EventKind::ToolResult), "exec 1 must have ToolResult");
+    assert!(kinds.contains(&EventKind::ModelError), "must have ModelError");
+    assert!(kinds.contains(&EventKind::RunFail), "must have RunFail");
+    assert!(!kinds.contains(&EventKind::RunComplete), "must not RunComplete");
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
