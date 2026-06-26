@@ -76,7 +76,12 @@ Operating Rules:\n\
 - Do not claim tool execution happened unless present in the event trace.\n\
 - Ask for explicit user action before any mutation.\n\
 - Automatic write or shell execution is not available in this baseline.\n\
-- Experimental harness commands may exist but are not part of the default agent contract.\n\n\
+- Experimental harness commands may exist but are not part of the default agent contract.\n\
+- Use the provided read-only tools when workspace inspection is necessary.\n\
+- Request at most one workspace tool per turn.\n\
+- Do not invent tool results.\n\
+- After receiving a tool result, answer the user's original task without requesting another tool.\n\
+- Only read-only workspace tools are available in this baseline.\n\n\
 Output:\n\
 Respond to the current user message.",
         memory_content, conversation, current_user_message, workspace_context
@@ -124,7 +129,12 @@ Operating Rules:\n\
 - Do not claim tool execution happened unless present in the event trace.\n\
 - Ask for explicit user action before any mutation.\n\
 - Automatic write or shell execution is not available in this baseline.\n\
-- Experimental harness commands may exist but are not part of the default agent contract.\n\n\
+- Experimental harness commands may exist but are not part of the default agent contract.\n\
+- Use the provided read-only tools when workspace inspection is necessary.\n\
+- Request at most one workspace tool per turn.\n\
+- Do not invent tool results.\n\
+- After receiving a tool result, answer the user's original task without requesting another tool.\n\
+- Only read-only workspace tools are available in this baseline.\n\n\
 Output:\n\
 Respond to the current user message.",
             missing_memory
