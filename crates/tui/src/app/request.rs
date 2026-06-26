@@ -64,6 +64,11 @@ impl super::App {
                             // SearchResults is not expected from /request run today
                             // (only list_files/read_file are reconstructed), but we degrade
                             // gracefully rather than panicking on a public ToolOutput variant.
+                            // Stage the candidate so the attach hint is accurate, matching
+                            // the FileList/FileContent arms above.
+                            self.last_tool_output_candidate = Some(
+                                ManualToolContext::from_search_text(query, matches, truncated),
+                            );
                             self.push_tool_search_output(query, matches, truncated);
                             self.pending_model_tool_request = None;
                             self.log.push(

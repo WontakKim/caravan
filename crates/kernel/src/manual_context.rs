@@ -101,31 +101,41 @@ impl ManualToolContext {
     pub fn from_search_text(
         query: &str,
         matches: &[crate::tool::registry::SearchMatch],
-        _truncated: bool,
+        search_truncated: bool,
     ) -> Self {
         let source = format!("tool=search_text query=\"{query}\"");
-        let marker = "\n... [truncated]";
+        let byte_marker = "\n... [context truncated by byte budget]";
 
-        let content: String = matches
+        let mut content: String = matches
             .iter()
             .map(|m| format!("{}:{}: {}", m.path, m.line, m.text))
             .collect::<Vec<_>>()
             .join("\n");
 
+        // Preserve the search-level match-cap truncation so the staged context
+        // is not mistaken for a complete result set when only the first capped
+        // batch of matches is present.
+        if search_truncated {
+            if !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str("... [search results truncated by match limit]");
+        }
+
         if content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
             return Self {
                 source,
                 content,
-                truncated: false,
+                truncated: search_truncated,
             };
         }
 
-        let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - marker.len();
+        let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - byte_marker.len();
         let mut cut = budget;
         while cut > 0 && !content.is_char_boundary(cut) {
             cut -= 1;
         }
-        let truncated_content = format!("{}{}", &content[..cut], marker);
+        let truncated_content = format!("{}{}", &content[..cut], byte_marker);
 
         Self {
             source,
