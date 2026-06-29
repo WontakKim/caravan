@@ -758,6 +758,83 @@ fn range_read_byte_cap_truncation_sets_truncated_true() {
 }
 
 #[test]
+fn range_read_limit_does_not_read_past_requested_window() {
+    let dir = TempDir::new();
+    // Lines 1-2 are valid UTF-8; line 3 is invalid. A read of the first two
+    // lines must succeed without ever decoding line 3 (regression: the loop
+    // used to read one line past the requested count before breaking).
+    let mut content = b"line one\nline two\n".to_vec();
+    content.extend_from_slice(&[0xFF, 0xFE, 0xFF]);
+    content.push(b'\n');
+    std::fs::write(dir.path().join("guard.bin"), &content).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "guard.bin".to_string(),
+            offset: Some(1),
+            limit: Some(2),
+        },
+    );
+
+    match result.expect("limit=2 read must not touch the invalid third line") {
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(start_line, Some(1));
+            assert_eq!(line_count, Some(2));
+            assert!(!truncated);
+            assert_eq!(content, "line one\nline two");
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_single_line_exactly_at_byte_cap_is_not_truncated() {
+    let dir = TempDir::new();
+    // A single line of exactly MAX_READ_RANGE_OUTPUT_BYTES bytes must be
+    // returned whole with truncated=false (regression: the per-line `+1`
+    // separator accounting used to flag this exact-fit case as truncated).
+    let exact = "a".repeat(MAX_READ_RANGE_OUTPUT_BYTES);
+    std::fs::write(dir.path().join("exact.txt"), &exact).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "exact.txt".to_string(),
+            offset: Some(1),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(line_count, Some(1));
+            assert!(
+                !truncated,
+                "a line exactly at the byte cap must not be marked truncated"
+            );
+            assert_eq!(content.len(), MAX_READ_RANGE_OUTPUT_BYTES);
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
 fn range_read_on_directory_returns_not_a_file() {
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");

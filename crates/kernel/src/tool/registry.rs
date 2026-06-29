@@ -327,13 +327,28 @@ impl ToolRegistry {
                 .unwrap_or(DEFAULT_READ_RANGE_LIMIT_LINES)
                 .min(MAX_READ_RANGE_LIMIT_LINES);
 
+            // A zero-line range is a valid no-op. Return before opening the file
+            // so an invalid/oversized line inside the requested window can never
+            // surface as an error for a request that asked for no lines.
+            if count == 0 {
+                return Ok(ToolOutput::FileContent {
+                    path: requested.to_string(),
+                    content: String::new(),
+                    start_line: Some(start),
+                    line_count: Some(0),
+                    truncated: false,
+                });
+            }
+
             let file = std::fs::File::open(&canonical).map_err(|e| ToolError::Io {
                 message: e.to_string(),
             })?;
             let reader = BufReader::new(file);
 
             let mut lines_collected: Vec<String> = Vec::new();
-            let mut total_bytes: usize = 0;
+            // Bytes of the eventual `join("\n")` output: line content plus one
+            // separator between collected lines (never a trailing one).
+            let mut content_bytes: usize = 0;
             let mut truncated = false;
             let mut line_index: usize = 0;
             let mut seen_start = false;
@@ -359,14 +374,12 @@ impl ToolRegistry {
 
                 seen_start = true;
 
-                if lines_collected.len() >= count {
-                    break;
-                }
-
-                // Byte cap: count line content + newline separator.
-                let line_bytes = line.len() + 1;
-                if total_bytes + line_bytes > MAX_READ_RANGE_OUTPUT_BYTES {
-                    let remaining = MAX_READ_RANGE_OUTPUT_BYTES.saturating_sub(total_bytes);
+                // Byte cap measured against the real join output: the separator
+                // is only charged when a prior line already exists.
+                let separator_bytes = if lines_collected.is_empty() { 0 } else { 1 };
+                if content_bytes + separator_bytes + line.len() > MAX_READ_RANGE_OUTPUT_BYTES {
+                    let remaining =
+                        MAX_READ_RANGE_OUTPUT_BYTES.saturating_sub(content_bytes + separator_bytes);
                     let mut cut = remaining.min(line.len());
                     while cut > 0 && !line.is_char_boundary(cut) {
                         cut -= 1;
@@ -378,8 +391,14 @@ impl ToolRegistry {
                     break;
                 }
 
-                total_bytes += line_bytes;
+                content_bytes += separator_bytes + line.len();
                 lines_collected.push(line);
+
+                // Stop as soon as the requested count is satisfied, before
+                // reading (and UTF-8-decoding) any line past the window.
+                if lines_collected.len() >= count {
+                    break;
+                }
             }
 
             // EOF was reached before the requested start line.
