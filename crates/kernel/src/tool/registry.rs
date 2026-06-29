@@ -320,6 +320,13 @@ impl ToolRegistry {
             })
         } else {
             // ── Range read path ─────────────────────────────────────────────
+            // Stream the file in buffered chunks. Lines before `offset` are only
+            // scanned for newlines (never allocated), and the emitted output is
+            // accumulated directly into a byte buffer that never grows past
+            // `MAX_READ_RANGE_OUTPUT_BYTES`. This keeps memory and input
+            // processing bounded even for a single pathologically long line
+            // (e.g. a multi-megabyte minified file), which a line-at-a-time
+            // reader would otherwise load whole into memory.
             use std::io::{BufRead, BufReader};
 
             let start = offset.unwrap_or(1).max(1);
@@ -343,65 +350,97 @@ impl ToolRegistry {
             let file = std::fs::File::open(&canonical).map_err(|e| ToolError::Io {
                 message: e.to_string(),
             })?;
-            let reader = BufReader::new(file);
+            let mut reader = BufReader::new(file);
 
-            let mut lines_collected: Vec<String> = Vec::new();
-            // Bytes of the eventual `join("\n")` output: line content plus one
-            // separator between collected lines (never a trailing one).
-            let mut content_bytes: usize = 0;
+            // `out` holds the eventual `lines.join("\n")` bytes and is hard-capped
+            // at MAX_READ_RANGE_OUTPUT_BYTES. `line_no` is the 1-based line we are
+            // currently scanning; `completed` counts window lines terminated by a
+            // newline. `need_separator` defers the inter-line `\n` so empty lines
+            // still contribute their separator (matching `lines().join("\n")`).
+            let mut out: Vec<u8> = Vec::new();
+            let mut line_no: usize = 1;
+            let mut completed: usize = 0;
             let mut truncated = false;
-            let mut line_index: usize = 0;
-            let mut seen_start = false;
+            let mut hit_cap = false;
+            let mut need_separator = false;
+            let mut cur_has_content = false;
+            let mut cur_last_was_cr = false;
 
-            for line_result in reader.lines() {
-                let line = line_result.map_err(|e| {
-                    if e.kind() == std::io::ErrorKind::InvalidData {
-                        ToolError::NonUtf8 {
-                            path: requested.to_string(),
-                        }
-                    } else {
-                        ToolError::Io {
-                            message: e.to_string(),
-                        }
-                    }
+            'scan: loop {
+                let chunk = reader.fill_buf().map_err(|e| ToolError::Io {
+                    message: e.to_string(),
                 })?;
-
-                line_index += 1;
-
-                if line_index < start {
-                    continue;
+                if chunk.is_empty() {
+                    break; // EOF
                 }
+                let mut consumed = 0usize;
+                for &b in chunk.iter() {
+                    consumed += 1;
 
-                seen_start = true;
-
-                // Byte cap measured against the real join output: the separator
-                // is only charged when a prior line already exists.
-                let separator_bytes = if lines_collected.is_empty() { 0 } else { 1 };
-                if content_bytes + separator_bytes + line.len() > MAX_READ_RANGE_OUTPUT_BYTES {
-                    let remaining =
-                        MAX_READ_RANGE_OUTPUT_BYTES.saturating_sub(content_bytes + separator_bytes);
-                    let mut cut = remaining.min(line.len());
-                    while cut > 0 && !line.is_char_boundary(cut) {
-                        cut -= 1;
+                    if line_no < start {
+                        // Skipping a line before the window: only newlines matter.
+                        if b == b'\n' {
+                            line_no += 1;
+                        }
+                        continue;
                     }
-                    if cut > 0 {
-                        lines_collected.push(line[..cut].to_string());
+
+                    if b == b'\n' {
+                        // Terminate the current window line.
+                        if need_separator {
+                            if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
+                                truncated = true;
+                                hit_cap = true;
+                                reader.consume(consumed);
+                                break 'scan;
+                            }
+                            out.push(b'\n');
+                            need_separator = false;
+                        }
+                        // Strip a trailing '\r' belonging to this line ("\r\n"),
+                        // matching the behavior of `BufRead::lines()`.
+                        if cur_last_was_cr {
+                            out.pop();
+                        }
+                        completed += 1;
+                        cur_has_content = false;
+                        cur_last_was_cr = false;
+                        line_no += 1;
+                        if completed == count {
+                            reader.consume(consumed);
+                            break 'scan;
+                        }
+                        need_separator = line_no > start;
+                        continue;
                     }
-                    truncated = true;
-                    break;
-                }
 
-                content_bytes += separator_bytes + line.len();
-                lines_collected.push(line);
-
-                // Stop as soon as the requested count is satisfied, before
-                // reading (and UTF-8-decoding) any line past the window.
-                if lines_collected.len() >= count {
-                    break;
+                    // Content byte of a window line.
+                    if need_separator {
+                        if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
+                            truncated = true;
+                            hit_cap = true;
+                            reader.consume(consumed);
+                            break 'scan;
+                        }
+                        out.push(b'\n');
+                        need_separator = false;
+                    }
+                    if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
+                        truncated = true;
+                        hit_cap = true;
+                        reader.consume(consumed);
+                        break 'scan;
+                    }
+                    out.push(b);
+                    cur_has_content = true;
+                    cur_last_was_cr = b == b'\r';
                 }
+                reader.consume(consumed);
             }
 
-            // EOF was reached before the requested start line.
+            // EOF (or cap) reached before the requested start line ever produced
+            // any content => empty range, reported at the requested offset.
+            let seen_start = completed > 0 || cur_has_content || hit_cap;
             if !seen_start {
                 return Ok(ToolOutput::FileContent {
                     path: requested.to_string(),
@@ -412,14 +451,38 @@ impl ToolRegistry {
                 });
             }
 
-            let actual_count = lines_collected.len();
-            let content = lines_collected.join("\n");
+            // A final line without a trailing newline, or a cap-truncated partial
+            // line, counts as one returned line.
+            let line_count = if hit_cap || cur_has_content {
+                completed + 1
+            } else {
+                completed
+            };
+
+            let content = match String::from_utf8(out) {
+                Ok(s) => s,
+                Err(e) => {
+                    if truncated {
+                        // Cut mid-character at the byte cap: keep the valid prefix
+                        // (a UTF-8 char boundary) and drop the partial trailing char.
+                        let valid = e.utf8_error().valid_up_to();
+                        let mut bytes = e.into_bytes();
+                        bytes.truncate(valid);
+                        String::from_utf8(bytes).unwrap_or_default()
+                    } else {
+                        // Genuinely invalid UTF-8 within the emitted content.
+                        return Err(ToolError::NonUtf8 {
+                            path: requested.to_string(),
+                        });
+                    }
+                }
+            };
 
             Ok(ToolOutput::FileContent {
                 path: requested.to_string(),
                 content,
                 start_line: Some(start),
-                line_count: Some(actual_count),
+                line_count: Some(line_count),
                 truncated,
             })
         }

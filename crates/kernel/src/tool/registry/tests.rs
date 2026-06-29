@@ -835,6 +835,122 @@ fn range_read_single_line_exactly_at_byte_cap_is_not_truncated() {
 }
 
 #[test]
+fn range_read_single_line_far_larger_than_cap_truncates_bounded() {
+    let dir = TempDir::new();
+    // A single line many times larger than the output cap must come back
+    // truncated and bounded — the range reader must NOT load the whole line
+    // into memory (regression: a line-at-a-time reader allocated the full line).
+    let huge = "a".repeat(MAX_READ_RANGE_OUTPUT_BYTES * 4);
+    std::fs::write(dir.path().join("huge_line.txt"), &huge).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "huge_line.txt".to_string(),
+            offset: Some(1),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            truncated,
+            ..
+        } => {
+            assert_eq!(start_line, Some(1));
+            assert!(truncated, "a line larger than the cap must be truncated");
+            assert!(
+                content.len() <= MAX_READ_RANGE_OUTPUT_BYTES,
+                "content {} must stay within the byte cap {}",
+                content.len(),
+                MAX_READ_RANGE_OUTPUT_BYTES
+            );
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_offset_past_eof_on_huge_single_line_returns_empty() {
+    let dir = TempDir::new();
+    // One huge line (no newline). An offset past the only line must report an
+    // empty range without loading the line into memory.
+    let huge = "z".repeat(MAX_READ_RANGE_OUTPUT_BYTES * 4);
+    std::fs::write(dir.path().join("huge_one_line.txt"), &huge).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "huge_one_line.txt".to_string(),
+            offset: Some(5),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(start_line, Some(5));
+            assert_eq!(line_count, Some(0));
+            assert!(!truncated);
+            assert_eq!(content, "");
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_multibyte_truncation_keeps_valid_utf8() {
+    let dir = TempDir::new();
+    // A single line of multi-byte UTF-8 chars exceeding the cap must truncate on
+    // a char boundary so the returned content is still valid UTF-8.
+    // 'é' is 2 bytes; repeat past the cap.
+    let multibyte = "é".repeat(MAX_READ_RANGE_OUTPUT_BYTES);
+    std::fs::write(dir.path().join("multibyte.txt"), &multibyte).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "multibyte.txt".to_string(),
+            offset: Some(1),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content, truncated, ..
+        } => {
+            assert!(truncated, "multibyte line over cap must be truncated");
+            assert!(
+                content.len() <= MAX_READ_RANGE_OUTPUT_BYTES,
+                "truncated content must stay within the byte cap"
+            );
+            // Content is a valid Rust String, so it is already valid UTF-8; assert
+            // it is a whole number of 'é' chars (no split multi-byte sequence).
+            assert!(
+                content.chars().all(|c| c == 'é'),
+                "truncation must not split a multi-byte char"
+            );
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
 fn range_read_on_directory_returns_not_a_file() {
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
