@@ -1075,6 +1075,80 @@ fn range_read_invalid_utf8_in_oversized_line_returns_non_utf8() {
 }
 
 #[test]
+fn range_read_invalid_lead_byte_terminated_then_truncated_returns_non_utf8() {
+    let dir = TempDir::new();
+    // Line 1 ends with an incomplete UTF-8 lead byte (0xC2) immediately followed
+    // by '\n' — proving the lead byte is genuinely invalid, not a cap split. A
+    // later line then forces output truncation. The invalid byte must NOT be
+    // masked as a cap-split trailing char; result must be NonUtf8.
+    let mut bytes = std::iter::repeat(b'x')
+        .take(MAX_READ_RANGE_OUTPUT_BYTES - 1)
+        .collect::<Vec<u8>>();
+    bytes.push(0xC2); // invalid incomplete lead byte ending line 1
+    bytes.push(b'\n');
+    bytes.push(b'y'); // line 2 — forces a separator/content cap hit
+    std::fs::write(dir.path().join("bad_terminated.bin"), &bytes).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "bad_terminated.bin".to_string(),
+            offset: Some(1),
+            limit: Some(2),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::NonUtf8 { .. })),
+        "a newline-terminated invalid lead byte must return NonUtf8 even when a \
+         later line truncates output, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn range_read_cap_split_valid_multibyte_char_keeps_valid_prefix() {
+    let dir = TempDir::new();
+    // ASCII filler then 3-byte '€' chars so the byte cap falls in the MIDDLE of a
+    // valid '€'. The partial char is dropped, the valid prefix is kept, and the
+    // result is truncated but still valid UTF-8 (no NonUtf8 error).
+    let mut s = "a".repeat(MAX_READ_RANGE_OUTPUT_BYTES - 1);
+    s.push_str(&"€".repeat(8)); // pushes the cap into the middle of the first '€'
+    std::fs::write(dir.path().join("split_char.txt"), &s).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "split_char.txt".to_string(),
+            offset: Some(1),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("a cap-split valid char must succeed, not error") {
+        ToolOutput::FileContent {
+            content, truncated, ..
+        } => {
+            assert!(truncated, "content past the cap must be truncated");
+            assert!(
+                content.len() <= MAX_READ_RANGE_OUTPUT_BYTES,
+                "content must stay within the byte cap"
+            );
+            // The partial '€' was dropped, leaving only the valid 'a' prefix.
+            assert!(
+                content.chars().all(|c| c == 'a'),
+                "cap-split valid char must be dropped cleanly, leaving valid UTF-8"
+            );
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
 fn range_read_on_directory_returns_not_a_file() {
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");

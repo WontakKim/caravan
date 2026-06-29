@@ -368,6 +368,11 @@ impl ToolRegistry {
             let mut need_separator = false;
             let mut cur_has_content = false;
             let mut pending_cr = false;
+            // True only when the byte cap cut a multi-byte UTF-8 char mid-sequence
+            // (the over-cap byte is a continuation byte). Distinguishes a benign
+            // cap split of a valid char from genuinely invalid bytes, so the
+            // latter still surface as NonUtf8 rather than being silently dropped.
+            let mut cap_split_content = false;
 
             'scan: loop {
                 let chunk = reader.fill_buf().map_err(|e| ToolError::Io {
@@ -455,6 +460,9 @@ impl ToolRegistry {
                     if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
                         truncated = true;
                         hit_cap = true;
+                        // The cap split a valid multi-byte char only if this
+                        // over-cap byte is a UTF-8 continuation byte (0b10xxxxxx).
+                        cap_split_content = (b & 0b1100_0000) == 0b1000_0000;
                         reader.consume(consumed);
                         break 'scan;
                     }
@@ -505,12 +513,14 @@ impl ToolRegistry {
                 Ok(s) => s,
                 Err(e) => {
                     let utf8_err = e.utf8_error();
-                    // Keep the valid prefix ONLY when the sole defect is an
-                    // incomplete multi-byte char at the very end caused by the byte
-                    // cap (`error_len()` is `None`). A definite invalid byte
-                    // (`error_len()` is `Some`) is genuinely corrupt content and
-                    // must surface as NonUtf8 even when the read was truncated.
-                    if truncated && utf8_err.error_len().is_none() {
+                    // Keep the valid prefix ONLY when the byte cap split a valid
+                    // multi-byte char mid-sequence (`cap_split_content`) and the
+                    // sole decode defect is that incomplete trailing char
+                    // (`error_len()` is `None`). Any genuinely invalid byte — or an
+                    // incomplete tail that was NOT produced by a content cap split
+                    // (e.g. an invalid lead byte already terminated by a newline) —
+                    // must surface as NonUtf8 instead of being silently dropped.
+                    if cap_split_content && utf8_err.error_len().is_none() {
                         let valid = utf8_err.valid_up_to();
                         let mut bytes = e.into_bytes();
                         bytes.truncate(valid);
