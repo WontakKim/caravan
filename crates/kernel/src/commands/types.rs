@@ -1,12 +1,28 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolCommand {
-    List { path: String },
-    Read { path: String },
-    PlanWrite { path: String },
-    PreviewWrite { path: String },
-    ProposeWrite { path: String },
-    Search { query: String },
-    Glob { pattern: String },
+    List {
+        path: String,
+    },
+    Read {
+        path: String,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    },
+    PlanWrite {
+        path: String,
+    },
+    PreviewWrite {
+        path: String,
+    },
+    ProposeWrite {
+        path: String,
+    },
+    Search {
+        query: String,
+    },
+    Glob {
+        pattern: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

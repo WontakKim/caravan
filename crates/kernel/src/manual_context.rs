@@ -48,6 +48,38 @@ impl ManualToolContext {
         }
     }
 
+    /// Builds a context from a `read_file` range result.
+    ///
+    /// Reuses the 4 KiB char-boundary truncation from [`from_read_file`] and
+    /// sets the source label to include the input range parameters so the model
+    /// knows which portion of the file was attached:
+    /// `tool=read_file path="{path}" offset={offset} limit={limit}`.
+    pub fn from_read_file_range(path: &str, content: &str, offset: usize, limit: usize) -> Self {
+        let source = format!("tool=read_file path=\"{path}\" offset={offset} limit={limit}");
+        let marker = "\n... [truncated]";
+
+        if content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
+            return Self {
+                source,
+                content: content.to_string(),
+                truncated: false,
+            };
+        }
+
+        let budget = MANUAL_TOOL_CONTEXT_MAX_BYTES - marker.len();
+        let mut cut = budget;
+        while cut > 0 && !content.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        let truncated_content = format!("{}{}", &content[..cut], marker);
+
+        Self {
+            source,
+            content: truncated_content,
+            truncated: true,
+        }
+    }
+
     /// Builds a context from a `list_files` tool result.
     ///
     /// When the full rendered list fits within [`MANUAL_TOOL_CONTEXT_MAX_BYTES`]

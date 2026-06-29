@@ -147,18 +147,29 @@ impl super::App {
             return;
         }
 
+        // Capture the range parameters from Read so the success handler can
+        // pick the range vs. full-read code path without re-destructuring.
+        let mut read_range: Option<(usize, usize)> = None;
+
         let (request, display_path) = match tc {
             ToolCommand::List { path } => {
                 let dp = path.clone();
                 (ToolRequest::ListFiles { path }, dp)
             }
-            ToolCommand::Read { path } => {
+            ToolCommand::Read {
+                path,
+                offset,
+                limit,
+            } => {
+                if let (Some(off), Some(lim)) = (offset, limit) {
+                    read_range = Some((off, lim));
+                }
                 let dp = path.clone();
                 (
                     ToolRequest::ReadFile {
                         path,
-                        offset: None,
-                        limit: None,
+                        offset,
+                        limit,
                     },
                     dp,
                 )
@@ -181,10 +192,18 @@ impl super::App {
                 );
             }
             Ok(ToolOutput::FileContent { content, .. }) => {
-                let ctx = ManualToolContext::from_read_file(&display_path, &content);
-                self.last_tool_output_candidate = Some(ctx.clone());
-                self.pending_manual_tool_context = Some(ctx);
-                self.push_tool_read_output(&display_path, &content);
+                if let Some((off, lim)) = read_range {
+                    let range_ctx =
+                        ManualToolContext::from_read_file_range(&display_path, &content, off, lim);
+                    self.last_tool_output_candidate = Some(range_ctx.clone());
+                    self.pending_manual_tool_context = Some(range_ctx);
+                    self.push_tool_read_range_output(&display_path, &content, off, lim);
+                } else {
+                    let ctx = ManualToolContext::from_read_file(&display_path, &content);
+                    self.last_tool_output_candidate = Some(ctx.clone());
+                    self.pending_manual_tool_context = Some(ctx);
+                    self.push_tool_read_output(&display_path, &content);
+                }
                 self.log.push(
                     "This tool output will be used as workspace context for your next message."
                         .to_string(),

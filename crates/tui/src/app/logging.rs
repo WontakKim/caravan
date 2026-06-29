@@ -34,6 +34,41 @@ impl super::App {
         }
     }
 
+    /// Pushes a range-bounded file content preview to the screen log.
+    ///
+    /// Emits a header `Tool read {path} lines {start}-{end}:` where `start = offset`
+    /// and `end = offset + limit - 1`. When `content` is empty, emits
+    /// `No content in requested range.` instead of the content preview. Otherwise,
+    /// the preview is truncated to at most [`super::TOOL_READ_PREVIEW_BYTES`] bytes
+    /// using the same char-boundary backward scan as [`push_tool_read_output`].
+    pub(super) fn push_tool_read_range_output(
+        &mut self,
+        display_path: &str,
+        content: &str,
+        offset: usize,
+        limit: usize,
+    ) {
+        let start = offset;
+        let end = offset + limit.saturating_sub(1);
+        self.log.push(format!(
+            "Tool read {} lines {}-{}:",
+            display_path, start, end
+        ));
+        if content.is_empty() {
+            self.log.push("No content in requested range.".to_string());
+            return;
+        }
+        let mut limit_bytes = super::TOOL_READ_PREVIEW_BYTES.min(content.len());
+        while limit_bytes > 0 && !content.is_char_boundary(limit_bytes) {
+            limit_bytes -= 1;
+        }
+        let preview = &content[..limit_bytes];
+        self.log.push(preview.to_string());
+        if content.len() > limit_bytes {
+            self.log.push("... [truncated]".to_string());
+        }
+    }
+
     /// Pushes a bounded diff preview of a proposed write to the screen log.
     ///
     /// For [`WritePreviewKind::NoChange`], emits the single literal line `"No changes."`

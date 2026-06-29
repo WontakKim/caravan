@@ -1,3 +1,5 @@
+use crate::tool::registry::{DEFAULT_READ_RANGE_LIMIT_LINES, MAX_READ_RANGE_LIMIT_LINES};
+
 use super::*;
 
 #[test]
@@ -133,7 +135,9 @@ fn tool_read_with_file() {
     assert_eq!(
         parse_input("/tool read README.md"),
         ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
-            path: "README.md".to_string()
+            path: "README.md".to_string(),
+            offset: None,
+            limit: None,
         }))
     );
 }
@@ -754,7 +758,7 @@ fn help_catalog_has_24_entries_in_exact_order() {
             "/permissions",
             "/allowed-tools",
             "/tool list [path]",
-            "/tool read <path>",
+            "/tool read <path> [--offset <line>] [--limit <lines>]",
             "/tool search <query>",
             "/tool glob <pattern>",
             "/context attach-last-tool",
@@ -786,4 +790,187 @@ fn help_catalog_excludes_removed_commands() {
             forbidden
         );
     }
+}
+
+// --- /tool read --offset/--limit flag parsing tests ---
+
+#[test]
+fn tool_read_no_flags_has_none_offset_and_limit() {
+    assert_eq!(
+        parse_input("/tool read README.md"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+            path: "README.md".to_string(),
+            offset: None,
+            limit: None,
+        }))
+    );
+}
+
+#[test]
+fn tool_read_offset_only_sets_default_limit() {
+    assert_eq!(
+        parse_input("/tool read README.md --offset 10"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+            path: "README.md".to_string(),
+            offset: Some(10),
+            limit: Some(DEFAULT_READ_RANGE_LIMIT_LINES),
+        }))
+    );
+}
+
+#[test]
+fn tool_read_limit_only_sets_offset_one() {
+    assert_eq!(
+        parse_input("/tool read README.md --limit 50"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+            path: "README.md".to_string(),
+            offset: Some(1),
+            limit: Some(50),
+        }))
+    );
+}
+
+#[test]
+fn tool_read_offset_then_limit() {
+    assert_eq!(
+        parse_input("/tool read README.md --offset 10 --limit 50"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+            path: "README.md".to_string(),
+            offset: Some(10),
+            limit: Some(50),
+        }))
+    );
+}
+
+#[test]
+fn tool_read_limit_then_offset() {
+    assert_eq!(
+        parse_input("/tool read README.md --limit 50 --offset 10"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+            path: "README.md".to_string(),
+            offset: Some(10),
+            limit: Some(50),
+        }))
+    );
+}
+
+#[test]
+fn tool_read_both_orders_produce_identical_result() {
+    let a = parse_input("/tool read README.md --offset 10 --limit 50");
+    let b = parse_input("/tool read README.md --limit 50 --offset 10");
+    assert_eq!(
+        a, b,
+        "--offset before --limit and after must yield identical result"
+    );
+}
+
+#[test]
+fn tool_read_offset_zero_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --offset 0"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_limit_zero_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --limit 0"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_limit_exceeds_max_is_unknown() {
+    let over_max = format!(
+        "/tool read README.md --limit {}",
+        MAX_READ_RANGE_LIMIT_LINES + 1
+    );
+    assert!(
+        matches!(
+            parse_input(&over_max),
+            ParsedInput::SlashCommand(Command::Unknown(_))
+        ),
+        "--limit {} must be Command::Unknown",
+        MAX_READ_RANGE_LIMIT_LINES + 1
+    );
+}
+
+#[test]
+fn tool_read_limit_at_max_is_valid() {
+    assert_eq!(
+        parse_input(&format!(
+            "/tool read README.md --limit {}",
+            MAX_READ_RANGE_LIMIT_LINES
+        )),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Read {
+            path: "README.md".to_string(),
+            offset: Some(1),
+            limit: Some(MAX_READ_RANGE_LIMIT_LINES),
+        }))
+    );
+}
+
+#[test]
+fn tool_read_limit_999999_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --limit 999999"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_offset_non_integer_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --offset abc"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_limit_non_integer_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --limit xyz"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_offset_flag_no_value_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --offset"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_limit_flag_no_value_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --limit"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_duplicate_offset_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --offset 5 --offset 10"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_duplicate_limit_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --limit 5 --limit 10"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
+#[test]
+fn tool_read_unknown_flag_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool read README.md --verbose"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
 }

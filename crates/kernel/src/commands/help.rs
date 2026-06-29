@@ -63,7 +63,7 @@ static HELP_SECTIONS: &[HelpSection] = &[
                 description: "list files under the workspace",
             },
             CommandHelpEntry {
-                command: "/tool read <path>",
+                command: "/tool read <path> [--offset <line>] [--limit <lines>]",
                 description: "read a UTF-8 text file under the workspace",
             },
             CommandHelpEntry {

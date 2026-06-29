@@ -2006,6 +2006,178 @@ fn tool_glob_failure_does_not_stage_context() {
     );
 }
 
+// --- /tool read --offset/--limit range read tests ---
+
+// (range-1) A manual range read stages a ManualToolContext whose source label
+// contains `offset=` and `limit=`, and pushes a range screen-log header.
+#[test]
+fn tool_read_range_stages_context_with_offset_and_limit_in_source_label() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    // Create a file with enough lines to use a non-trivial range.
+    let content = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(workspace_dir.path().join("multi.txt"), &content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read multi.txt --offset 2 --limit 3".to_string();
+    app.submit();
+
+    // pending_manual_tool_context must be set.
+    let pending = app
+        .pending_manual_tool_context
+        .as_ref()
+        .expect("pending_manual_tool_context must be set after a range read");
+
+    // Source label must include the input-param keys.
+    assert!(
+        pending.source.contains("offset="),
+        "source label must contain 'offset=': {}",
+        pending.source
+    );
+    assert!(
+        pending.source.contains("limit="),
+        "source label must contain 'limit=': {}",
+        pending.source
+    );
+
+    // last_tool_output_candidate must also be set and match.
+    let candidate = app
+        .last_tool_output_candidate
+        .as_ref()
+        .expect("last_tool_output_candidate must be set after a range read");
+    assert_eq!(
+        candidate.source, pending.source,
+        "candidate and pending must share the same source label"
+    );
+}
+
+// (range-2) The range screen log header uses `lines N-M:` format.
+#[test]
+fn tool_read_range_pushes_range_screen_log_header() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let content = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(workspace_dir.path().join("multi.txt"), &content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read multi.txt --offset 2 --limit 3".to_string();
+    app.submit();
+
+    // Screen log must contain the range header (with "lines " keyword).
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l.contains("lines ") && l.contains("multi.txt")),
+        "screen log must contain a range header with 'lines' and the file path"
+    );
+
+    // The guidance line must also be present.
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l
+                == "This tool output will be used as workspace context for your next message."),
+        "guidance line must be pushed after a range read"
+    );
+}
+
+// (range-3) Range ManualToolContext is one-shot: cleared after the next user message.
+#[test]
+fn tool_read_range_context_is_one_shot() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let content = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(workspace_dir.path().join("oneshot_range.txt"), &content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read oneshot_range.txt --offset 1 --limit 5".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be set after range read"
+    );
+
+    // First user message consumes the context.
+    app.input = "use the range content".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must be None after the first user message (one-shot)"
+    );
+}
+
+// (range-4) A range read emits no ToolContextAttach event on auto-staging.
+#[test]
+fn tool_read_range_auto_stage_emits_no_tool_context_attach_event() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let content = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(workspace_dir.path().join("noattach_range.txt"), &content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read noattach_range.txt --offset 1 --limit 3".to_string();
+    app.submit();
+
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be set"
+    );
+
+    // Consume the context with a user message.
+    app.input = "use it".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    assert!(
+        events
+            .iter()
+            .all(|e| e.kind != EventKind::ToolContextAttach),
+        "range read auto-stage must NOT emit a ToolContextAttach event"
+    );
+}
+
 // (j) Candidate-source preservation: a second propose-write still reflects the
 //     original last_tool_output_candidate content, not the prior ToolResult summary.
 //     No event detail anywhere contains the raw sentinel.
