@@ -78,7 +78,7 @@ The commands below are the **default surface** — they match what `/help` shows
 | `/permissions`        | Show the current permission posture                               |
 | `/allowed-tools`      | List the tools that are currently allowed                         |
 | `/tool list [path]`   | List files under the workspace root (or a sub-path)               |
-| `/tool read <path>`   | Read a UTF-8 text file under the workspace root                   |
+| `/tool read <path> [--offset <line>] [--limit <lines>]` | Read a UTF-8 text file under the workspace root; optional `--offset` (1-based line number) and `--limit` (line count) restrict the read to a bounded range |
 | `/tool search <query>` | Search for text across files in the workspace                   |
 | `/tool glob <pattern>` | Find files matching a glob pattern in the workspace             |
 
@@ -1497,17 +1497,21 @@ but are not expanded).
 ### `/tool read <path>`
 
 ```
-/tool read <path>
+/tool read <path> [--offset <line>] [--limit <lines>]
 ```
 
 Reads a **UTF-8 text file** inside the workspace and displays its content.
-`path` is required. Files larger than 64 KiB or containing invalid UTF-8 are
+`path` is required. The optional `--offset <line>` flag (1-based line number)
+and `--limit <lines>` flag (line count) restrict the read to a bounded line
+range; both flags are read-only and the result is auto-attached as one-shot
+Workspace Context. Files larger than 64 KiB or containing invalid UTF-8 are
 rejected with an error.
 
-**Example:**
+**Examples:**
 
 ```
 /tool read README.md
+/tool read README.md --offset 10 --limit 20
 ```
 
 ### Path Resolution and Safety

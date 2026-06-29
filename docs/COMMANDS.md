@@ -40,7 +40,7 @@ default UX surface: they observe the filesystem without mutating it.
 | Command | Description |
 |---------|-------------|
 | `/tool list [path]` | List files under the workspace root (or a sub-path); read-only. On success, automatically attaches the bounded listing as the next message's Workspace Context (one-shot). |
-| `/tool read <path>` | Read a UTF-8 text file under the workspace root; read-only. On success, automatically attaches the bounded file content as the next message's Workspace Context (one-shot). |
+| `/tool read <path> [--offset <line>] [--limit <lines>]` | Read a UTF-8 text file under the workspace root; read-only. The optional `--offset <line>` (1-based line number) and `--limit <lines>` (line count) flags restrict the read to a bounded line range. Range reads are read-only. On success, automatically attaches the bounded range content as the next message's Workspace Context (one-shot). |
 | `/tool search <query>` | Search for text across workspace files; read-only. On success, automatically attaches the bounded results as the next message's Workspace Context (one-shot). |
 | `/tool glob <pattern>` | Find files matching a glob pattern in the workspace; read-only. |
 
