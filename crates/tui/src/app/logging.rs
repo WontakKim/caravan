@@ -49,7 +49,10 @@ impl super::App {
         limit: usize,
     ) {
         let start = offset;
-        let end = offset + limit.saturating_sub(1);
+        // saturating_add: `offset` is an unbounded positive usize from the
+        // command parser, so a plain `offset + (limit - 1)` could overflow
+        // (e.g. `--offset <usize::MAX> --limit 2`).
+        let end = offset.saturating_add(limit.saturating_sub(1));
         self.log.push(format!(
             "Tool read {} lines {}-{}:",
             display_path, start, end

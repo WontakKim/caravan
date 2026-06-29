@@ -2101,6 +2101,45 @@ fn tool_read_range_pushes_range_screen_log_header() {
     );
 }
 
+// (range regression) A near-usize::MAX offset must not overflow the range
+// screen-log header arithmetic (`offset + limit - 1`).
+#[test]
+fn tool_read_range_huge_offset_does_not_overflow_screen_log() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let content = (1..=10)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(workspace_dir.path().join("multi.txt"), &content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // offset = usize::MAX, limit = 2 → EOF before offset (empty range). The
+    // header `end = offset + (limit - 1)` must saturate instead of panicking.
+    app.input = format!("/tool read multi.txt --offset {} --limit 2", usize::MAX);
+    app.submit();
+
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l.contains("lines ") && l.contains("multi.txt")),
+        "screen log must contain the range header without overflowing"
+    );
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "No content in requested range."),
+        "an offset past EOF must report no content in range"
+    );
+}
+
 // (range-3) Range ManualToolContext is one-shot: cleared after the next user message.
 #[test]
 fn tool_read_range_context_is_one_shot() {
