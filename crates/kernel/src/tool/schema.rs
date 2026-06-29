@@ -220,7 +220,7 @@ mod tests {
     use crate::tool::registry::ToolRisk;
 
     #[test]
-    fn readonly_returns_exactly_three_specs() {
+    fn readonly_returns_exactly_four_specs() {
         let catalog = ToolCatalog::readonly();
         assert_eq!(catalog.specs().len(), 4);
     }
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn readonly_model_definitions_returns_exactly_three() {
+    fn readonly_model_definitions_returns_exactly_four() {
         let catalog = ToolCatalog::readonly();
         let defs = catalog.readonly_model_definitions();
         assert_eq!(defs.len(), 4, "expected exactly 4 model tool definitions");

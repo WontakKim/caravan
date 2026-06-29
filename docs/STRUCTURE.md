@@ -304,8 +304,8 @@ constraints are enforced:
   call is always issued without tools so the model cannot request further tool
   calls; if it returns a `ToolCall` anyway the runner rejects it with `RunFail`.
   This is a hard bound — **not an agent loop, recursive tool loop, or planner**.
-  Only the three read-only tools (`list_files`, `read_file`, `search_text`) are
-  exposed on this path — no write, shell, or approval flow. The dormant text
+  Only the four read-only tools (`list_files`, `read_file`, `search_text`,
+  `glob_files`) are exposed on this path — no write, shell, or approval flow. The dormant text
   protocol (`model/tool_request.rs`) and the `/request` / write-preview layers
   are not connected to this path.
 - **Model (`model/openai/`)** knows only the wire protocol. It receives a
