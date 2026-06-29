@@ -83,6 +83,26 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
             };
             Ok(ToolRequest::SearchText { query })
         }
+        "glob_files" => {
+            // Reject unknown fields — mirrors the schema's additionalProperties: false.
+            if obj.keys().any(|k| k != "pattern") {
+                return Err(ModelError::AdapterFailure {
+                    message: "malformed_tool_arguments: glob_files contains an unsupported field"
+                        .to_string(),
+                });
+            }
+            let pattern = match obj.get("pattern") {
+                Some(serde_json::Value::String(s)) if !s.is_empty() => s.clone(),
+                _ => {
+                    return Err(ModelError::AdapterFailure {
+                        message:
+                            "malformed_tool_arguments: glob_files requires a non-empty pattern"
+                                .to_string(),
+                    });
+                }
+            };
+            Ok(ToolRequest::GlobFiles { pattern })
+        }
         name => Err(ModelError::AdapterFailure {
             message: format!("unsupported_model_tool: {name}"),
         }),
@@ -758,6 +778,89 @@ mod tests {
     #[test]
     fn grep_tool_name_returns_unsupported_model_tool() {
         let call = make_call("grep", serde_json::json!({"pattern": "TODO"}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("unsupported_model_tool"),
+                    "expected unsupported_model_tool in message, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    // --- glob_files validation tests ---
+
+    #[test]
+    fn glob_files_with_valid_pattern_returns_glob_files_request() {
+        let call = make_call("glob_files", serde_json::json!({"pattern": "**/*.rs"}));
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::GlobFiles {
+                pattern: "**/*.rs".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn glob_files_empty_pattern_returns_adapter_failure() {
+        let call = make_call("glob_files", serde_json::json!({"pattern": ""}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("malformed_tool_arguments"),
+                    "expected malformed_tool_arguments in message, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn glob_files_missing_pattern_returns_adapter_failure() {
+        let call = make_call("glob_files", serde_json::json!({}));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure for missing pattern"
+        );
+    }
+
+    #[test]
+    fn glob_files_unknown_extra_field_returns_malformed_tool_arguments() {
+        let call = make_call(
+            "glob_files",
+            serde_json::json!({"pattern": "**/*.rs", "extra": true}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("unsupported field")
+                        || message.contains("malformed_tool_arguments"),
+                    "expected malformed_tool_arguments or unsupported field in message, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn glob_files_non_object_arguments_returns_adapter_failure() {
+        let call = make_call("glob_files", serde_json::json!("not an object"));
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure for non-object arguments"
+        );
+    }
+
+    #[test]
+    fn find_files_tool_name_returns_unsupported_model_tool() {
+        let call = make_call("find_files", serde_json::json!({"pattern": "**/*.rs"}));
         let err = model_tool_call_to_request(&call).unwrap_err();
         match err {
             crate::model::ModelError::AdapterFailure { message } => {

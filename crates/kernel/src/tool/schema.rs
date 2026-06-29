@@ -28,7 +28,7 @@ pub struct ToolCatalog {
 }
 
 impl ToolCatalog {
-    /// Returns the read-only catalog containing exactly the three supported tools.
+    /// Returns the read-only catalog containing exactly the four supported tools.
     pub fn readonly() -> Self {
         ToolCatalog {
             specs: vec![
@@ -59,6 +59,16 @@ impl ToolCatalog {
                     inputs: vec![ToolInputSpec {
                         name: "query",
                         description: "Literal text to search for across UTF-8 files in the workspace.",
+                        required: true,
+                    }],
+                },
+                ToolSpec {
+                    name: "glob_files",
+                    description: "Find files matching a workspace-relative glob pattern. Read-only. Bounded results.",
+                    risk: ToolRisk::ReadOnly,
+                    inputs: vec![ToolInputSpec {
+                        name: "pattern",
+                        description: "Workspace-relative glob pattern for finding files, e.g. '**/*.rs'. Supports '*', '?', and '**' as a path segment.",
                         required: true,
                     }],
                 },
@@ -127,6 +137,23 @@ impl ToolCatalog {
                     "additionalProperties": false
                 }),
             },
+            ModelToolDefinition {
+                name: "glob_files".to_string(),
+                description: "Finds files matching a workspace-relative glob pattern. \
+                     Read-only. Bounded results."
+                    .to_string(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pattern": {
+                            "type": "string",
+                            "description": "Workspace-relative glob pattern for finding files, e.g. '**/*.rs'. Supports '*', '?', and '**' as a path segment."
+                        }
+                    },
+                    "required": ["pattern"],
+                    "additionalProperties": false
+                }),
+            },
         ]
     }
 
@@ -158,6 +185,7 @@ impl ToolCatalog {
                 "list_files" => "/tool list [path]",
                 "read_file" => "/tool read <path>",
                 "search_text" => "/tool search <query>",
+                "glob_files" => "/tool glob <pattern>",
                 other => other,
             };
 
@@ -194,7 +222,7 @@ mod tests {
     #[test]
     fn readonly_returns_exactly_three_specs() {
         let catalog = ToolCatalog::readonly();
-        assert_eq!(catalog.specs().len(), 3);
+        assert_eq!(catalog.specs().len(), 4);
     }
 
     #[test]
@@ -304,7 +332,7 @@ mod tests {
     fn readonly_model_definitions_returns_exactly_three() {
         let catalog = ToolCatalog::readonly();
         let defs = catalog.readonly_model_definitions();
-        assert_eq!(defs.len(), 3, "expected exactly 3 model tool definitions");
+        assert_eq!(defs.len(), 4, "expected exactly 4 model tool definitions");
     }
 
     #[test]
@@ -314,8 +342,8 @@ mod tests {
         let names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(
             names,
-            vec!["list_files", "read_file", "search_text"],
-            "exact ordered name set must be [list_files, read_file, search_text]"
+            vec!["list_files", "read_file", "search_text", "glob_files"],
+            "exact ordered name set must be [list_files, read_file, search_text, glob_files]"
         );
     }
 
@@ -455,5 +483,78 @@ mod tests {
             .find(|i| i.name == "query")
             .expect("query input not found");
         assert!(query_input.required, "search_text query should be required");
+    }
+
+    #[test]
+    fn glob_files_spec_is_present_with_read_only_risk() {
+        let catalog = ToolCatalog::readonly();
+        let spec = catalog
+            .specs()
+            .iter()
+            .find(|s| s.name == "glob_files")
+            .expect("glob_files spec not found");
+        assert_eq!(spec.risk, ToolRisk::ReadOnly);
+    }
+
+    #[test]
+    fn glob_files_pattern_input_is_required() {
+        let catalog = ToolCatalog::readonly();
+        let spec = catalog
+            .specs()
+            .iter()
+            .find(|s| s.name == "glob_files")
+            .expect("glob_files spec not found");
+        let pattern_input = spec
+            .inputs
+            .iter()
+            .find(|i| i.name == "pattern")
+            .expect("pattern input not found");
+        assert!(
+            pattern_input.required,
+            "glob_files pattern should be required"
+        );
+    }
+
+    #[test]
+    fn readonly_model_definitions_glob_files_schema() {
+        let catalog = ToolCatalog::readonly();
+        let defs = catalog.readonly_model_definitions();
+        let def = defs
+            .iter()
+            .find(|d| d.name == "glob_files")
+            .expect("glob_files definition not found");
+
+        assert_eq!(
+            def.input_schema["additionalProperties"],
+            serde_json::json!(false),
+            "glob_files schema must have additionalProperties: false"
+        );
+
+        let pattern_prop = &def.input_schema["properties"]["pattern"];
+        assert_eq!(
+            pattern_prop["type"],
+            serde_json::json!("string"),
+            "glob_files pattern property must be type string"
+        );
+
+        assert_eq!(
+            def.input_schema["required"],
+            serde_json::json!(["pattern"]),
+            "glob_files schema must have required: [\"pattern\"]"
+        );
+    }
+
+    #[test]
+    fn render_prompt_section_contains_glob_files_command() {
+        let catalog = ToolCatalog::readonly();
+        let section = catalog.render_prompt_section();
+        assert!(
+            section.contains("/tool glob <pattern>"),
+            "missing glob_files command '/tool glob <pattern>' in rendered prompt"
+        );
+        assert!(
+            section.contains("glob_files"),
+            "missing glob_files tool name in rendered prompt"
+        );
     }
 }
