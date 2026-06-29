@@ -102,7 +102,9 @@ fn validate_glob_pattern(pattern: &str) -> Result<(), ToolError> {
 #[derive(Debug)]
 pub(crate) struct GlobMatchOutcome {
     /// Workspace-relative file paths (never directories) using `/` separators,
-    /// in deterministic sorted (depth-first, name-sorted) order.
+    /// sorted lexicographically by the full workspace-relative path so the
+    /// result — and any truncation — is deterministic and independent of
+    /// directory-versus-file visitation order.
     pub paths: Vec<String>,
     /// `true` when results were truncated to [`GLOB_MAX_MATCHES`].
     pub truncated: bool,
@@ -142,6 +144,10 @@ pub(crate) fn glob_workspace(
         &mut paths,
     );
 
+    // Sort by the full workspace-relative path so the returned list — and the
+    // bounded first-`GLOB_MAX_MATCHES` slice when truncating — is lexicographic
+    // rather than dependent on directory-vs-file visitation order.
+    paths.sort();
     let truncated = paths.len() > GLOB_MAX_MATCHES;
     if truncated {
         paths.truncate(GLOB_MAX_MATCHES);
@@ -153,28 +159,24 @@ pub(crate) fn glob_workspace(
 /// Recursively walks `dir`, appending matching workspace-relative file paths to `out`.
 ///
 /// `rel_segments` holds the path components from the workspace root to `dir`.
-/// Returns `true` once `GLOB_MAX_MATCHES + 1` paths have been collected, signalling
-/// the caller to stop early.
+/// Collects every match; the caller sorts and bounds the final list. Directory
+/// entries are visited in name-sorted order so traversal is deterministic.
 fn walk_dir(
     dir: &Path,
     canonical_root: &Path,
     rel_segments: &[String],
     pat_segments: &[&str],
     out: &mut Vec<String>,
-) -> bool {
+) {
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
-        Err(_) => return false,
+        Err(_) => return,
     };
 
     let mut entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.file_name());
 
     for entry in &entries {
-        if out.len() >= GLOB_MAX_MATCHES + 1 {
-            return true;
-        }
-
         let file_type = match entry.file_type() {
             Ok(ft) => ft,
             Err(_) => continue,
@@ -182,26 +184,29 @@ fn walk_dir(
 
         let os_name = entry.file_name();
 
+        // Skip non-UTF-8 names: emitted paths must be valid UTF-8, and a lossy
+        // conversion could collapse distinct names to the same string.
+        let name_str = match os_name.to_str() {
+            Some(s) => s.to_owned(),
+            None => continue,
+        };
+
         if file_type.is_dir() {
             // Skip directories in SKIP_DIR_NAMES; symlinked dirs are never followed
             // because file_type() uses lstat semantics and won't report is_dir() for symlinks.
             if SKIP_DIR_NAMES.iter().any(|s| OsStr::new(s) == os_name) {
                 continue;
             }
-            let name_str = os_name.to_string_lossy().into_owned();
             let mut child_segments = rel_segments.to_vec();
             child_segments.push(name_str);
-            if walk_dir(
+            walk_dir(
                 &entry.path(),
                 canonical_root,
                 &child_segments,
                 pat_segments,
                 out,
-            ) {
-                return true;
-            }
+            );
         } else if file_type.is_file() {
-            let name_str = os_name.to_string_lossy().into_owned();
             let mut file_segments = rel_segments.to_vec();
             file_segments.push(name_str);
             let seg_refs: Vec<&str> = file_segments.iter().map(String::as_str).collect();
@@ -225,7 +230,6 @@ fn walk_dir(
             if !meta.is_file() {
                 continue;
             }
-            let name_str = os_name.to_string_lossy().into_owned();
             let mut file_segments = rel_segments.to_vec();
             file_segments.push(name_str);
             let seg_refs: Vec<&str> = file_segments.iter().map(String::as_str).collect();
@@ -234,8 +238,6 @@ fn walk_dir(
             }
         }
     }
-
-    out.len() >= GLOB_MAX_MATCHES + 1
 }
 
 #[cfg(test)]
@@ -513,6 +515,21 @@ mod tests {
 
         let outcome = glob_workspace(dir.path(), "*.txt").unwrap();
         assert_eq!(outcome.paths, vec!["a.txt", "b.txt", "c.txt"]);
+        assert!(!outcome.truncated);
+    }
+
+    #[test]
+    fn glob_workspace_sorts_by_full_path_not_visitation_order() {
+        let dir = TempDir::new();
+        // Depth-first name-sorted visitation would emit `a/z.rs` before `a.rs`
+        // (directory `a` sorts before file `a.rs`). The final list must instead
+        // be lexicographic by full path: `a.rs` ('.' = 0x2e) precedes `a/z.rs` ('/' = 0x2f).
+        std::fs::create_dir(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("z.rs"), "").unwrap();
+        std::fs::write(dir.path().join("a.rs"), "").unwrap();
+
+        let outcome = glob_workspace(dir.path(), "**/*.rs").unwrap();
+        assert_eq!(outcome.paths, vec!["a.rs", "a/z.rs"]);
         assert!(!outcome.truncated);
     }
 
