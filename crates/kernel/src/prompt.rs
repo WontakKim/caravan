@@ -77,7 +77,7 @@ Operating Rules:\n\
 - Ask for explicit user action before any mutation.\n\
 - Automatic write or shell execution is not available in this baseline.\n\
 - Experimental harness commands may exist but are not part of the default agent contract.\n\
-- Use the provided read-only tools when workspace inspection is necessary.\n\
+- Use the provided read-only tools when workspace inspection, file discovery, or text search is necessary.\n\
 - You may request up to two read-only workspace tools per turn, one per response.\n\
 - Do not invent tool results.\n\
 - After receiving the second tool result, or earlier if sufficient, answer without requesting another tool.\n\
@@ -130,7 +130,7 @@ Operating Rules:\n\
 - Ask for explicit user action before any mutation.\n\
 - Automatic write or shell execution is not available in this baseline.\n\
 - Experimental harness commands may exist but are not part of the default agent contract.\n\
-- Use the provided read-only tools when workspace inspection is necessary.\n\
+- Use the provided read-only tools when workspace inspection, file discovery, or text search is necessary.\n\
 - You may request up to two read-only workspace tools per turn, one per response.\n\
 - Do not invent tool results.\n\
 - After receiving the second tool result, or earlier if sufficient, answer without requesting another tool.\n\
