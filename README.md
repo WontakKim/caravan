@@ -80,6 +80,7 @@ The commands below are the **default surface** — they match what `/help` shows
 | `/tool list [path]`   | List files under the workspace root (or a sub-path)               |
 | `/tool read <path>`   | Read a UTF-8 text file under the workspace root                   |
 | `/tool search <query>` | Search for text across files in the workspace                   |
+| `/tool glob <pattern>` | Find files matching a glob pattern in the workspace             |
 
 ## Experimental Harness Appendix
 

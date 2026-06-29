@@ -756,6 +756,7 @@ fn help_catalog_has_24_entries_in_exact_order() {
             "/tool list [path]",
             "/tool read <path>",
             "/tool search <query>",
+            "/tool glob <pattern>",
             "/context attach-last-tool",
             "/context clear",
             "/context status",

@@ -70,6 +70,10 @@ static HELP_SECTIONS: &[HelpSection] = &[
                 command: "/tool search <query>",
                 description: "search for a string across workspace files",
             },
+            CommandHelpEntry {
+                command: "/tool glob <pattern>",
+                description: "find files matching a glob pattern in the workspace",
+            },
         ],
     },
     HelpSection {
