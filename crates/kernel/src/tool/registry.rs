@@ -357,6 +357,9 @@ impl ToolRegistry {
             // currently scanning; `completed` counts window lines terminated by a
             // newline. `need_separator` defers the inter-line `\n` so empty lines
             // still contribute their separator (matching `lines().join("\n")`).
+            // `pending_cr` defers a `\r` until the next byte is known: a `\r`
+            // immediately before `\n` is the "\r\n" terminator and is dropped
+            // (matching `BufRead::lines()`); any other deferred `\r` is flushed.
             let mut out: Vec<u8> = Vec::new();
             let mut line_no: usize = 1;
             let mut completed: usize = 0;
@@ -364,7 +367,7 @@ impl ToolRegistry {
             let mut hit_cap = false;
             let mut need_separator = false;
             let mut cur_has_content = false;
-            let mut cur_last_was_cr = false;
+            let mut pending_cr = false;
 
             'scan: loop {
                 let chunk = reader.fill_buf().map_err(|e| ToolError::Io {
@@ -386,7 +389,10 @@ impl ToolRegistry {
                     }
 
                     if b == b'\n' {
-                        // Terminate the current window line.
+                        // "\r\n": a deferred '\r' is this line's terminator -> drop.
+                        pending_cr = false;
+                        // Terminate the current window line. Emit the owed
+                        // separator even for an empty line.
                         if need_separator {
                             if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
                                 truncated = true;
@@ -397,14 +403,8 @@ impl ToolRegistry {
                             out.push(b'\n');
                             need_separator = false;
                         }
-                        // Strip a trailing '\r' belonging to this line ("\r\n"),
-                        // matching the behavior of `BufRead::lines()`.
-                        if cur_last_was_cr {
-                            out.pop();
-                        }
                         completed += 1;
                         cur_has_content = false;
-                        cur_last_was_cr = false;
                         line_no += 1;
                         if completed == count {
                             reader.consume(consumed);
@@ -414,7 +414,34 @@ impl ToolRegistry {
                         continue;
                     }
 
-                    // Content byte of a window line.
+                    // Content byte of a window line. A deferred '\r' followed by a
+                    // non-newline is a real content byte -> flush it first.
+                    if pending_cr {
+                        if need_separator {
+                            if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
+                                truncated = true;
+                                hit_cap = true;
+                                reader.consume(consumed);
+                                break 'scan;
+                            }
+                            out.push(b'\n');
+                            need_separator = false;
+                        }
+                        if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
+                            truncated = true;
+                            hit_cap = true;
+                            reader.consume(consumed);
+                            break 'scan;
+                        }
+                        out.push(b'\r');
+                        pending_cr = false;
+                    }
+                    if b == b'\r' {
+                        // Defer until the next byte decides "\r\n" (drop) vs. content.
+                        pending_cr = true;
+                        cur_has_content = true;
+                        continue;
+                    }
                     if need_separator {
                         if out.len() + 1 > MAX_READ_RANGE_OUTPUT_BYTES {
                             truncated = true;
@@ -433,9 +460,24 @@ impl ToolRegistry {
                     }
                     out.push(b);
                     cur_has_content = true;
-                    cur_last_was_cr = b == b'\r';
                 }
                 reader.consume(consumed);
+            }
+
+            // Flush a bare trailing '\r' at natural EOF (no following '\n'):
+            // `BufRead::lines()` keeps a final lone CR. Skip when the byte cap was
+            // already hit (content is truncated) or a count-break cleared it.
+            if pending_cr && !hit_cap {
+                if need_separator && out.len() + 1 <= MAX_READ_RANGE_OUTPUT_BYTES {
+                    out.push(b'\n');
+                    need_separator = false;
+                }
+                if out.len() + 1 <= MAX_READ_RANGE_OUTPUT_BYTES {
+                    out.push(b'\r');
+                } else {
+                    truncated = true;
+                    hit_cap = true;
+                }
             }
 
             // EOF (or cap) reached before the requested start line ever produced
@@ -462,15 +504,18 @@ impl ToolRegistry {
             let content = match String::from_utf8(out) {
                 Ok(s) => s,
                 Err(e) => {
-                    if truncated {
-                        // Cut mid-character at the byte cap: keep the valid prefix
-                        // (a UTF-8 char boundary) and drop the partial trailing char.
-                        let valid = e.utf8_error().valid_up_to();
+                    let utf8_err = e.utf8_error();
+                    // Keep the valid prefix ONLY when the sole defect is an
+                    // incomplete multi-byte char at the very end caused by the byte
+                    // cap (`error_len()` is `None`). A definite invalid byte
+                    // (`error_len()` is `Some`) is genuinely corrupt content and
+                    // must surface as NonUtf8 even when the read was truncated.
+                    if truncated && utf8_err.error_len().is_none() {
+                        let valid = utf8_err.valid_up_to();
                         let mut bytes = e.into_bytes();
                         bytes.truncate(valid);
                         String::from_utf8(bytes).unwrap_or_default()
                     } else {
-                        // Genuinely invalid UTF-8 within the emitted content.
                         return Err(ToolError::NonUtf8 {
                             path: requested.to_string(),
                         });

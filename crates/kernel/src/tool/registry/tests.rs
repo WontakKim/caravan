@@ -951,6 +951,130 @@ fn range_read_multibyte_truncation_keeps_valid_utf8() {
 }
 
 #[test]
+fn range_read_strips_crlf_line_endings() {
+    let dir = TempDir::new();
+    // CRLF terminators must be stripped like BufRead::lines().
+    std::fs::write(dir.path().join("crlf.txt"), "a\r\nb\r\nc\r\n").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "crlf.txt".to_string(),
+            offset: Some(1),
+            limit: Some(2),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(content, "a\nb");
+            assert_eq!(line_count, Some(2));
+            assert!(!truncated);
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_crlf_line_exactly_at_byte_cap_is_not_truncated() {
+    let dir = TempDir::new();
+    // A logical line of exactly the cap, physically terminated by "\r\n", must
+    // NOT be flagged truncated: the '\r' is part of the terminator, not content
+    // (regression: the '\r' used to trip the cap check before the '\n').
+    let mut bytes = "x".repeat(MAX_READ_RANGE_OUTPUT_BYTES).into_bytes();
+    bytes.extend_from_slice(b"\r\n");
+    std::fs::write(dir.path().join("crlf_cap.txt"), &bytes).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "crlf_cap.txt".to_string(),
+            offset: Some(1),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content, truncated, ..
+        } => {
+            assert!(
+                !truncated,
+                "a CRLF line exactly at the cap must not be marked truncated"
+            );
+            assert_eq!(content.len(), MAX_READ_RANGE_OUTPUT_BYTES);
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_preserves_bare_trailing_cr_at_eof() {
+    let dir = TempDir::new();
+    // A bare '\r' with no following '\n' at EOF is kept (matches lines()).
+    std::fs::write(dir.path().join("bare_cr.txt"), "a\nb\r").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "bare_cr.txt".to_string(),
+            offset: Some(2),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            line_count,
+            ..
+        } => {
+            assert_eq!(content, "b\r");
+            assert_eq!(line_count, Some(1));
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_invalid_utf8_in_oversized_line_returns_non_utf8() {
+    let dir = TempDir::new();
+    // A genuine invalid byte early in a line that later exceeds the cap must
+    // still surface as NonUtf8 — truncation must not mask real corruption.
+    let mut bytes = b"abc\xff".to_vec();
+    bytes.extend(std::iter::repeat(b'x').take(MAX_READ_RANGE_OUTPUT_BYTES));
+    std::fs::write(dir.path().join("bad_huge.bin"), &bytes).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "bad_huge.bin".to_string(),
+            offset: Some(1),
+            limit: Some(1),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::NonUtf8 { .. })),
+        "invalid UTF-8 in an oversized line must return NonUtf8, got {:?}",
+        result
+    );
+}
+
+#[test]
 fn range_read_on_directory_returns_not_a_file() {
     let dir = TempDir::new();
     std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
