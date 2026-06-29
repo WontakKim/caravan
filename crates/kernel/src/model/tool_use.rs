@@ -873,6 +873,160 @@ mod tests {
         }
     }
 
+    // --- glob_files bounded round-trip tests ---
+    //
+    // These tests drive the full tool-use pipeline (model call → ToolRequest →
+    // ToolEventRunner → format_tool_output_for_model) for glob_files, verifying
+    // the bounded native tool-chain contract without modifying production code.
+
+    fn make_glob_test_workspace(filename: &str, content: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static CTR: AtomicU64 = AtomicU64::new(0);
+        let id = CTR.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "kernel_tool_use_glob_{}_{}",
+            std::process::id(),
+            id
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        if !filename.is_empty() {
+            std::fs::write(dir.join(filename), content).unwrap();
+        }
+        dir
+    }
+
+    /// Single glob_files round trip: model emits one glob_files tool call, the
+    /// runner executes it (exec 1 of MAX_NATIVE_TOOL_CALLS_PER_TURN=2) and
+    /// feeds the bounded FileMatches result back. Asserts:
+    /// - The executed request was ToolRequest::GlobFiles.
+    /// - The model-facing result begins with "Glob pattern:" (FileMatches format).
+    /// - The model-facing result contains no file content (only matched paths).
+    #[test]
+    fn glob_files_single_round_trip_result_begins_with_glob_pattern() {
+        let workspace = make_glob_test_workspace("sample.txt", "hello from sample");
+
+        // Simulate the model emitting a glob_files tool call.
+        let call = make_call("glob_files", serde_json::json!({"pattern": "*.txt"}));
+
+        // Bridge validation: convert model tool call to ToolRequest.
+        let tool_request = model_tool_call_to_request(&call).unwrap();
+        assert!(
+            matches!(
+                tool_request,
+                crate::tool::registry::ToolRequest::GlobFiles { .. }
+            ),
+            "expected ToolRequest::GlobFiles after bridge conversion"
+        );
+
+        // Execute through the runner — exec 1 of MAX_NATIVE_TOOL_CALLS_PER_TURN=2.
+        let mut event_log = crate::events::EventLog::new();
+        let ctx = crate::tool::registry::ToolExecutionContext {
+            workspace_root: workspace.clone(),
+        };
+        let output = crate::tool::events::ToolEventRunner::new_readonly()
+            .run(&mut event_log, &ctx, tool_request)
+            .unwrap();
+
+        // Format the FileMatches result for the model.
+        let result_text = format_tool_output_for_model(&output);
+
+        // The model-facing result must begin with "Glob pattern:" (no file content).
+        assert!(
+            result_text.starts_with("Glob pattern:"),
+            "model-facing glob result must begin with 'Glob pattern:', got: {:?}",
+            result_text
+        );
+        // Must not contain the file's actual content — only matched paths are returned.
+        assert!(
+            !result_text.contains("hello from sample"),
+            "glob result must not contain file content, got: {:?}",
+            result_text
+        );
+        // "File: " header only appears in FileContent output, never FileMatches.
+        assert!(
+            !result_text.contains("File: "),
+            "glob result must not embed file content header, got: {:?}",
+            result_text
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    /// Two-step bounded chain: glob_files (exec 1) → read_file (exec 2) →
+    /// assistant. Both executions stay within MAX_NATIVE_TOOL_CALLS_PER_TURN=2
+    /// and the total model steps stay within MAX_MODEL_STEPS_PER_TURN=3.
+    #[test]
+    fn glob_files_read_file_chain() {
+        let workspace = make_glob_test_workspace("notes.txt", "# Project Notes\nTODO: update docs");
+
+        let ctx = crate::tool::registry::ToolExecutionContext {
+            workspace_root: workspace.clone(),
+        };
+        let mut event_log = crate::events::EventLog::new();
+
+        // --- Step 1 (exec 1 of 2): model emits glob_files ---
+        let call1 = make_call("glob_files", serde_json::json!({"pattern": "*.txt"}));
+        let req1 = model_tool_call_to_request(&call1).unwrap();
+        assert!(
+            matches!(req1, crate::tool::registry::ToolRequest::GlobFiles { .. }),
+            "step 1 must produce ToolRequest::GlobFiles"
+        );
+        let output1 = crate::tool::events::ToolEventRunner::new_readonly()
+            .run(&mut event_log, &ctx, req1)
+            .unwrap();
+        let result1_text = format_tool_output_for_model(&output1);
+        assert!(
+            result1_text.starts_with("Glob pattern:"),
+            "glob step result must begin with 'Glob pattern:'"
+        );
+
+        // Extract the first matched path from the FileMatches output to pass to read_file.
+        let matched_path = match &output1 {
+            crate::tool::registry::ToolOutput::FileMatches { paths, .. } => paths
+                .first()
+                .expect("glob must match at least one file in workspace")
+                .clone(),
+            _ => panic!("expected FileMatches output from glob_files"),
+        };
+
+        // --- Step 2 (exec 2 of 2): model emits read_file for the matched path ---
+        let call2 = make_call("read_file", serde_json::json!({"path": matched_path}));
+        let req2 = model_tool_call_to_request(&call2).unwrap();
+        assert!(
+            matches!(req2, crate::tool::registry::ToolRequest::ReadFile { .. }),
+            "step 2 must produce ToolRequest::ReadFile"
+        );
+        let output2 = crate::tool::events::ToolEventRunner::new_readonly()
+            .run(&mut event_log, &ctx, req2)
+            .unwrap();
+        let result2_text = format_tool_output_for_model(&output2);
+        assert!(
+            result2_text.starts_with("File: "),
+            "read_file step result must begin with 'File: '"
+        );
+        assert!(
+            result2_text.contains("# Project Notes"),
+            "read_file result must contain the file's actual content"
+        );
+
+        // Both execs ran within the 2-tool bound: exactly 2 ToolCall events were emitted.
+        let tool_call_count = event_log
+            .events()
+            .iter()
+            .filter(|e| e.kind == crate::events::EventKind::ToolCall)
+            .count();
+        assert_eq!(
+            tool_call_count, 2,
+            "chain must emit exactly 2 ToolCall events (within MAX_NATIVE_TOOL_CALLS_PER_TURN=2)"
+        );
+
+        // After these 2 execs the model would produce a final assistant message
+        // as step 3 of MAX_MODEL_STEPS_PER_TURN=3 — budget is exhausted and the
+        // chain is complete.
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
     // --- G-3: bounded error output test ---
 
     #[test]
