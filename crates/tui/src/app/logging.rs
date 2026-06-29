@@ -123,6 +123,37 @@ impl super::App {
         }
     }
 
+    /// Pushes glob results to the screen log.
+    ///
+    /// On success with matches, emits a header followed by one path per line
+    /// capped at [`super::TOOL_READ_PREVIEW_BYTES`], then `"... [truncated]"` when
+    /// the output is truncated either by the kernel match cap or the display budget.
+    /// On no matches, emits the header followed by `"No matches."`.
+    pub(super) fn push_tool_glob_output(
+        &mut self,
+        pattern: &str,
+        paths: &[String],
+        truncated: bool,
+    ) {
+        self.log.push(format!("Glob results for \"{}\":", pattern));
+        if paths.is_empty() {
+            self.log.push("No matches.".to_string());
+            return;
+        }
+        let mut bytes_used: usize = 0;
+        for path in paths {
+            if bytes_used + path.len() > super::TOOL_READ_PREVIEW_BYTES {
+                self.log.push("... [truncated]".to_string());
+                return;
+            }
+            bytes_used += path.len();
+            self.log.push(path.clone());
+        }
+        if truncated {
+            self.log.push("... [truncated]".to_string());
+        }
+    }
+
     /// Pushes a single human-readable error line derived from a [`kernel::ToolError`].
     pub(super) fn push_tool_error_output(&mut self, error: kernel::ToolError) {
         let msg = match error {

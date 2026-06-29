@@ -652,6 +652,36 @@ fn tool_find_is_unknown() {
     ));
 }
 
+// --- /tool glob parsing tests ---
+
+#[test]
+fn tool_glob_with_pattern() {
+    assert_eq!(
+        parse_input("/tool glob **/*.rs"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Glob {
+            pattern: "**/*.rs".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_glob_with_multi_segment_pattern() {
+    assert_eq!(
+        parse_input("/tool glob src/**/*.rs"),
+        ParsedInput::SlashCommand(Command::Tool(ToolCommand::Glob {
+            pattern: "src/**/*.rs".to_string()
+        }))
+    );
+}
+
+#[test]
+fn tool_glob_bare_is_unknown() {
+    assert!(matches!(
+        parse_input("/tool glob"),
+        ParsedInput::SlashCommand(Command::Unknown(_))
+    ));
+}
+
 // --- /tool propose-write parsing tests ---
 
 #[test]

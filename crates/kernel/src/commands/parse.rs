@@ -57,6 +57,10 @@ pub fn parse_input(input: &str) -> ParsedInput {
                     "search" if !path.is_empty() => Command::Tool(ToolCommand::Search {
                         query: path.to_string(),
                     }),
+                    // Glob accepts a multi-word pattern (no whitespace guard), same as search.
+                    "glob" if !path.is_empty() => Command::Tool(ToolCommand::Glob {
+                        pattern: path.to_string(),
+                    }),
                     // Any other subcommand, or commands with missing/invalid args
                     _ => Command::Unknown(input.to_string()),
                 }

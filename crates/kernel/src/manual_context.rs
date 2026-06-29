@@ -146,6 +146,56 @@ impl ManualToolContext {
         }
     }
 
+    /// Builds a context from a `glob_files` tool result.
+    ///
+    /// The stored `content` is a newline-joined list of workspace-relative paths,
+    /// or the literal `No matches.` when `paths` is empty. Content is bounded to
+    /// [`MANUAL_TOOL_CONTEXT_MAX_BYTES`] bytes with char-boundary truncation.
+    /// When `truncated == true` (the kernel hit its match cap), a visible note is
+    /// appended so the model does not assume the list is complete.
+    pub fn from_glob_files(pattern: &str, paths: &[String], truncated: bool) -> Self {
+        let source = format!("tool=glob_files pattern=\"{pattern}\"");
+        let byte_marker = "\n... [context truncated by byte budget]";
+        let glob_suffix = if truncated {
+            "\n... [glob results truncated by match limit]"
+        } else {
+            ""
+        };
+
+        if paths.is_empty() {
+            return Self {
+                source,
+                content: format!("No matches.{glob_suffix}"),
+                truncated,
+            };
+        }
+
+        let body = paths.join("\n");
+
+        // No byte-budget truncation needed: keep body plus the match-cap marker.
+        if body.len() + glob_suffix.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES {
+            return Self {
+                source,
+                content: format!("{body}{glob_suffix}"),
+                truncated,
+            };
+        }
+
+        // Byte-budget truncation needed. Reserve room for both applicable markers.
+        let budget =
+            MANUAL_TOOL_CONTEXT_MAX_BYTES.saturating_sub(glob_suffix.len() + byte_marker.len());
+        let mut cut = budget.min(body.len());
+        while cut > 0 && !body.is_char_boundary(cut) {
+            cut -= 1;
+        }
+
+        Self {
+            source,
+            content: format!("{}{glob_suffix}{byte_marker}", &body[..cut]),
+            truncated: true,
+        }
+    }
+
     /// Returns a summary-only string suitable for event detail — does NOT
     /// embed the raw content.
     pub fn attach_summary(&self) -> String {
@@ -215,6 +265,87 @@ mod tests {
         assert!(ctx.content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES);
         assert!(ctx.content.contains("- a.txt\n"));
         assert!(ctx.content.contains("- b.txt\n"));
+    }
+
+    // --- from_glob_files tests ---
+
+    // (g1) Source label uses the expected tool=glob_files pattern= format.
+    #[test]
+    fn from_glob_files_source_label_format() {
+        let ctx = ManualToolContext::from_glob_files("**/*.rs", &[], false);
+        assert_eq!(ctx.source, r#"tool=glob_files pattern="**/*.rs""#);
+    }
+
+    // (g2) Empty path list stores "No matches." and is untruncated.
+    #[test]
+    fn from_glob_files_empty_paths_stores_no_matches() {
+        let ctx = ManualToolContext::from_glob_files("*.txt", &[], false);
+        assert_eq!(ctx.content, "No matches.");
+        assert!(!ctx.truncated);
+        assert!(ctx.content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES);
+    }
+
+    // (g3) Many long paths are capped to MANUAL_TOOL_CONTEXT_MAX_BYTES and carry
+    // the truncation marker.
+    #[test]
+    fn from_glob_files_many_long_paths_are_within_byte_budget_with_marker() {
+        // 200 paths, each 30 bytes → total ~6000 bytes, well above the 4 KiB cap.
+        let paths: Vec<String> = (0..200)
+            .map(|i| format!("src/very/deep/module/path_{:04}.rs", i))
+            .collect();
+        let ctx = ManualToolContext::from_glob_files("**/*.rs", &paths, false);
+        assert!(
+            ctx.content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES,
+            "content must stay within budget, len={}",
+            ctx.content.len()
+        );
+        assert!(ctx.truncated, "must be truncated when paths exceed budget");
+        assert!(
+            ctx.content.contains("[context truncated by byte budget]"),
+            "byte-budget marker must be present: {}",
+            ctx.content
+        );
+        std::str::from_utf8(ctx.content.as_bytes()).expect("content must be valid UTF-8");
+    }
+
+    // (g4) truncated=true (from kernel match cap) adds a visible note even when
+    // the byte budget is not exceeded.
+    #[test]
+    fn from_glob_files_truncated_true_includes_match_cap_note() {
+        let paths: Vec<String> = vec!["foo.rs".to_string(), "bar.rs".to_string()];
+        let ctx = ManualToolContext::from_glob_files("**/*.rs", &paths, true);
+        assert!(ctx.truncated, "truncated flag must be true");
+        assert!(
+            ctx.content
+                .contains("[glob results truncated by match limit]"),
+            "match-cap note must be present when truncated=true: {}",
+            ctx.content
+        );
+    }
+
+    // (g5) Both truncation causes: byte-budget cut must NOT erase the match-cap
+    // note, and content stays within budget.
+    #[test]
+    fn from_glob_files_both_truncation_causes_preserve_both_markers() {
+        let paths: Vec<String> = (0..200)
+            .map(|i| format!("src/very/deep/module/path_{:04}.rs", i))
+            .collect();
+        let ctx = ManualToolContext::from_glob_files("**/*.rs", &paths, true);
+        assert!(
+            ctx.content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES,
+            "content must stay within budget"
+        );
+        assert!(ctx.truncated);
+        assert!(
+            ctx.content
+                .contains("[glob results truncated by match limit]"),
+            "match-cap marker must survive byte-budget truncation"
+        );
+        assert!(
+            ctx.content.contains("[context truncated by byte budget]"),
+            "byte-budget marker must be present"
+        );
+        std::str::from_utf8(ctx.content.as_bytes()).expect("content must be valid UTF-8");
     }
 
     // (g) Regression: a list whose full rendered length exceeds the

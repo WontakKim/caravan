@@ -1867,6 +1867,145 @@ fn context_attach_last_tool_works_with_search_candidate() {
     );
 }
 
+// --- /tool glob tests ---
+
+// (a) Hit: emits SlashCommand, ToolPolicy, ToolCall, ToolResult; sets both candidate
+//     fields; no ToolContextAttach; pending context clears one-shot after next message.
+#[test]
+fn tool_glob_hit_emits_policy_call_result_and_stages_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("hello.rs"), "fn main() {}").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    let event_len_before = app.event_log.len();
+    app.input = "/tool glob **/*.rs".to_string();
+    app.submit();
+
+    // Exactly 4 new events: SlashCommand, ToolPolicy, ToolCall, ToolResult.
+    assert_eq!(app.event_log.len(), event_len_before + 4);
+    let events = app.event_log.events();
+    let n = events.len();
+    assert_eq!(events[n - 4].kind, EventKind::SlashCommand);
+    assert_eq!(events[n - 3].kind, EventKind::ToolPolicy);
+    assert_eq!(events[n - 2].kind, EventKind::ToolCall);
+    assert_eq!(events[n - 1].kind, EventKind::ToolResult);
+
+    // No ApprovalRequest emitted.
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::ApprovalRequest),
+        "no ApprovalRequest must appear for glob_files"
+    );
+    // No ToolContextAttach emitted on automatic staging.
+    assert!(
+        !events
+            .iter()
+            .any(|e| e.kind == EventKind::ToolContextAttach),
+        "no ToolContextAttach must appear on automatic glob staging"
+    );
+
+    // Both context fields are set.
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be set after /tool glob hit"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be set after /tool glob hit"
+    );
+
+    // Screen log contains the header.
+    assert!(
+        app.log.iter().any(|l| l.contains("Glob results for")),
+        "log must contain 'Glob results for'"
+    );
+
+    // One-shot clear: a user message consumes the pending context.
+    app.input = "use the glob results".to_string();
+    app.submit();
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must be cleared after the next user message (one-shot)"
+    );
+}
+
+// (b) Miss: logs "No matches." and still stages context.
+#[test]
+fn tool_glob_miss_logs_no_matches_and_stages_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    std::fs::write(workspace_dir.path().join("file.txt"), "content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool glob **/*.rs".to_string();
+    app.submit();
+
+    // "No matches." must appear in screen log.
+    assert!(
+        app.log.iter().any(|l| l == "No matches."),
+        "log must contain 'No matches.' for a glob with no results"
+    );
+
+    // pending context still staged (no-matches is a successful result).
+    assert!(
+        app.pending_manual_tool_context.is_some(),
+        "pending_manual_tool_context must be staged even on no-matches"
+    );
+    assert!(
+        app.last_tool_output_candidate.is_some(),
+        "last_tool_output_candidate must be set even on no-matches"
+    );
+}
+
+// (c) Failure (workspace violation via ..): stages nothing.
+#[test]
+fn tool_glob_failure_does_not_stage_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    // Seed an existing candidate to confirm it is not overwritten on failure.
+    app.last_tool_output_candidate = Some(ManualToolContext::from_read_file(
+        "prior.txt",
+        "prior content",
+    ));
+
+    app.input = "/tool glob ../**/*.rs".to_string();
+    app.submit();
+
+    // pending_manual_tool_context must NOT be set (failure path).
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "pending_manual_tool_context must not be set after a failed /tool glob"
+    );
+    // last_tool_output_candidate must NOT be updated (failure preserves old value).
+    let candidate = app.last_tool_output_candidate.as_ref().unwrap();
+    assert_eq!(
+        candidate.content, "prior content",
+        "last_tool_output_candidate must remain at its prior value after a failed /tool glob"
+    );
+}
+
 // (j) Candidate-source preservation: a second propose-write still reflects the
 //     original last_tool_output_candidate content, not the prior ToolResult summary.
 //     No event detail anywhere contains the raw sentinel.

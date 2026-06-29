@@ -119,6 +119,34 @@ impl super::App {
             return;
         }
 
+        // Early-return: Glob runs a workspace file-glob and auto-stages a context.
+        if let ToolCommand::Glob { pattern } = tc {
+            let request = ToolRequest::GlobFiles {
+                pattern: pattern.clone(),
+            };
+            match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
+                Ok(ToolOutput::FileMatches {
+                    ref paths,
+                    truncated,
+                    ..
+                }) => {
+                    let tool_ctx = ManualToolContext::from_glob_files(&pattern, paths, truncated);
+                    self.last_tool_output_candidate = Some(tool_ctx.clone());
+                    self.pending_manual_tool_context = Some(tool_ctx);
+                    self.push_tool_glob_output(&pattern, paths, truncated);
+                    self.log.push(
+                        "This tool output will be used as workspace context for your next message."
+                            .to_string(),
+                    );
+                }
+                Ok(_) => unreachable!("GlobFiles only produces FileMatches output"),
+                Err(error) => {
+                    self.push_tool_error_output(error);
+                }
+            }
+            return;
+        }
+
         let (request, display_path) = match tc {
             ToolCommand::List { path } => {
                 let dp = path.clone();
@@ -132,6 +160,7 @@ impl super::App {
             ToolCommand::PreviewWrite { .. } => unreachable!("handled above"),
             ToolCommand::ProposeWrite { .. } => unreachable!("handled above"),
             ToolCommand::Search { .. } => unreachable!("handled above"),
+            ToolCommand::Glob { .. } => unreachable!("handled above"),
         };
         match ToolEventRunner::new_readonly().run(&mut self.event_log, &ctx, request) {
             Ok(ToolOutput::FileList { entries, .. }) => {

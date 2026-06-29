@@ -6,6 +6,7 @@ pub enum ToolCommand {
     PreviewWrite { path: String },
     ProposeWrite { path: String },
     Search { query: String },
+    Glob { pattern: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
