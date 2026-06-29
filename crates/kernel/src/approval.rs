@@ -155,6 +155,8 @@ impl ParsedApprovalRequest {
         match self.tool.as_str() {
             "read_file" => Some(ToolRequest::ReadFile {
                 path: self.path.clone(),
+                offset: None,
+                limit: None,
             }),
             "list_files" => Some(ToolRequest::ListFiles {
                 path: self.path.clone(),
@@ -626,7 +628,9 @@ mod tests {
         assert_eq!(
             request,
             ToolRequest::ReadFile {
-                path: "README.md".to_string()
+                path: "README.md".to_string(),
+                offset: None,
+                limit: None,
             }
         );
     }
@@ -671,7 +675,9 @@ mod tests {
         assert_eq!(
             request,
             ToolRequest::ReadFile {
-                path: "README.md".to_string()
+                path: "README.md".to_string(),
+                offset: None,
+                limit: None,
             }
         );
     }

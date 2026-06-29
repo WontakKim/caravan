@@ -56,19 +56,23 @@ impl ToolEventRunner {
         context: &ToolExecutionContext,
         request: ToolRequest,
     ) -> Result<ToolOutput, ToolError> {
-        let (tool_name, tool_path) = match &request {
-            ToolRequest::ListFiles { path } => ("list_files", path.clone()),
-            ToolRequest::ReadFile { path } => ("read_file", path.clone()),
-            ToolRequest::PlanWrite { path } => ("write_file", path.clone()),
-            ToolRequest::PreviewWrite { path, .. } => ("preview_write", path.clone()),
-            ToolRequest::SearchText { query } => ("search_text", query.clone()),
-            ToolRequest::GlobFiles { pattern } => ("glob_files", pattern.clone()),
+        let (tool_name, tool_path, read_offset, read_limit) = match &request {
+            ToolRequest::ListFiles { path } => ("list_files", path.clone(), None, None),
+            ToolRequest::ReadFile {
+                path,
+                offset,
+                limit,
+            } => ("read_file", path.clone(), *offset, *limit),
+            ToolRequest::PlanWrite { path } => ("write_file", path.clone(), None, None),
+            ToolRequest::PreviewWrite { path, .. } => ("preview_write", path.clone(), None, None),
+            ToolRequest::SearchText { query } => ("search_text", query.clone(), None, None),
+            ToolRequest::GlobFiles { pattern } => ("glob_files", pattern.clone(), None, None),
         };
 
         let outcome = self.policy.evaluate(&request);
         event_log.append(
             EventKind::ToolPolicy,
-            format_tool_policy_detail(tool_name, &tool_path, &outcome),
+            format_tool_policy_detail(tool_name, &tool_path, &outcome, read_offset, read_limit),
         );
 
         match outcome.decision {
@@ -91,7 +95,7 @@ impl ToolEventRunner {
 
                 event_log.append(
                     EventKind::ToolCall,
-                    format_tool_call_detail(tool_name, &tool_path),
+                    format_tool_call_detail(tool_name, &tool_path, read_offset, read_limit),
                 );
 
                 match self.registry.execute(context, request) {
@@ -142,7 +146,7 @@ impl ToolEventRunner {
         });
         event_log.append(
             EventKind::ToolPolicy,
-            format_tool_policy_detail("write_file", path, &outcome),
+            format_tool_policy_detail("write_file", path, &outcome, None, None),
         );
         let gate = ApprovalGate::new();
         if let Some(request) = gate.evaluate(

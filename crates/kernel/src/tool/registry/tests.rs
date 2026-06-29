@@ -164,6 +164,8 @@ fn list_files_symlink_escape_is_workspace_violation() {
     assert!(matches!(result, Err(ToolError::WorkspaceViolation { .. })));
 }
 
+// ─── Full-read regression tests ──────────────────────────────────────────────
+
 #[test]
 fn read_file_returns_utf8_content() {
     let dir = TempDir::new();
@@ -175,17 +177,28 @@ fn read_file_returns_utf8_content() {
         &ctx,
         ToolRequest::ReadFile {
             path: "hello.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
     let output = result.expect("should succeed");
-    assert!(matches!(
-        output,
+    match &output {
         ToolOutput::FileContent {
-            ref path,
-            ref content
-        } if path == "hello.txt" && content == "hello, world!"
-    ));
+            path,
+            content,
+            start_line,
+            line_count,
+            truncated,
+        } => {
+            assert_eq!(path, "hello.txt");
+            assert_eq!(content, "hello, world!");
+            assert_eq!(*start_line, None);
+            assert_eq!(*line_count, None);
+            assert!(!truncated);
+        }
+        _ => panic!("expected FileContent"),
+    }
 }
 
 #[test]
@@ -199,6 +212,8 @@ fn read_file_on_directory_returns_not_a_file() {
         &ctx,
         ToolRequest::ReadFile {
             path: "subdir".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -217,6 +232,8 @@ fn read_file_oversized_returns_too_large() {
         &ctx,
         ToolRequest::ReadFile {
             path: "big.bin".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -241,6 +258,8 @@ fn read_file_non_utf8_returns_non_utf8() {
         &ctx,
         ToolRequest::ReadFile {
             path: "bad.bin".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -445,6 +464,318 @@ fn glob_files_dotdot_pattern_returns_workspace_violation() {
     assert!(
         matches!(result, Err(ToolError::WorkspaceViolation { .. })),
         "expected WorkspaceViolation, got {:?}",
+        result
+    );
+}
+
+// ─── Range-read unit tests ────────────────────────────────────────────────────
+
+/// Helper: write a multi-line file in the temp dir.
+fn write_lines(dir: &TempDir, name: &str, lines: &[&str]) {
+    let content = lines.join("\n");
+    std::fs::write(dir.path().join(name), content).expect("write file");
+}
+
+#[test]
+fn range_read_basic_returns_requested_lines() {
+    let dir = TempDir::new();
+    write_lines(
+        &dir,
+        "lines.txt",
+        &["line1", "line2", "line3", "line4", "line5"],
+    );
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "lines.txt".to_string(),
+            offset: Some(2),
+            limit: Some(2),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(start_line, Some(2));
+            assert_eq!(line_count, Some(2));
+            assert!(!truncated);
+            assert_eq!(content, "line2\nline3");
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_eof_before_offset_returns_empty() {
+    let dir = TempDir::new();
+    write_lines(&dir, "short.txt", &["only one line"]);
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "short.txt".to_string(),
+            offset: Some(5),
+            limit: Some(10),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(start_line, Some(5));
+            assert_eq!(line_count, Some(0));
+            assert!(!truncated);
+            assert_eq!(content, "");
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_offset_only_defaults_limit_to_default() {
+    let dir = TempDir::new();
+    // Write DEFAULT_READ_RANGE_LIMIT_LINES + 5 more lines than the default.
+    let all_lines: Vec<String> = (1..=DEFAULT_READ_RANGE_LIMIT_LINES + 5)
+        .map(|i| format!("line{}", i))
+        .collect();
+    let refs: Vec<&str> = all_lines.iter().map(|s| s.as_str()).collect();
+    write_lines(&dir, "many.txt", &refs);
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "many.txt".to_string(),
+            offset: Some(1),
+            limit: None, // should default to DEFAULT_READ_RANGE_LIMIT_LINES
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            line_count,
+            start_line,
+            ..
+        } => {
+            assert_eq!(start_line, Some(1));
+            // Should return exactly DEFAULT_READ_RANGE_LIMIT_LINES lines.
+            assert_eq!(
+                line_count,
+                Some(DEFAULT_READ_RANGE_LIMIT_LINES),
+                "expected default limit of {} lines",
+                DEFAULT_READ_RANGE_LIMIT_LINES
+            );
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_limit_only_reads_from_line_1() {
+    let dir = TempDir::new();
+    write_lines(&dir, "ab.txt", &["alpha", "beta", "gamma"]);
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "ab.txt".to_string(),
+            offset: None,
+            limit: Some(2),
+        },
+    );
+
+    match result.expect("should succeed") {
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            line_count,
+            ..
+        } => {
+            assert_eq!(start_line, Some(1));
+            assert_eq!(line_count, Some(2));
+            assert_eq!(content, "alpha\nbeta");
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_on_large_file_succeeds_when_output_bounded() {
+    // File is larger than MAX_READ_FILE_BYTES but range read succeeds
+    // because we only read a small slice line-by-line.
+    let dir = TempDir::new();
+
+    // Write 2 KiB of 'A' + newline in the first line,
+    // followed by enough 'x' lines to push total > MAX_READ_FILE_BYTES.
+    let big_first_line = "A".repeat(2048);
+    let filler_line = "x".repeat(64); // 64 bytes
+    // MAX_READ_FILE_BYTES = 64 * 1024 = 65536 bytes
+    // We need > 65536 bytes total. 2048 + N*65 > 65536 → N > 983
+    let mut lines: Vec<String> = vec![big_first_line];
+    for i in 0..1100usize {
+        lines.push(format!("{}{}", filler_line, i));
+    }
+    let content = lines.join("\n");
+    assert!(
+        content.len() > MAX_READ_FILE_BYTES as usize,
+        "test file must be larger than MAX_READ_FILE_BYTES"
+    );
+    std::fs::write(dir.path().join("large.txt"), &content).expect("write large file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+
+    // Range read: only line 2, limit 1 — well within the byte cap.
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "large.txt".to_string(),
+            offset: Some(2),
+            limit: Some(1),
+        },
+    );
+
+    match result.expect("range read on large file should succeed") {
+        ToolOutput::FileContent {
+            start_line,
+            line_count,
+            truncated,
+            ..
+        } => {
+            assert_eq!(start_line, Some(2));
+            assert_eq!(line_count, Some(1));
+            assert!(!truncated);
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_non_utf8_returns_non_utf8() {
+    let dir = TempDir::new();
+    // Write a file with valid UTF-8 on line 1 then invalid bytes on line 2.
+    let mut content = b"valid line\n".to_vec();
+    content.extend_from_slice(&[0xFF, 0xFE, 0xFF]);
+    content.push(b'\n');
+    std::fs::write(dir.path().join("mixed.bin"), &content).expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "mixed.bin".to_string(),
+            offset: Some(1),
+            limit: Some(5),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::NonUtf8 { .. })),
+        "expected NonUtf8 for file with invalid UTF-8, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn range_read_workspace_escape_rejected() {
+    let dir = TempDir::new();
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "../escape.txt".to_string(),
+            offset: Some(1),
+            limit: Some(5),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::WorkspaceViolation { .. })),
+        "expected WorkspaceViolation, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn range_read_byte_cap_truncation_sets_truncated_true() {
+    let dir = TempDir::new();
+    // Write many lines each large enough that after a few lines the byte cap hits.
+    // MAX_READ_RANGE_OUTPUT_BYTES = 64 * 1024 = 65536.
+    // Write 200 lines of 1000 'x' chars each → 200 * 1001 = 200200 bytes > 65536.
+    let big_line = "x".repeat(1000);
+    let lines: Vec<&str> = (0..200).map(|_| big_line.as_str()).collect();
+    write_lines(&dir, "biglines.txt", &lines);
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "biglines.txt".to_string(),
+            offset: Some(1),
+            limit: Some(200),
+        },
+    );
+
+    match result.expect("should succeed with truncation") {
+        ToolOutput::FileContent {
+            start_line,
+            truncated,
+            content,
+            ..
+        } => {
+            assert_eq!(start_line, Some(1));
+            assert!(truncated, "expected truncated=true when byte cap is hit");
+            assert!(
+                content.len() <= MAX_READ_RANGE_OUTPUT_BYTES,
+                "content length {} must be <= MAX_READ_RANGE_OUTPUT_BYTES {}",
+                content.len(),
+                MAX_READ_RANGE_OUTPUT_BYTES
+            );
+        }
+        other => panic!("expected FileContent, got {:?}", other),
+    }
+}
+
+#[test]
+fn range_read_on_directory_returns_not_a_file() {
+    let dir = TempDir::new();
+    std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::ReadFile {
+            path: "subdir".to_string(),
+            offset: Some(1),
+            limit: Some(5),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::NotAFile { .. })),
+        "expected NotAFile for directory target with range read, got {:?}",
         result
     );
 }

@@ -62,6 +62,8 @@ impl ModelToolRequest {
         match self.kind {
             ModelToolRequestKind::ReadFile => ToolRequest::ReadFile {
                 path: self.path.clone(),
+                offset: None,
+                limit: None,
             },
             ModelToolRequestKind::ListFiles => ToolRequest::ListFiles {
                 path: self.path.clone(),
@@ -391,6 +393,8 @@ mod tests {
             req.to_tool_request(),
             ToolRequest::ReadFile {
                 path: "src/main.rs".to_string(),
+                offset: None,
+                limit: None,
             }
         );
     }

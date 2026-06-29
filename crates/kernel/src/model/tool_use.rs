@@ -62,7 +62,11 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
                     });
                 }
             };
-            Ok(ToolRequest::ReadFile { path })
+            Ok(ToolRequest::ReadFile {
+                path,
+                offset: None,
+                limit: None,
+            })
         }
         "search_text" => {
             // Reject unknown fields — mirrors the schema's additionalProperties: false.
@@ -136,9 +140,24 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
         ToolOutput::FileList { path, entries } => {
             format!("Directory: {}\n{}", path, entries.join("\n"))
         }
-        ToolOutput::FileContent { path, content } => {
-            format!("File: {}\n{}", path, content)
-        }
+        ToolOutput::FileContent {
+            path,
+            content,
+            start_line,
+            line_count,
+            truncated,
+        } => match start_line {
+            None => format!("File: {}\n{}", path, content),
+            Some(start) => {
+                let lc = line_count.unwrap_or(0);
+                let end = if lc == 0 { *start } else { start + lc - 1 };
+                let mut rendered = format!("File: {}\nLines: {}-{}\n{}", path, start, end, content);
+                if *truncated {
+                    rendered.push_str("\n... [truncated]");
+                }
+                rendered
+            }
+        },
         ToolOutput::WritePreview { .. } => {
             "[write preview not available on the read-only path]".to_string()
         }
@@ -482,6 +501,8 @@ mod tests {
             result,
             crate::tool::registry::ToolRequest::ReadFile {
                 path: "Cargo.toml".to_string(),
+                offset: None,
+                limit: None,
             }
         );
     }
@@ -549,6 +570,9 @@ mod tests {
         let output = crate::tool::registry::ToolOutput::FileContent {
             path: "README.md".to_string(),
             content: "hello world".to_string(),
+            start_line: None,
+            line_count: None,
+            truncated: false,
         };
         let formatted = format_tool_output_for_model(&output);
         assert_eq!(formatted, "File: README.md\nhello world");
@@ -563,6 +587,9 @@ mod tests {
         let output = crate::tool::registry::ToolOutput::FileContent {
             path: "big.txt".to_string(),
             content,
+            start_line: None,
+            line_count: None,
+            truncated: false,
         };
         let formatted = format_tool_output_for_model(&output);
         assert!(
@@ -577,6 +604,66 @@ mod tests {
         );
         // Suppress unused variable warning in release mode.
         let _ = header;
+    }
+
+    #[test]
+    fn range_read_file_content_formatting_includes_lines_header() {
+        let output = crate::tool::registry::ToolOutput::FileContent {
+            path: "src/lib.rs".to_string(),
+            content: "line one\nline two\nline three".to_string(),
+            start_line: Some(5),
+            line_count: Some(3),
+            truncated: false,
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert!(
+            formatted.starts_with("File: src/lib.rs\n"),
+            "must start with File: header: {formatted}"
+        );
+        assert!(
+            formatted.contains("Lines: 5-7"),
+            "must contain Lines: 5-7: {formatted}"
+        );
+        assert!(
+            !formatted.contains("... [truncated]"),
+            "must not contain truncated suffix when truncated=false"
+        );
+    }
+
+    #[test]
+    fn range_read_truncated_appends_truncated_suffix() {
+        let output = crate::tool::registry::ToolOutput::FileContent {
+            path: "big.rs".to_string(),
+            content: "partial".to_string(),
+            start_line: Some(1),
+            line_count: Some(1),
+            truncated: true,
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert!(
+            formatted.contains("Lines: 1-1"),
+            "must contain Lines header: {formatted}"
+        );
+        assert!(
+            formatted.ends_with("\n... [truncated]"),
+            "must end with truncated suffix: {formatted}"
+        );
+    }
+
+    #[test]
+    fn range_read_zero_lines_uses_start_for_both_ends() {
+        let output = crate::tool::registry::ToolOutput::FileContent {
+            path: "empty.rs".to_string(),
+            content: String::new(),
+            start_line: Some(10),
+            line_count: Some(0),
+            truncated: false,
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert!(
+            formatted.contains("Lines: 10-10"),
+            "zero-line range must emit Lines: start-start: {formatted}"
+        );
     }
 
     // --- format_tool_error_for_model tests ---

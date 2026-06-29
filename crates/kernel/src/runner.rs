@@ -62,7 +62,7 @@ fn aggregate_usage(u1: Option<ModelUsage>, u2: Option<ModelUsage>) -> Option<Mod
 fn activity_path_from_request(req: &ToolRequest) -> String {
     match req {
         ToolRequest::ListFiles { path } => path.clone(),
-        ToolRequest::ReadFile { path } => path.clone(),
+        ToolRequest::ReadFile { path, .. } => path.clone(),
         ToolRequest::PlanWrite { path } => path.clone(),
         ToolRequest::PreviewWrite { path, .. } => path.clone(),
         ToolRequest::SearchText { query } => query.clone(),

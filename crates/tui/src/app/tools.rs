@@ -154,7 +154,14 @@ impl super::App {
             }
             ToolCommand::Read { path } => {
                 let dp = path.clone();
-                (ToolRequest::ReadFile { path }, dp)
+                (
+                    ToolRequest::ReadFile {
+                        path,
+                        offset: None,
+                        limit: None,
+                    },
+                    dp,
+                )
             }
             ToolCommand::PlanWrite { .. } => unreachable!("handled above"),
             ToolCommand::PreviewWrite { .. } => unreachable!("handled above"),

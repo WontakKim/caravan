@@ -10,8 +10,22 @@ pub(super) fn format_approval_request_detail(request: &ApprovalRequest) -> Strin
     )
 }
 
-pub(super) fn format_tool_call_detail(tool_name: &str, path: &str) -> String {
-    format!("tool={} path={:?} risk=read_only", tool_name, path)
+pub(super) fn format_tool_call_detail(
+    tool_name: &str,
+    path: &str,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> String {
+    match (offset, limit) {
+        (None, None) => format!("tool={} path={:?} risk=read_only", tool_name, path),
+        _ => format!(
+            "tool={} path={:?} offset={} limit={} risk=read_only",
+            tool_name,
+            path,
+            offset.unwrap_or(1),
+            limit.unwrap_or(crate::tool::registry::DEFAULT_READ_RANGE_LIMIT_LINES),
+        ),
+    }
 }
 
 pub(super) fn format_tool_result_detail(
@@ -28,9 +42,24 @@ pub(super) fn format_tool_result_detail(
                 entries.len()
             )
         }
-        ToolOutput::FileContent { content, .. } => {
-            format!("tool={} path={:?} bytes={}", tool_name, path, content.len())
-        }
+        ToolOutput::FileContent {
+            content,
+            start_line,
+            line_count,
+            truncated,
+            ..
+        } => match start_line {
+            None => format!("tool={} path={:?} bytes={}", tool_name, path, content.len()),
+            Some(sl) => format!(
+                "tool={} path={:?} start_line={} line_count={} bytes={} truncated={}",
+                tool_name,
+                path,
+                sl,
+                line_count.unwrap_or(0),
+                content.len(),
+                truncated,
+            ),
+        },
         ToolOutput::WritePreview { preview, .. } => {
             format!("tool={} {}", tool_name, preview.detail())
         }

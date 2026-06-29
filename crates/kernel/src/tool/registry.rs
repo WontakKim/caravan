@@ -50,12 +50,27 @@ pub struct ToolExecutionContext {
 /// Inputs accepted by the tool harness.
 #[derive(Debug, PartialEq)]
 pub enum ToolRequest {
-    ListFiles { path: String },
-    ReadFile { path: String },
-    PlanWrite { path: String },
-    PreviewWrite { path: String, content: String },
-    SearchText { query: String },
-    GlobFiles { pattern: String },
+    ListFiles {
+        path: String,
+    },
+    ReadFile {
+        path: String,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    },
+    PlanWrite {
+        path: String,
+    },
+    PreviewWrite {
+        path: String,
+        content: String,
+    },
+    SearchText {
+        query: String,
+    },
+    GlobFiles {
+        pattern: String,
+    },
 }
 
 /// Outputs produced by the tool harness.
@@ -68,6 +83,12 @@ pub enum ToolOutput {
     FileContent {
         path: String,
         content: String,
+        /// First 1-based line number returned; `None` for full reads.
+        start_line: Option<usize>,
+        /// Number of lines actually returned; `None` for full reads.
+        line_count: Option<usize>,
+        /// `true` when the output byte cap cut content short.
+        truncated: bool,
     },
     WritePreview {
         path: String,
@@ -100,8 +121,17 @@ pub enum ToolError {
     InvalidPattern { pattern: String },
 }
 
-/// Maximum bytes allowed when reading a file.
+/// Maximum bytes allowed when reading a file (full read).
 pub const MAX_READ_FILE_BYTES: u64 = 64 * 1024;
+
+/// Default number of lines returned by a range read when no `limit` is supplied.
+pub const DEFAULT_READ_RANGE_LIMIT_LINES: usize = 120;
+
+/// Hard cap on the number of lines a range read may request.
+pub const MAX_READ_RANGE_LIMIT_LINES: usize = 500;
+
+/// Maximum bytes the content of a range read may occupy before truncation.
+pub const MAX_READ_RANGE_OUTPUT_BYTES: usize = 64 * 1024;
 
 /// Stateless registry that vends tool executors.
 ///
@@ -124,7 +154,11 @@ impl ToolRegistry {
     ) -> Result<ToolOutput, ToolError> {
         match request {
             ToolRequest::ListFiles { path } => self.list_files(context, &path),
-            ToolRequest::ReadFile { path } => self.read_file(context, &path),
+            ToolRequest::ReadFile {
+                path,
+                offset,
+                limit,
+            } => self.read_file(context, &path, offset, limit),
             ToolRequest::PlanWrite { .. } => Err(ToolError::ApprovalRequired {
                 reason: "workspace_write_requires_approval".to_string(),
             }),
@@ -225,15 +259,23 @@ impl ToolRegistry {
             })
     }
 
-    /// Reads a file's UTF-8 contents, capping at [`MAX_READ_FILE_BYTES`].
+    /// Reads a file's UTF-8 contents.
     ///
-    /// The size cap is checked from file metadata **before** reading any bytes
-    /// into memory. UTF-8 is validated strictly with `String::from_utf8`; lossy
-    /// conversion is never used.
+    /// When both `offset` and `limit` are `None` (full read), the size cap is
+    /// checked from file metadata **before** reading any bytes into memory, and
+    /// the full [`MAX_READ_FILE_BYTES`] limit applies.
+    ///
+    /// When `offset` or `limit` is `Some` (range read), the file is read
+    /// line-by-line via [`BufReader`]; the byte cap is
+    /// [`MAX_READ_RANGE_OUTPUT_BYTES`]. `offset` is 1-based; `limit` defaults to
+    /// [`DEFAULT_READ_RANGE_LIMIT_LINES`] and is clamped to
+    /// [`MAX_READ_RANGE_LIMIT_LINES`].
     fn read_file(
         &self,
         context: &ToolExecutionContext,
         requested: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
     ) -> Result<ToolOutput, ToolError> {
         let canonical = resolve_in_workspace(context, requested)?;
 
@@ -245,32 +287,123 @@ impl ToolRegistry {
             });
         }
 
-        // Size cap: check metadata BEFORE reading bytes into memory.
-        let len = fs::metadata(&canonical)
-            .map_err(|e| ToolError::Io {
+        if offset.is_none() && limit.is_none() {
+            // ── Full read path (unchanged) ──────────────────────────────────
+            // Size cap: check metadata BEFORE reading bytes into memory.
+            let len = fs::metadata(&canonical)
+                .map_err(|e| ToolError::Io {
+                    message: e.to_string(),
+                })?
+                .len();
+
+            if len > MAX_READ_FILE_BYTES {
+                return Err(ToolError::TooLarge {
+                    path: requested.to_string(),
+                    max_bytes: MAX_READ_FILE_BYTES,
+                });
+            }
+
+            let bytes = fs::read(&canonical).map_err(|e| ToolError::Io {
                 message: e.to_string(),
-            })?
-            .len();
+            })?;
 
-        if len > MAX_READ_FILE_BYTES {
-            return Err(ToolError::TooLarge {
+            let content = String::from_utf8(bytes).map_err(|_| ToolError::NonUtf8 {
                 path: requested.to_string(),
-                max_bytes: MAX_READ_FILE_BYTES,
-            });
+            })?;
+
+            Ok(ToolOutput::FileContent {
+                path: requested.to_string(),
+                content,
+                start_line: None,
+                line_count: None,
+                truncated: false,
+            })
+        } else {
+            // ── Range read path ─────────────────────────────────────────────
+            use std::io::{BufRead, BufReader};
+
+            let start = offset.unwrap_or(1).max(1);
+            let count = limit
+                .unwrap_or(DEFAULT_READ_RANGE_LIMIT_LINES)
+                .min(MAX_READ_RANGE_LIMIT_LINES);
+
+            let file = std::fs::File::open(&canonical).map_err(|e| ToolError::Io {
+                message: e.to_string(),
+            })?;
+            let reader = BufReader::new(file);
+
+            let mut lines_collected: Vec<String> = Vec::new();
+            let mut total_bytes: usize = 0;
+            let mut truncated = false;
+            let mut line_index: usize = 0;
+            let mut seen_start = false;
+
+            for line_result in reader.lines() {
+                let line = line_result.map_err(|e| {
+                    if e.kind() == std::io::ErrorKind::InvalidData {
+                        ToolError::NonUtf8 {
+                            path: requested.to_string(),
+                        }
+                    } else {
+                        ToolError::Io {
+                            message: e.to_string(),
+                        }
+                    }
+                })?;
+
+                line_index += 1;
+
+                if line_index < start {
+                    continue;
+                }
+
+                seen_start = true;
+
+                if lines_collected.len() >= count {
+                    break;
+                }
+
+                // Byte cap: count line content + newline separator.
+                let line_bytes = line.len() + 1;
+                if total_bytes + line_bytes > MAX_READ_RANGE_OUTPUT_BYTES {
+                    let remaining = MAX_READ_RANGE_OUTPUT_BYTES.saturating_sub(total_bytes);
+                    let mut cut = remaining.min(line.len());
+                    while cut > 0 && !line.is_char_boundary(cut) {
+                        cut -= 1;
+                    }
+                    if cut > 0 {
+                        lines_collected.push(line[..cut].to_string());
+                    }
+                    truncated = true;
+                    break;
+                }
+
+                total_bytes += line_bytes;
+                lines_collected.push(line);
+            }
+
+            // EOF was reached before the requested start line.
+            if !seen_start {
+                return Ok(ToolOutput::FileContent {
+                    path: requested.to_string(),
+                    content: String::new(),
+                    start_line: Some(start),
+                    line_count: Some(0),
+                    truncated: false,
+                });
+            }
+
+            let actual_count = lines_collected.len();
+            let content = lines_collected.join("\n");
+
+            Ok(ToolOutput::FileContent {
+                path: requested.to_string(),
+                content,
+                start_line: Some(start),
+                line_count: Some(actual_count),
+                truncated,
+            })
         }
-
-        let bytes = fs::read(&canonical).map_err(|e| ToolError::Io {
-            message: e.to_string(),
-        })?;
-
-        let content = String::from_utf8(bytes).map_err(|_| ToolError::NonUtf8 {
-            path: requested.to_string(),
-        })?;
-
-        Ok(ToolOutput::FileContent {
-            path: requested.to_string(),
-            content,
-        })
     }
 }
 

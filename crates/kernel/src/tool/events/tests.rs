@@ -76,6 +76,8 @@ fn read_file_escape_appends_tool_call_and_error() {
         &ctx,
         ToolRequest::ReadFile {
             path: "../escape".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -92,7 +94,7 @@ fn read_file_escape_appends_tool_call_and_error() {
 
 #[test]
 fn format_tool_call_detail_uses_debug_path_and_risk() {
-    let detail = format_tool_call_detail("list_files", ".");
+    let detail = format_tool_call_detail("list_files", ".", None, None);
     assert_eq!(detail, r#"tool=list_files path="." risk=read_only"#);
 }
 
@@ -111,6 +113,9 @@ fn format_tool_result_detail_file_content_uses_byte_length() {
     let output = ToolOutput::FileContent {
         path: "readme.md".to_string(),
         content: "hello".to_string(),
+        start_line: None,
+        line_count: None,
+        truncated: false,
     };
     let detail = format_tool_result_detail("read_file", "readme.md", &output);
     assert_eq!(detail, r#"tool=read_file path="readme.md" bytes=5"#);
@@ -168,6 +173,8 @@ fn read_file_success_appends_tool_call_and_result() {
         &ctx,
         ToolRequest::ReadFile {
             path: "hello.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -248,6 +255,8 @@ fn read_file_result_detail_contains_bytes_not_content() {
             &ctx,
             ToolRequest::ReadFile {
                 path: "secret.txt".to_string(),
+                offset: None,
+                limit: None,
             },
         )
         .ok();
@@ -276,6 +285,8 @@ fn read_file_escape_error_detail_contains_workspace_violation() {
             &ctx,
             ToolRequest::ReadFile {
                 path: "../escape".to_string(),
+                offset: None,
+                limit: None,
             },
         )
         .ok();
@@ -313,12 +324,16 @@ fn run_success_return_value_matches_registry() {
         &ctx,
         ToolRequest::ReadFile {
             path: "parity.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
     let registry_result = registry.execute(
         &ctx,
         ToolRequest::ReadFile {
             path: "parity.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -338,12 +353,16 @@ fn run_failure_return_value_matches_registry() {
         &ctx,
         ToolRequest::ReadFile {
             path: "../escape".to_string(),
+            offset: None,
+            limit: None,
         },
     );
     let registry_result = registry.execute(
         &ctx,
         ToolRequest::ReadFile {
             path: "../escape".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -379,6 +398,8 @@ fn persistence_round_trip_restores_events() {
                 &ctx,
                 ToolRequest::ReadFile {
                     path: "../escape".to_string(),
+                    offset: None,
+                    limit: None,
                 },
             )
             .ok();
@@ -418,6 +439,8 @@ fn run_does_not_panic_for_path_with_quote_character() {
         &ctx,
         ToolRequest::ReadFile {
             path: r#"file"name.txt"#.to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -538,6 +561,8 @@ fn read_file_escape_policy_allows_then_registry_produces_violation() {
         &ctx,
         ToolRequest::ReadFile {
             path: "../secret.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -574,6 +599,8 @@ fn deny_all_engine_returns_policy_denied_error_without_tool_call() {
         &ctx,
         ToolRequest::ReadFile {
             path: "hello.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -616,6 +643,8 @@ fn manual_approval_engine_stops_before_tool_call_and_records_approval_request() 
         &ctx,
         ToolRequest::ReadFile {
             path: "missing.txt".to_string(),
+            offset: None,
+            limit: None,
         },
     );
 
@@ -707,6 +736,8 @@ fn approval_request_event_survives_persistence_round_trip() {
                 &ctx,
                 ToolRequest::ReadFile {
                     path: "missing.txt".to_string(),
+                    offset: None,
+                    limit: None,
                 },
             )
             .ok();
@@ -1272,5 +1303,106 @@ fn glob_files_model_output_not_truncated_has_no_truncated_suffix() {
     assert!(
         !formatted.contains("... [truncated]"),
         "model output must not contain truncation suffix when truncated=false: {formatted}"
+    );
+}
+
+// ─── Range detail-string tests ────────────────────────────────────────────────
+
+#[test]
+fn format_tool_result_detail_range_file_content_includes_start_line_fields() {
+    let output = ToolOutput::FileContent {
+        path: "src/lib.rs".to_string(),
+        content: "line5\nline6\nline7".to_string(),
+        start_line: Some(5),
+        line_count: Some(3),
+        truncated: false,
+    };
+    let detail = format_tool_result_detail("read_file", "src/lib.rs", &output);
+    assert!(
+        detail.contains("start_line=5"),
+        "expected start_line=5 in detail: {detail}"
+    );
+    assert!(
+        detail.contains("line_count=3"),
+        "expected line_count=3 in detail: {detail}"
+    );
+    assert!(
+        detail.contains("bytes="),
+        "expected bytes= in detail: {detail}"
+    );
+    assert!(
+        detail.contains("truncated=false"),
+        "expected truncated=false in detail: {detail}"
+    );
+}
+
+#[test]
+fn format_tool_call_detail_range_read_includes_offset_and_limit() {
+    let detail = format_tool_call_detail("read_file", "src/lib.rs", Some(10), Some(20));
+    assert!(
+        detail.contains("offset=10"),
+        "expected offset=10 in detail: {detail}"
+    );
+    assert!(
+        detail.contains("limit=20"),
+        "expected limit=20 in detail: {detail}"
+    );
+    assert!(
+        detail.contains("risk=read_only"),
+        "expected risk=read_only in detail: {detail}"
+    );
+}
+
+#[test]
+fn range_read_event_log_result_detail_has_start_line_format() {
+    let dir = TempDir::new();
+    std::fs::write(
+        dir.path().join("target.txt"),
+        "alpha\nbeta\ngamma\ndelta\nepsilon",
+    )
+    .expect("write file");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner
+        .run(
+            &mut log,
+            &ctx,
+            ToolRequest::ReadFile {
+                path: "target.txt".to_string(),
+                offset: Some(2),
+                limit: Some(3),
+            },
+        )
+        .ok();
+
+    let result_detail = &log.get(2).unwrap().detail;
+    assert!(
+        result_detail.contains("start_line=2"),
+        "ToolResult detail must contain start_line=2: {result_detail}"
+    );
+    assert!(
+        result_detail.contains("line_count=3"),
+        "ToolResult detail must contain line_count=3: {result_detail}"
+    );
+    assert!(
+        result_detail.contains("truncated="),
+        "ToolResult detail must contain truncated=: {result_detail}"
+    );
+    assert!(
+        result_detail.contains("bytes="),
+        "ToolResult detail must contain bytes=: {result_detail}"
+    );
+
+    // ToolCall detail must include offset= and limit=.
+    let call_detail = &log.get(1).unwrap().detail;
+    assert!(
+        call_detail.contains("offset=2"),
+        "ToolCall detail must contain offset=2: {call_detail}"
+    );
+    assert!(
+        call_detail.contains("limit=3"),
+        "ToolCall detail must contain limit=3: {call_detail}"
     );
 }

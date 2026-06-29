@@ -57,8 +57,9 @@ pub use storage::EventStore;
 pub use tool::events::ToolEventRunner;
 pub use tool::policy::{ToolPolicyDecision, ToolPolicyEngine, ToolPolicyOutcome};
 pub use tool::registry::{
-    SearchMatch, ToolError, ToolExecutionContext, ToolName, ToolOutput, ToolRegistry, ToolRequest,
-    ToolRisk,
+    DEFAULT_READ_RANGE_LIMIT_LINES, MAX_READ_FILE_BYTES, MAX_READ_RANGE_LIMIT_LINES,
+    MAX_READ_RANGE_OUTPUT_BYTES, SearchMatch, ToolError, ToolExecutionContext, ToolName,
+    ToolOutput, ToolRegistry, ToolRequest, ToolRisk,
 };
 pub use tool::schema::{ToolCatalog, ToolInputSpec, ToolSpec};
 pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};

@@ -113,16 +113,37 @@ impl ToolPolicyEngine {
 ///
 /// The `path` parameter is `&str` (not `&Path`) to match the convention in
 /// `tool_events.rs`. The path is formatted with `{:?}` debug formatting.
+/// For range reads (`offset` or `limit` is `Some`), `offset={}` and `limit={}`
+/// are inserted between `path` and `risk`.
 #[rustfmt::skip]
-pub(crate) fn format_tool_policy_detail(tool_name: &str, path: &str, outcome: &ToolPolicyOutcome) -> String {
-    format!(
-        "tool={} path={:?} risk={} decision={} reason={}",
-        tool_name,
-        path,
-        outcome.risk.as_str(),
-        outcome.decision.as_str(),
-        outcome.reason
-    )
+pub(crate) fn format_tool_policy_detail(
+    tool_name: &str,
+    path: &str,
+    outcome: &ToolPolicyOutcome,
+    offset: Option<usize>,
+    limit: Option<usize>,
+) -> String {
+    use crate::tool::registry::{DEFAULT_READ_RANGE_LIMIT_LINES};
+    match (offset, limit) {
+        (None, None) => format!(
+            "tool={} path={:?} risk={} decision={} reason={}",
+            tool_name,
+            path,
+            outcome.risk.as_str(),
+            outcome.decision.as_str(),
+            outcome.reason
+        ),
+        _ => format!(
+            "tool={} path={:?} offset={} limit={} risk={} decision={} reason={}",
+            tool_name,
+            path,
+            offset.unwrap_or(1),
+            limit.unwrap_or(DEFAULT_READ_RANGE_LIMIT_LINES),
+            outcome.risk.as_str(),
+            outcome.decision.as_str(),
+            outcome.reason
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -147,6 +168,8 @@ mod tests {
         let engine = ToolPolicyEngine::read_only();
         let request = ToolRequest::ReadFile {
             path: "hello.txt".to_string(),
+            offset: None,
+            limit: None,
         };
         let outcome = engine.evaluate(&request);
         assert_eq!(outcome.decision, ToolPolicyDecision::Allow);
@@ -162,7 +185,7 @@ mod tests {
             reason: "read_only_auto_allow".to_string(),
             approval_requirement: ApprovalRequirement::None,
         };
-        let detail = format_tool_policy_detail("list_files", ".", &outcome);
+        let detail = format_tool_policy_detail("list_files", ".", &outcome, None, None);
         assert_eq!(
             detail,
             r#"tool=list_files path="." risk=read_only decision=allow reason=read_only_auto_allow"#
@@ -177,10 +200,34 @@ mod tests {
             reason: "deny_all".to_string(),
             approval_requirement: ApprovalRequirement::None,
         };
-        let detail = format_tool_policy_detail("list_files", ".", &outcome);
+        let detail = format_tool_policy_detail("list_files", ".", &outcome, None, None);
         assert!(
             detail.contains("decision=deny"),
             "expected decision=deny in detail: {detail}"
+        );
+    }
+
+    #[test]
+    fn format_tool_policy_detail_range_read_includes_offset_and_limit() {
+        let outcome = ToolPolicyOutcome {
+            decision: ToolPolicyDecision::Allow,
+            risk: ToolRisk::ReadOnly,
+            reason: "read_only_auto_allow".to_string(),
+            approval_requirement: ApprovalRequirement::None,
+        };
+        let detail =
+            format_tool_policy_detail("read_file", "src/lib.rs", &outcome, Some(5), Some(20));
+        assert!(
+            detail.contains("offset=5"),
+            "expected offset=5 in detail: {detail}"
+        );
+        assert!(
+            detail.contains("limit=20"),
+            "expected limit=20 in detail: {detail}"
+        );
+        assert!(
+            detail.contains("risk=read_only"),
+            "expected risk=read_only in detail: {detail}"
         );
     }
 
