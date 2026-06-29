@@ -297,3 +297,154 @@ fn search_text_no_matches_returns_empty_search_results() {
         other => panic!("expected SearchResults, got {:?}", other),
     }
 }
+
+// --- GlobFiles registry tests ---
+
+#[test]
+fn glob_files_simple_match_returns_file_matches() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}").expect("write file");
+    std::fs::write(dir.path().join("readme.txt"), "readme").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "*.rs".to_string(),
+        },
+    );
+
+    match result {
+        Ok(ToolOutput::FileMatches {
+            pattern,
+            paths,
+            truncated,
+        }) => {
+            assert_eq!(pattern, "*.rs");
+            assert_eq!(paths, vec!["main.rs"]);
+            assert!(!truncated);
+        }
+        other => panic!("expected FileMatches, got {:?}", other),
+    }
+}
+
+#[test]
+fn glob_files_nested_match_returns_file_matches() {
+    let dir = TempDir::new();
+    std::fs::create_dir(dir.path().join("src")).expect("create dir");
+    std::fs::write(dir.path().join("src").join("lib.rs"), "").expect("write file");
+    std::fs::write(dir.path().join("src").join("main.rs"), "").expect("write file");
+    std::fs::write(dir.path().join("readme.md"), "").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "**/*.rs".to_string(),
+        },
+    );
+
+    match result {
+        Ok(ToolOutput::FileMatches {
+            paths, truncated, ..
+        }) => {
+            assert_eq!(paths, vec!["src/lib.rs", "src/main.rs"]);
+            assert!(!truncated);
+        }
+        other => panic!("expected FileMatches, got {:?}", other),
+    }
+}
+
+#[test]
+fn glob_files_no_match_returns_empty_file_matches() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("file.txt"), "content").expect("write file");
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "*.rs".to_string(),
+        },
+    );
+
+    match result {
+        Ok(ToolOutput::FileMatches {
+            paths, truncated, ..
+        }) => {
+            assert!(paths.is_empty(), "expected empty paths");
+            assert!(!truncated);
+        }
+        other => panic!("expected FileMatches, got {:?}", other),
+    }
+}
+
+#[test]
+fn glob_files_truncation_sets_truncated_true() {
+    use super::glob::GLOB_MAX_MATCHES;
+
+    let dir = TempDir::new();
+    for i in 0..=GLOB_MAX_MATCHES {
+        std::fs::write(dir.path().join(format!("f{:04}.rs", i)), "").expect("write file");
+    }
+
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "*.rs".to_string(),
+        },
+    );
+
+    match result {
+        Ok(ToolOutput::FileMatches {
+            paths, truncated, ..
+        }) => {
+            assert_eq!(paths.len(), GLOB_MAX_MATCHES);
+            assert!(truncated, "expected truncated=true");
+        }
+        other => panic!("expected FileMatches, got {:?}", other),
+    }
+}
+
+#[test]
+fn glob_files_invalid_pattern_returns_invalid_pattern_error() {
+    let dir = TempDir::new();
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "".to_string(),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::InvalidPattern { .. })),
+        "expected InvalidPattern, got {:?}",
+        result
+    );
+}
+
+#[test]
+fn glob_files_dotdot_pattern_returns_workspace_violation() {
+    let dir = TempDir::new();
+    let registry = ToolRegistry::new_readonly();
+    let ctx = make_context(dir.path());
+    let result = registry.execute(
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "../escape".to_string(),
+        },
+    );
+
+    assert!(
+        matches!(result, Err(ToolError::WorkspaceViolation { .. })),
+        "expected WorkspaceViolation, got {:?}",
+        result
+    );
+}

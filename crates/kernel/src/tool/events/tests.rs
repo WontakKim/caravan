@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use super::*;
 use crate::approval::ParsedApprovalRequest;
 use crate::events::{EventKind, EventLog};
+use crate::model::tool_use::format_tool_output_for_model;
 use crate::storage::EventStore;
 use crate::tool::registry::{ToolExecutionContext, ToolOutput};
 use crate::write_intent::{WriteIntentMode, WriteIntentSource, new_text};
@@ -1140,5 +1141,136 @@ fn append_write_approval_parsed_approval_request_non_resumable() {
     assert!(
         parsed.to_tool_request().is_none(),
         "write_file approval must be non-resumable (to_tool_request must return None)"
+    );
+}
+
+// --- GlobFiles event-runner tests (T-2) ---
+
+#[test]
+fn glob_files_run_emits_tool_policy_call_result_no_approval() {
+    let dir = TempDir::new();
+    std::fs::write(dir.path().join("main.rs"), "fn main() {}").expect("write file");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    let result = runner.run(
+        &mut log,
+        &ctx,
+        ToolRequest::GlobFiles {
+            pattern: "*.rs".to_string(),
+        },
+    );
+
+    assert!(result.is_ok(), "expected Ok, got {:?}", result);
+    assert_eq!(log.len(), 3);
+    assert_eq!(log.get(0).unwrap().kind, EventKind::ToolPolicy);
+    assert_eq!(log.get(1).unwrap().kind, EventKind::ToolCall);
+    assert_eq!(log.get(2).unwrap().kind, EventKind::ToolResult);
+
+    // No ApprovalRequest event.
+    assert!(
+        !log.events()
+            .iter()
+            .any(|e| e.kind == EventKind::ApprovalRequest),
+        "ApprovalRequest must not appear for GlobFiles"
+    );
+}
+
+#[test]
+fn glob_files_policy_evaluate_returns_read_only_auto_allow_no_approval() {
+    use crate::approval::ApprovalRequirement;
+    use crate::tool::policy::{ToolPolicyDecision, ToolPolicyEngine};
+    use crate::tool::registry::ToolRisk;
+
+    let engine = ToolPolicyEngine::read_only();
+    let request = ToolRequest::GlobFiles {
+        pattern: "*.rs".to_string(),
+    };
+    let outcome = engine.evaluate(&request);
+
+    assert_eq!(outcome.decision, ToolPolicyDecision::Allow);
+    assert_eq!(outcome.risk, ToolRisk::ReadOnly);
+    assert_eq!(outcome.reason, "read_only_auto_allow");
+    assert_eq!(outcome.approval_requirement, ApprovalRequirement::None);
+}
+
+#[test]
+fn glob_files_tool_result_detail_is_summary_only_no_matched_path() {
+    let dir = TempDir::new();
+    let unique_path_name = "UNIQUE_GLOB_SENTINEL_PATH_99887.rs";
+    std::fs::write(dir.path().join(unique_path_name), "fn main() {}").expect("write file");
+    let ctx = make_context(dir.path());
+    let runner = ToolEventRunner::new_readonly();
+    let mut log = EventLog::new();
+
+    runner
+        .run(
+            &mut log,
+            &ctx,
+            ToolRequest::GlobFiles {
+                pattern: "*.rs".to_string(),
+            },
+        )
+        .ok();
+
+    let detail = &log.get(2).unwrap().detail;
+    assert!(
+        detail.contains("truncated="),
+        "expected truncated= in detail: {detail}"
+    );
+    assert!(
+        detail.contains("pattern="),
+        "expected pattern= in detail: {detail}"
+    );
+    assert!(
+        !detail.contains(unique_path_name),
+        "detail must not contain matched path: {detail}"
+    );
+}
+
+#[test]
+fn glob_files_model_output_starts_with_glob_pattern_prefix() {
+    let output = ToolOutput::FileMatches {
+        pattern: "**/*.rs".to_string(),
+        paths: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
+        truncated: false,
+    };
+    let formatted = format_tool_output_for_model(&output);
+    assert!(
+        formatted.starts_with("Glob pattern: **/*.rs"),
+        "model output must start with 'Glob pattern:': {formatted}"
+    );
+    assert!(
+        formatted.contains("src/main.rs"),
+        "model output must contain matched paths: {formatted}"
+    );
+}
+
+#[test]
+fn glob_files_model_output_truncated_ends_with_truncated_suffix() {
+    let output = ToolOutput::FileMatches {
+        pattern: "*.rs".to_string(),
+        paths: vec!["a.rs".to_string()],
+        truncated: true,
+    };
+    let formatted = format_tool_output_for_model(&output);
+    assert!(
+        formatted.ends_with("\n... [truncated]"),
+        "model output must end with truncation suffix when truncated=true: {formatted}"
+    );
+}
+
+#[test]
+fn glob_files_model_output_not_truncated_has_no_truncated_suffix() {
+    let output = ToolOutput::FileMatches {
+        pattern: "*.rs".to_string(),
+        paths: vec!["a.rs".to_string()],
+        truncated: false,
+    };
+    let formatted = format_tool_output_for_model(&output);
+    assert!(
+        !formatted.contains("... [truncated]"),
+        "model output must not contain truncation suffix when truncated=false: {formatted}"
     );
 }

@@ -136,6 +136,20 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
             }
             lines.join("\n")
         }
+        ToolOutput::FileMatches {
+            pattern,
+            paths,
+            truncated,
+        } => {
+            let mut lines = vec![format!("Glob pattern: {pattern}")];
+            for p in paths {
+                lines.push(p.clone());
+            }
+            if *truncated {
+                lines.push("... [truncated]".to_string());
+            }
+            lines.join("\n")
+        }
     };
     limit_model_tool_text(rendered)
 }

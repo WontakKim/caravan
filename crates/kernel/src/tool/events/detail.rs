@@ -45,6 +45,17 @@ pub(super) fn format_tool_result_detail(
                 truncated
             )
         }
+        ToolOutput::FileMatches {
+            paths, truncated, ..
+        } => {
+            format!(
+                "tool={} pattern={:?} matches={} truncated={}",
+                tool_name,
+                path,
+                paths.len(),
+                truncated
+            )
+        }
     }
 }
 

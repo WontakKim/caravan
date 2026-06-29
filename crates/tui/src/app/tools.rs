@@ -160,6 +160,9 @@ impl super::App {
             Ok(ToolOutput::SearchResults { .. }) => {
                 unreachable!("List/Read never produces SearchResults")
             }
+            Ok(ToolOutput::FileMatches { .. }) => {
+                unreachable!("Glob handled in early-return")
+            }
             Err(error) => {
                 self.push_tool_error_output(error);
             }

@@ -75,6 +75,9 @@ impl super::App {
                                 "Run /context attach-last-tool to include this tool output in the next prompt.".to_string(),
                             );
                         }
+                        Ok(ToolOutput::FileMatches { .. }) => {
+                            unreachable!("Glob handled in early-return")
+                        }
                         Err(error) => {
                             self.push_tool_error_output(error);
                             // Keep pending_model_tool_request unchanged on failure.

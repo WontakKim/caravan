@@ -73,7 +73,8 @@ impl ToolPolicyEngine {
             ToolRequest::ListFiles { .. }
             | ToolRequest::ReadFile { .. }
             | ToolRequest::PreviewWrite { .. }
-            | ToolRequest::SearchText { .. } => ToolRisk::ReadOnly,
+            | ToolRequest::SearchText { .. }
+            | ToolRequest::GlobFiles { .. } => ToolRisk::ReadOnly,
             ToolRequest::PlanWrite { .. } => ToolRisk::WorkspaceWrite,
         };
 

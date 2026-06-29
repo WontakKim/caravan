@@ -55,6 +55,7 @@ pub enum ToolRequest {
     PlanWrite { path: String },
     PreviewWrite { path: String, content: String },
     SearchText { query: String },
+    GlobFiles { pattern: String },
 }
 
 /// Outputs produced by the tool harness.
@@ -75,6 +76,11 @@ pub enum ToolOutput {
     SearchResults {
         query: String,
         matches: Vec<SearchMatch>,
+        truncated: bool,
+    },
+    FileMatches {
+        pattern: String,
+        paths: Vec<String>,
         truncated: bool,
     },
 }
@@ -130,6 +136,14 @@ impl ToolRegistry {
                 Ok(ToolOutput::SearchResults {
                     query,
                     matches: outcome.matches,
+                    truncated: outcome.truncated,
+                })
+            }
+            ToolRequest::GlobFiles { pattern } => {
+                let outcome = glob::glob_workspace(&context.workspace_root, &pattern)?;
+                Ok(ToolOutput::FileMatches {
+                    pattern,
+                    paths: outcome.paths,
                     truncated: outcome.truncated,
                 })
             }

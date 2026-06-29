@@ -66,6 +66,7 @@ fn activity_path_from_request(req: &ToolRequest) -> String {
         ToolRequest::PlanWrite { path } => path.clone(),
         ToolRequest::PreviewWrite { path, .. } => path.clone(),
         ToolRequest::SearchText { query } => query.clone(),
+        ToolRequest::GlobFiles { pattern } => pattern.clone(),
     }
 }
 
