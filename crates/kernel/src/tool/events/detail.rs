@@ -62,6 +62,7 @@ pub(super) fn format_tool_error_detail(tool_name: &str, path: &str, error: &Tool
         }
         ToolError::PolicyDenied { .. } => "policy_denied".to_string(),
         ToolError::ApprovalRequired { .. } => "approval_required".to_string(),
+        ToolError::InvalidPattern { .. } => "invalid_pattern".to_string(),
     };
     format!("tool={} path={:?} error={}", tool_name, path, token)
 }

@@ -157,6 +157,9 @@ impl super::App {
             kernel::ToolError::ApprovalRequired { reason } => {
                 format!("Tool error: approval required ({})", reason)
             }
+            kernel::ToolError::InvalidPattern { pattern } => {
+                format!("Tool error: invalid glob pattern: {:?}", pattern)
+            }
         };
         self.log.push(msg);
     }

@@ -3,6 +3,7 @@
 //! This module defines the type system for the tool harness. Execution logic
 //! (`execute`) lands in T-2; `ReadFile`/`FileContent` variants land in T-3.
 
+mod glob;
 mod path;
 mod search;
 
@@ -90,6 +91,7 @@ pub enum ToolError {
     Io { message: String },
     PolicyDenied { reason: String },
     ApprovalRequired { reason: String },
+    InvalidPattern { pattern: String },
 }
 
 /// Maximum bytes allowed when reading a file.

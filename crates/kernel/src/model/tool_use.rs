@@ -171,6 +171,9 @@ pub fn format_tool_error_for_model(error: &ToolError) -> String {
         ToolError::PolicyDenied { .. } | ToolError::ApprovalRequired { .. } => {
             "Error: this operation is not permitted by the active safety policy.".to_string()
         }
+        ToolError::InvalidPattern { pattern } => {
+            format!("Error: invalid glob pattern: {:?}", pattern)
+        }
     };
     limit_model_tool_text(rendered)
 }
