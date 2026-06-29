@@ -114,6 +114,14 @@ impl ToolCatalog {
                         "path": {
                             "type": "string",
                             "description": "Workspace-relative UTF-8 text file path."
+                        },
+                        "offset": {
+                            "type": "integer",
+                            "description": "Optional 1-based start line."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Optional number of lines to read."
                         }
                     },
                     "required": ["path"],
@@ -402,6 +410,20 @@ mod tests {
             def.input_schema["required"],
             serde_json::json!(["path"]),
             "read_file schema must have required: [\"path\"]"
+        );
+
+        let offset_prop = &def.input_schema["properties"]["offset"];
+        assert_eq!(
+            offset_prop["type"],
+            serde_json::json!("integer"),
+            "read_file offset property must be type integer"
+        );
+
+        let limit_prop = &def.input_schema["properties"]["limit"];
+        assert_eq!(
+            limit_prop["type"],
+            serde_json::json!("integer"),
+            "read_file limit property must be type integer"
         );
     }
 

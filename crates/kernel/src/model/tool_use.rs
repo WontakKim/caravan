@@ -1,5 +1,7 @@
 use crate::model::{ModelError, ModelOutput, ModelRequest, ModelResult, ModelUsage};
-use crate::tool::registry::{ToolError, ToolOutput, ToolRequest};
+use crate::tool::registry::{
+    DEFAULT_READ_RANGE_LIMIT_LINES, MAX_READ_RANGE_LIMIT_LINES, ToolError, ToolOutput, ToolRequest,
+};
 
 /// Maximum bytes the model-facing tool result string may occupy.
 pub const MODEL_TOOL_RESULT_MAX_BYTES: usize = 16 * 1024;
@@ -47,7 +49,11 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
         }
         "read_file" => {
             // Reject unknown fields — mirrors the schema's additionalProperties: false.
-            if obj.keys().any(|k| k != "path") {
+            // Accepted keys: path, offset, limit.
+            if obj
+                .keys()
+                .any(|k| k != "path" && k != "offset" && k != "limit")
+            {
                 return Err(ModelError::AdapterFailure {
                     message: "malformed_tool_arguments: read_file contains an unsupported field"
                         .to_string(),
@@ -62,10 +68,73 @@ pub fn model_tool_call_to_request(call: &ModelToolCall) -> ModelResult<ToolReque
                     });
                 }
             };
+
+            // Parse optional offset: must be a positive integer (>= 1).
+            let raw_offset: Option<usize> = match obj.get("offset") {
+                None => None,
+                Some(serde_json::Value::Number(n)) if n.is_i64() => {
+                    let v = n.as_i64().unwrap();
+                    if v <= 0 {
+                        return Err(ModelError::AdapterFailure {
+                            message:
+                                "malformed_tool_arguments: read_file offset must be a positive integer"
+                                    .to_string(),
+                        });
+                    }
+                    Some(v as usize)
+                }
+                _ => {
+                    return Err(ModelError::AdapterFailure {
+                        message:
+                            "malformed_tool_arguments: read_file offset must be a positive integer"
+                                .to_string(),
+                    });
+                }
+            };
+
+            // Parse optional limit: must be a positive integer (>= 1) and at most
+            // MAX_READ_RANGE_LIMIT_LINES.
+            let raw_limit: Option<usize> = match obj.get("limit") {
+                None => None,
+                Some(serde_json::Value::Number(n)) if n.is_i64() => {
+                    let v = n.as_i64().unwrap();
+                    if v <= 0 {
+                        return Err(ModelError::AdapterFailure {
+                            message:
+                                "malformed_tool_arguments: read_file limit must be a positive integer"
+                                    .to_string(),
+                        });
+                    }
+                    if v as usize > MAX_READ_RANGE_LIMIT_LINES {
+                        return Err(ModelError::AdapterFailure {
+                            message: format!(
+                                "malformed_tool_arguments: read_file limit exceeds maximum {MAX_READ_RANGE_LIMIT_LINES}"
+                            ),
+                        });
+                    }
+                    Some(v as usize)
+                }
+                _ => {
+                    return Err(ModelError::AdapterFailure {
+                        message:
+                            "malformed_tool_arguments: read_file limit must be a positive integer"
+                                .to_string(),
+                    });
+                }
+            };
+
+            // Normalize: when one side is present, default the other.
+            let (offset, limit) = match (raw_offset, raw_limit) {
+                (None, None) => (None, None),
+                (Some(o), None) => (Some(o), Some(DEFAULT_READ_RANGE_LIMIT_LINES)),
+                (None, Some(l)) => (Some(1), Some(l)),
+                (Some(o), Some(l)) => (Some(o), Some(l)),
+            };
+
             Ok(ToolRequest::ReadFile {
                 path,
-                offset: None,
-                limit: None,
+                offset,
+                limit,
             })
         }
         "search_text" => {
@@ -1110,6 +1179,205 @@ mod tests {
         // After these 2 execs the model would produce a final assistant message
         // as step 3 of MAX_MODEL_STEPS_PER_TURN=3 — budget is exhausted and the
         // chain is complete.
+
+        let _ = std::fs::remove_dir_all(&workspace);
+    }
+
+    // --- read_file offset/limit validation tests ---
+
+    #[test]
+    fn read_file_with_offset_and_limit_returns_ranged_read_file_request() {
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "offset": 10, "limit": 20}),
+        );
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ReadFile {
+                path: "src/lib.rs".to_string(),
+                offset: Some(10),
+                limit: Some(20),
+            }
+        );
+    }
+
+    #[test]
+    fn read_file_offset_only_defaults_limit_to_default_range_limit() {
+        use crate::tool::registry::DEFAULT_READ_RANGE_LIMIT_LINES;
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "offset": 5}),
+        );
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ReadFile {
+                path: "src/lib.rs".to_string(),
+                offset: Some(5),
+                limit: Some(DEFAULT_READ_RANGE_LIMIT_LINES),
+            }
+        );
+    }
+
+    #[test]
+    fn read_file_limit_only_defaults_offset_to_one() {
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "limit": 50}),
+        );
+        let result = model_tool_call_to_request(&call).unwrap();
+        assert_eq!(
+            result,
+            crate::tool::registry::ToolRequest::ReadFile {
+                path: "src/lib.rs".to_string(),
+                offset: Some(1),
+                limit: Some(50),
+            }
+        );
+    }
+
+    #[test]
+    fn read_file_offset_zero_is_rejected() {
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "offset": 0}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("malformed_tool_arguments"),
+                    "expected malformed_tool_arguments, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_limit_zero_is_rejected() {
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "limit": 0}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("malformed_tool_arguments"),
+                    "expected malformed_tool_arguments, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_float_offset_is_rejected() {
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "offset": 1.5}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure for float offset"
+        );
+    }
+
+    #[test]
+    fn read_file_float_limit_is_rejected() {
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "limit": 2.7}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        assert!(
+            matches!(err, crate::model::ModelError::AdapterFailure { .. }),
+            "expected AdapterFailure for float limit"
+        );
+    }
+
+    #[test]
+    fn read_file_limit_exceeding_max_is_rejected() {
+        use crate::tool::registry::MAX_READ_RANGE_LIMIT_LINES;
+        let call = make_call(
+            "read_file",
+            serde_json::json!({"path": "src/lib.rs", "limit": MAX_READ_RANGE_LIMIT_LINES + 1}),
+        );
+        let err = model_tool_call_to_request(&call).unwrap_err();
+        match err {
+            crate::model::ModelError::AdapterFailure { message } => {
+                assert!(
+                    message.contains("malformed_tool_arguments"),
+                    "expected malformed_tool_arguments, got: {message}"
+                );
+            }
+            other => panic!("expected AdapterFailure, got: {other:?}"),
+        }
+    }
+
+    // --- search_text → read_file(offset/limit) chain test ---
+
+    /// Two-step bounded chain: search_text (exec 1) → read_file with offset/limit (exec 2).
+    /// Asserts the second ToolRequest is a ranged ReadFile and the model-facing output
+    /// includes the Lines: metadata (confirming the range read path was taken).
+    #[test]
+    fn search_text_read_file_offset_limit_chain() {
+        let workspace = make_glob_test_workspace("notes.txt", "line1\nline2\nline3\nline4\nline5");
+
+        let ctx = crate::tool::registry::ToolExecutionContext {
+            workspace_root: workspace.clone(),
+        };
+        let mut event_log = crate::events::EventLog::new();
+
+        // --- Step 1 (exec 1 of 2): model emits search_text ---
+        let call1 = make_call("search_text", serde_json::json!({"query": "line2"}));
+        let req1 = model_tool_call_to_request(&call1).unwrap();
+        assert!(
+            matches!(req1, crate::tool::registry::ToolRequest::SearchText { .. }),
+            "step 1 must produce ToolRequest::SearchText"
+        );
+        let output1 = crate::tool::events::ToolEventRunner::new_readonly()
+            .run(&mut event_log, &ctx, req1)
+            .unwrap();
+        let result1_text = format_tool_output_for_model(&output1);
+        assert!(
+            result1_text.starts_with("Search results for"),
+            "search step result must begin with 'Search results for': {result1_text}"
+        );
+
+        // --- Step 2 (exec 2 of 2): model emits read_file with offset/limit ---
+        let call2 = make_call(
+            "read_file",
+            serde_json::json!({"path": "notes.txt", "offset": 2, "limit": 3}),
+        );
+        let req2 = model_tool_call_to_request(&call2).unwrap();
+        // Assert the produced request is a ranged ReadFile.
+        assert!(
+            matches!(
+                req2,
+                crate::tool::registry::ToolRequest::ReadFile {
+                    offset: Some(_),
+                    limit: Some(_),
+                    ..
+                }
+            ),
+            "step 2 must produce a ranged ToolRequest::ReadFile"
+        );
+        let output2 = crate::tool::events::ToolEventRunner::new_readonly()
+            .run(&mut event_log, &ctx, req2)
+            .unwrap();
+        let result2_text = format_tool_output_for_model(&output2);
+        assert!(
+            result2_text.starts_with("File: "),
+            "read_file result must begin with 'File: ': {result2_text}"
+        );
+        assert!(
+            result2_text.contains("Lines:"),
+            "ranged read_file result must include 'Lines:' metadata: {result2_text}"
+        );
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
