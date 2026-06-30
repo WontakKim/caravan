@@ -82,6 +82,12 @@ The commands below are the **default surface** — they match what `/help` shows
 | `/tool search <query>` | Search for text across files in the workspace                   |
 | `/tool glob <pattern>` | Find files matching a glob pattern in the workspace             |
 
+> **`/tool read` output format.** The command renders a line-numbered file
+> snippet. The output begins with a `File:` header identifying the path,
+> followed by a `Lines: <start>-<end>` range line, then the file contents with
+> 1-based line numbers prefixed to each line. Full reads number from line 1;
+> range reads (using `--offset`) number from the requested start line.
+
 ## Experimental Harness Appendix
 
 The commands in this section are implemented but are **not the primary baseline UX**. They form an
