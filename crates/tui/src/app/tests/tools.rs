@@ -184,8 +184,8 @@ fn tool_read_bounded_utf8_boundary_does_not_split_multibyte_char() {
     let workspace_dir = TempDir::new();
 
     // 4095 'a's + 'é' (2 bytes: 0xC3 0xA9) + 'Z' = 4098 bytes total.
-    // At byte offset 4096 we are inside 'é', so the backward scan must
-    // retreat to 4095 (the start of 'é'), which is a valid char boundary.
+    // The content crosses the TOOL_READ_PREVIEW_BYTES boundary mid-char,
+    // so the renderer must retreat to a valid char boundary.
     let content = format!("{}\u{00e9}Z", "a".repeat(4095));
     assert_eq!(content.len(), 4098);
 
@@ -202,25 +202,101 @@ fn tool_read_bounded_utf8_boundary_does_not_split_multibyte_char() {
     app.input = "/tool read boundary.txt".to_string();
     app.submit();
 
-    // Find the preview line immediately after the header.
+    // The outer header must be present.
     let header_pos = app
         .log
         .iter()
         .position(|l| l == "Tool read boundary.txt:")
         .expect("header line must be present");
-    let preview_line = &app.log[header_pos + 1];
 
-    // Preview stops at byte 4095 — the 'é' must not be split.
-    assert_eq!(preview_line.len(), 4095, "preview must stop before 'é'");
+    // Property 1: every log entry produced by the snippet is valid UTF-8.
+    // (In Rust all &str values are valid UTF-8; this guards against any
+    // future byte-level slicing mistakes.)
+    let guidance = "This tool output will be used as workspace context for your next message.";
+    let guidance_pos = app
+        .log
+        .iter()
+        .position(|l| l == guidance)
+        .expect("guidance line must be present");
+    for (i, line) in app.log[header_pos + 1..guidance_pos].iter().enumerate() {
+        assert!(
+            std::str::from_utf8(line.as_bytes()).is_ok(),
+            "snippet log entry {} is not valid UTF-8: {:?}",
+            i,
+            line
+        );
+    }
+
+    // Property 2: the combined snippet (entries rejoined with '\n') stays
+    // within the TOOL_READ_PREVIEW_BYTES budget.
+    let snippet_lines = &app.log[header_pos + 1..guidance_pos];
+    let combined = snippet_lines.join("\n");
     assert!(
-        !preview_line.contains('\u{00e9}'),
-        "preview must not contain 'é'"
+        combined.len() <= TOOL_READ_PREVIEW_BYTES,
+        "combined snippet bytes {} exceeds TOOL_READ_PREVIEW_BYTES {}",
+        combined.len(),
+        TOOL_READ_PREVIEW_BYTES
     );
 
-    // Truncation marker must be present.
+    // The renderer must have truncated the oversized content.
     assert!(
-        app.log.iter().any(|l| l == "... [truncated]"),
-        "log must contain '... [truncated]'"
+        app.log.iter().any(|l| l.contains("[truncated]")),
+        "log must contain '[truncated]' for oversized content"
+    );
+}
+
+// Regression test (Step 8): the write-candidate payload must stay raw — no
+// File:/Lines:/ numbered-prefix must leak into last_tool_output_candidate.
+#[test]
+fn tool_read_write_candidate_payload_is_raw_not_numbered() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let raw_content = "first line\nsecond line\nthird line";
+    std::fs::write(workspace_dir.path().join("raw_test.txt"), raw_content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read raw_test.txt".to_string();
+    app.submit();
+
+    let candidate = app
+        .last_tool_output_candidate
+        .as_ref()
+        .expect("last_tool_output_candidate must be set after /tool read");
+
+    // The write-candidate must be the exact raw file content.
+    assert_eq!(
+        candidate.content, raw_content,
+        "write-candidate content must equal the exact raw file bytes"
+    );
+    // No File:/Lines:/numbered-prefix must appear in the write-candidate.
+    assert!(
+        !candidate.content.contains("File:"),
+        "write-candidate must not contain 'File:' (numbered snippet header)"
+    );
+    assert!(
+        !candidate.content.contains("Lines:"),
+        "write-candidate must not contain 'Lines:' (numbered snippet header)"
+    );
+    assert!(
+        !candidate.content.contains(" | "),
+        "write-candidate must not contain ' | ' (numbered line prefix)"
+    );
+
+    // Drive /tool preview-write against the same file: since the candidate is the
+    // raw content that matches the file, it must report no changes.
+    app.input = "/tool preview-write raw_test.txt".to_string();
+    app.submit();
+
+    assert!(
+        app.log.iter().any(|l| l == "No changes."),
+        "preview-write with raw candidate must report 'No changes.' (content matches file)"
     );
 }
 
@@ -1283,15 +1359,20 @@ fn tool_read_auto_sets_pending_manual_tool_context_and_pushes_guidance() {
         .last_tool_output_candidate
         .as_ref()
         .expect("last_tool_output_candidate must be set after successful /tool read");
-    // Both fields must carry the actual read output, and must be the same value
-    // (built once and cloned, per D1).
+    // pending carries the numbered snippet (contains the raw content embedded).
     assert!(
         pending.content.contains("auto-set content"),
         "pending content must carry the read output"
     );
-    assert_eq!(
+    // candidate carries the raw content (no File:/Lines:/ prefix).
+    assert!(
+        candidate.content.contains("auto-set content"),
+        "candidate content must carry the raw read output"
+    );
+    // After T-4, pending is numbered and candidate is raw — they differ.
+    assert_ne!(
         candidate.content, pending.content,
-        "candidate and pending must be the same auto-set context"
+        "candidate (raw) and pending (numbered snippet) must differ after T-4"
     );
     assert!(
         app.log
@@ -2061,7 +2142,7 @@ fn tool_read_range_stages_context_with_offset_and_limit_in_source_label() {
     );
 }
 
-// (range-2) The range screen log header uses `lines N-M:` format.
+// (range-2) The range snippet body contains a `Lines:` line (uppercase).
 #[test]
 fn tool_read_range_pushes_range_screen_log_header() {
     let store_dir = TempDir::new();
@@ -2083,12 +2164,18 @@ fn tool_read_range_pushes_range_screen_log_header() {
     app.input = "/tool read multi.txt --offset 2 --limit 3".to_string();
     app.submit();
 
-    // Screen log must contain the range header (with "lines " keyword).
+    // The outer header is pushed first.
+    assert!(
+        app.log.iter().any(|l| l == "Tool read multi.txt:"),
+        "screen log must contain 'Tool read multi.txt:' outer header"
+    );
+
+    // The snippet body contains an uppercase "Lines:" line with a range.
     assert!(
         app.log
             .iter()
-            .any(|l| l.contains("lines ") && l.contains("multi.txt")),
-        "screen log must contain a range header with 'lines' and the file path"
+            .any(|l| l.starts_with("Lines:") && l.contains("-")),
+        "screen log must contain a 'Lines:' line with a range from the snippet"
     );
 
     // The guidance line must also be present.
@@ -2101,8 +2188,8 @@ fn tool_read_range_pushes_range_screen_log_header() {
     );
 }
 
-// (range regression) A near-usize::MAX offset must not overflow the range
-// screen-log header arithmetic (`offset + limit - 1`).
+// (range regression) A near-usize::MAX offset must not overflow the snippet
+// arithmetic (`start_line.saturating_add(n.saturating_sub(1))`).
 #[test]
 fn tool_read_range_huge_offset_does_not_overflow_screen_log() {
     let store_dir = TempDir::new();
@@ -2122,16 +2209,22 @@ fn tool_read_range_huge_offset_does_not_overflow_screen_log() {
     );
 
     // offset = usize::MAX, limit = 2 → EOF before offset (empty range). The
-    // header `end = offset + (limit - 1)` must saturate instead of panicking.
+    // snippet's saturating arithmetic must not panic: the empty range renders
+    // `Lines: {usize::MAX}-{usize::MAX}` via `start.saturating_add(0) = start`.
     app.input = format!("/tool read multi.txt --offset {} --limit 2", usize::MAX);
     app.submit();
 
+    // Must not have panicked; the outer header must be present.
     assert!(
-        app.log
-            .iter()
-            .any(|l| l.contains("lines ") && l.contains("multi.txt")),
-        "screen log must contain the range header without overflowing"
+        app.log.iter().any(|l| l == "Tool read multi.txt:"),
+        "screen log must contain 'Tool read multi.txt:' without panicking"
     );
+    // The snippet body must contain a Lines: line (saturating arithmetic, no overflow).
+    assert!(
+        app.log.iter().any(|l| l.starts_with("Lines:")),
+        "screen log must contain a 'Lines:' line without overflowing"
+    );
+    // Empty-range sentinel must be present as a standalone entry.
     assert!(
         app.log
             .iter()

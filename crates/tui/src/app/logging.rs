@@ -18,58 +18,43 @@ impl super::App {
         }
     }
 
-    /// Pushes a UTF-8 content preview to the screen log, truncated to at most
-    /// [`super::TOOL_READ_PREVIEW_BYTES`] bytes on a valid char boundary using a
-    /// backward scan with [`str::is_char_boundary`].
-    pub(super) fn push_tool_read_output(&mut self, display_path: &str, content: &str) {
-        self.log.push(format!("Tool read {}:", display_path));
-        let mut limit = super::TOOL_READ_PREVIEW_BYTES.min(content.len());
-        while limit > 0 && !content.is_char_boundary(limit) {
-            limit -= 1;
-        }
-        let preview = &content[..limit];
-        self.log.push(preview.to_string());
-        if content.len() > limit {
-            self.log.push("... [truncated]".to_string());
-        }
-    }
-
-    /// Pushes a range-bounded file content preview to the screen log.
+    /// Pushes a line-numbered file snippet to the screen log, bounded by
+    /// [`super::TOOL_READ_PREVIEW_BYTES`].
     ///
-    /// Emits a header `Tool read {path} lines {start}-{end}:` where `start = offset`
-    /// and `end = offset + limit - 1`. When `content` is empty, emits
-    /// `No content in requested range.` instead of the content preview. Otherwise,
-    /// the preview is truncated to at most [`super::TOOL_READ_PREVIEW_BYTES`] bytes
-    /// using the same char-boundary backward scan as [`push_tool_read_output`].
-    pub(super) fn push_tool_read_range_output(
+    /// Emits the outer header `Tool read {display_path}:` then splits the
+    /// output of [`kernel::render_numbered_file_snippet`] on `\n` and pushes
+    /// each part as a separate log entry. This keeps `No content in requested
+    /// range.` a standalone entry and each numbered content line its own entry.
+    pub(super) fn push_tool_read_snippet(
         &mut self,
         display_path: &str,
         content: &str,
-        offset: usize,
-        limit: usize,
+        start_line: usize,
+        line_count: Option<usize>,
+        truncated: bool,
     ) {
-        let start = offset;
-        // saturating_add: `offset` is an unbounded positive usize from the
-        // command parser, so a plain `offset + (limit - 1)` could overflow
-        // (e.g. `--offset <usize::MAX> --limit 2`).
-        let end = offset.saturating_add(limit.saturating_sub(1));
-        self.log.push(format!(
-            "Tool read {} lines {}-{}:",
-            display_path, start, end
-        ));
-        if content.is_empty() {
-            self.log.push("No content in requested range.".to_string());
-            return;
+        self.log.push(format!("Tool read {}:", display_path));
+        let snippet = kernel::render_numbered_file_snippet(
+            display_path,
+            content,
+            start_line,
+            line_count,
+            truncated,
+            super::TOOL_READ_PREVIEW_BYTES,
+        );
+        for line in snippet.split('\n') {
+            self.log.push(line.to_string());
         }
-        let mut limit_bytes = super::TOOL_READ_PREVIEW_BYTES.min(content.len());
-        while limit_bytes > 0 && !content.is_char_boundary(limit_bytes) {
-            limit_bytes -= 1;
-        }
-        let preview = &content[..limit_bytes];
-        self.log.push(preview.to_string());
-        if content.len() > limit_bytes {
-            self.log.push("... [truncated]".to_string());
-        }
+    }
+
+    /// Pushes a full-file content preview to the screen log via
+    /// [`push_tool_read_snippet`] with `start_line = 1` and no line count
+    /// override.
+    ///
+    /// Existing callers (`tools.rs`, `approval.rs`, `request.rs`) continue to
+    /// work unchanged.
+    pub(super) fn push_tool_read_output(&mut self, display_path: &str, content: &str) {
+        self.push_tool_read_snippet(display_path, content, 1, None, false);
     }
 
     /// Pushes a bounded diff preview of a proposed write to the screen log.

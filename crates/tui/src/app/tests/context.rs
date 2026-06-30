@@ -531,10 +531,10 @@ fn context_status_pending_and_candidate_both_present() {
         workspace_dir.path().to_path_buf(),
     );
 
-    // Read fileA and attach it (pending = fileA's summary).
+    // Read fileA and attach it (pending = fileA candidate, which is raw).
     app.input = "/tool read fileA.txt".to_string();
     app.submit();
-    let file_a_summary = app
+    let file_a_candidate_summary = app
         .last_tool_output_candidate
         .as_ref()
         .unwrap()
@@ -543,19 +543,26 @@ fn context_status_pending_and_candidate_both_present() {
     app.input = "/context attach-last-tool".to_string();
     app.submit();
 
-    // Read fileB — after T-1 (D4 last-write-wins), this auto-sets pending to
-    // fileB's summary, overwriting the previously attached fileA pending.
+    // Read fileB — after T-1/T-4 (D4 last-write-wins), this auto-sets pending to
+    // fileB's NUMBERED snippet and candidate to fileB's RAW content.
     app.input = "/tool read fileB.txt".to_string();
     app.submit();
-    let file_b_summary = app
+
+    // After T-4: pending is the numbered version, candidate is the raw version.
+    let file_b_pending_summary = app
+        .pending_manual_tool_context
+        .as_ref()
+        .unwrap()
+        .attach_summary();
+    let file_b_candidate_summary = app
         .last_tool_output_candidate
         .as_ref()
         .unwrap()
         .attach_summary();
 
     assert_ne!(
-        file_a_summary, file_b_summary,
-        "fileA and fileB summaries must differ for this test to be meaningful"
+        file_a_candidate_summary, file_b_candidate_summary,
+        "fileA and fileB candidate summaries must differ for this test to be meaningful"
     );
 
     app.input = "/context status".to_string();
@@ -569,16 +576,17 @@ fn context_status_pending_and_candidate_both_present() {
         .expect("'Workspace context status:' line must be present");
 
     assert_eq!(app.log[status_pos], "Workspace context status:");
-    // D4 last-write-wins: reading fileB overwrites pending to fileB's summary.
+    // D4 last-write-wins: reading fileB overwrites pending to fileB's numbered summary.
     assert_eq!(
         app.log[status_pos + 1],
-        format!("- pending: {}", file_b_summary),
-        "pending line must contain fileB summary (last-write-wins)"
+        format!("- pending: {}", file_b_pending_summary),
+        "pending line must contain fileB pending (numbered) summary (last-write-wins)"
     );
+    // last tool output reflects the raw candidate summary.
     assert_eq!(
         app.log[status_pos + 2],
-        format!("- last tool output: {}", file_b_summary),
-        "last tool output line must contain fileB summary"
+        format!("- last tool output: {}", file_b_candidate_summary),
+        "last tool output line must contain fileB candidate (raw) summary"
     );
 }
 

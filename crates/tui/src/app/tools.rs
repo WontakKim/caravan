@@ -191,17 +191,42 @@ impl super::App {
                         .to_string(),
                 );
             }
-            Ok(ToolOutput::FileContent { content, .. }) => {
+            Ok(ToolOutput::FileContent {
+                content,
+                start_line,
+                line_count,
+                truncated,
+                ..
+            }) => {
                 if let Some((off, lim)) = read_range {
-                    let range_ctx =
-                        ManualToolContext::from_read_file_range(&display_path, &content, off, lim);
-                    self.last_tool_output_candidate = Some(range_ctx.clone());
-                    self.pending_manual_tool_context = Some(range_ctx);
-                    self.push_tool_read_range_output(&display_path, &content, off, lim);
+                    // Write-candidate stays raw so /tool preview-write / propose-write
+                    // operate on the plain file bytes.
+                    self.last_tool_output_candidate = Some(
+                        ManualToolContext::from_read_file_range(&display_path, &content, off, lim),
+                    );
+                    // Auto-staged context for the model gets the numbered snippet.
+                    self.pending_manual_tool_context =
+                        Some(ManualToolContext::from_read_file_range_numbered(
+                            &display_path,
+                            &content,
+                            off,
+                            lim,
+                        ));
+                    self.push_tool_read_snippet(
+                        &display_path,
+                        &content,
+                        start_line.unwrap_or(off),
+                        line_count,
+                        truncated,
+                    );
                 } else {
-                    let ctx = ManualToolContext::from_read_file(&display_path, &content);
-                    self.last_tool_output_candidate = Some(ctx.clone());
-                    self.pending_manual_tool_context = Some(ctx);
+                    // Write-candidate stays raw.
+                    self.last_tool_output_candidate =
+                        Some(ManualToolContext::from_read_file(&display_path, &content));
+                    // Auto-staged context for the model gets the numbered snippet.
+                    self.pending_manual_tool_context = Some(
+                        ManualToolContext::from_read_file_numbered(&display_path, &content),
+                    );
                     self.push_tool_read_output(&display_path, &content);
                 }
                 self.log.push(
