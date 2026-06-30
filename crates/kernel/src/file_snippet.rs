@@ -69,8 +69,20 @@ pub fn render_numbered_file_snippet(
         return base;
     }
 
+    // When the budget cannot even fit the marker, the contract's two demands
+    // ("emit the full marker" and "stay within `max_bytes`") are irreconcilable.
+    // Prioritize the hard `len() <= max_bytes` safety invariant by returning a
+    // char-boundary prefix of the marker itself.
+    if max_bytes < MARKER.len() {
+        let mut cut = max_bytes.min(MARKER.len());
+        while cut > 0 && !MARKER.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        return MARKER[..cut].to_owned();
+    }
+
     // Leave room for the marker; find a valid UTF-8 boundary.
-    let budget = max_bytes.saturating_sub(MARKER.len());
+    let budget = max_bytes - MARKER.len();
     let mut cut = budget.min(base.len());
     while cut > 0 && !base.is_char_boundary(cut) {
         cut -= 1;
@@ -186,6 +198,25 @@ mod tests {
             count, 1,
             "marker appeared {count} times, expected exactly 1"
         );
+    }
+
+    #[test]
+    fn max_bytes_smaller_than_marker_stays_bounded() {
+        // A budget below the marker length must still honor `len() <= max_bytes`
+        // (the marker can only be partially emitted, never overflowing).
+        for mb in 0..MARKER.len() {
+            let result = render_numbered_file_snippet("t.rs", "abc", 1, None, true, mb);
+            assert!(
+                result.len() <= mb,
+                "len {} exceeds max_bytes {}",
+                result.len(),
+                mb
+            );
+            assert!(
+                std::str::from_utf8(result.as_bytes()).is_ok(),
+                "not valid UTF-8 at max_bytes={mb}"
+            );
+        }
     }
 
     #[test]
