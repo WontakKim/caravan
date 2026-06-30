@@ -97,7 +97,10 @@ impl ManualToolContext {
             false,
             MANUAL_TOOL_CONTEXT_MAX_BYTES,
         );
-        let truncated = rendered.ends_with("... [truncated]");
+        // Match the formatter's exact marker shape ("\n... [truncated]") so an
+        // untruncated file whose final line literally ends with "... [truncated]"
+        // is not mis-flagged as truncated.
+        let truncated = rendered.ends_with("\n... [truncated]");
         Self {
             source,
             content: rendered,
@@ -125,7 +128,10 @@ impl ManualToolContext {
             false,
             MANUAL_TOOL_CONTEXT_MAX_BYTES,
         );
-        let truncated = rendered.ends_with("... [truncated]");
+        // Match the formatter's exact marker shape ("\n... [truncated]") so an
+        // untruncated file whose final line literally ends with "... [truncated]"
+        // is not mis-flagged as truncated.
+        let truncated = rendered.ends_with("\n... [truncated]");
         Self {
             source,
             content: rendered,
@@ -642,6 +648,20 @@ mod tests {
             &ctx.content[ctx.content.len().saturating_sub(20)..]
         );
         std::str::from_utf8(ctx.content.as_bytes()).expect("content must be valid UTF-8");
+    }
+
+    // (n2b) An untruncated file whose final line literally ends with the marker
+    // text must NOT be flagged truncated — the flag keys off the marker's exact
+    // "\n... [truncated]" shape, and a numbered line is prefixed with " | ".
+    #[test]
+    fn read_file_numbered_literal_marker_text_is_not_truncated() {
+        let ctx = ManualToolContext::from_read_file_numbered("note.txt", "ok\n... [truncated]");
+        assert!(
+            !ctx.truncated,
+            "literal marker text in content must not set truncated: {:?}",
+            ctx.content
+        );
+        assert!(ctx.content.ends_with("| ... [truncated]"));
     }
 
     // (n3) Range-numbered constructor uses offset for line numbering and
