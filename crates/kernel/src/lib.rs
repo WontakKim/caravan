@@ -4,6 +4,7 @@ pub mod approval;
 pub mod approval_queue;
 pub mod commands;
 pub mod events;
+pub mod file_snippet;
 pub mod manual_context;
 pub mod model;
 pub mod model_config;
@@ -30,6 +31,7 @@ pub use commands::{
     ApprovalCommand, Command, ContextCommand, ParsedInput, RequestCommand, ToolCommand,
 };
 pub use events::{AppEvent, EventKind, EventLog, EventSeq, RunId, TurnId};
+pub use file_snippet::render_numbered_file_snippet;
 pub use manual_context::{MANUAL_TOOL_CONTEXT_MAX_BYTES, ManualToolContext};
 pub use model::config::{ModelConfig, ModelProfile};
 pub use model::gateway::{ModelGateway, ModelResponse, ModelRoute, ModelStepResponse};
