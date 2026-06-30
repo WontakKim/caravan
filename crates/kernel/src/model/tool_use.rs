@@ -215,18 +215,14 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
             start_line,
             line_count,
             truncated,
-        } => match start_line {
-            None => format!("File: {}\n{}", path, content),
-            Some(start) => {
-                let lc = line_count.unwrap_or(0);
-                let end = if lc == 0 { *start } else { start + lc - 1 };
-                let mut rendered = format!("File: {}\nLines: {}-{}\n{}", path, start, end, content);
-                if *truncated {
-                    rendered.push_str("\n... [truncated]");
-                }
-                rendered
-            }
-        },
+        } => crate::file_snippet::render_numbered_file_snippet(
+            path,
+            content,
+            start_line.unwrap_or(1),
+            *line_count,
+            *truncated,
+            MODEL_TOOL_RESULT_MAX_BYTES,
+        ),
         ToolOutput::WritePreview { .. } => {
             "[write preview not available on the read-only path]".to_string()
         }
@@ -644,7 +640,38 @@ mod tests {
             truncated: false,
         };
         let formatted = format_tool_output_for_model(&output);
-        assert_eq!(formatted, "File: README.md\nhello world");
+        assert!(
+            formatted.starts_with("File: README.md"),
+            "must start with File: header: {formatted}"
+        );
+        assert!(
+            formatted.contains("Lines: 1-1"),
+            "full read must include Lines: 1-1 header: {formatted}"
+        );
+        assert!(
+            formatted.contains("   1 | hello world"),
+            "must contain line-numbered content: {formatted}"
+        );
+    }
+
+    #[test]
+    fn full_read_model_output_contains_line_numbers() {
+        let output = crate::tool::registry::ToolOutput::FileContent {
+            path: "src/main.rs".to_string(),
+            content: "fn main() {}\nfn helper() {}".to_string(),
+            start_line: None,
+            line_count: None,
+            truncated: false,
+        };
+        let formatted = format_tool_output_for_model(&output);
+        assert!(
+            formatted.contains("Lines: 1-"),
+            "full read must contain Lines: 1- header: {formatted}"
+        );
+        assert!(
+            formatted.contains(" | "),
+            "full read must contain ' | ' line-number separator: {formatted}"
+        );
     }
 
     #[test]
