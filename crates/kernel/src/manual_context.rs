@@ -80,6 +80,59 @@ impl ManualToolContext {
         }
     }
 
+    /// Builds a context from a `read_file` tool result with line numbers.
+    ///
+    /// The stored `content` is formatted by
+    /// [`crate::file_snippet::render_numbered_file_snippet`] with a `File:`/
+    /// `Lines:` header and `N | ` prefixes on each line. The byte ceiling is
+    /// still [`MANUAL_TOOL_CONTEXT_MAX_BYTES`]. Unlike [`from_read_file`], this
+    /// constructor must **not** be used as the write-candidate payload.
+    pub fn from_read_file_numbered(path: &str, content: &str) -> Self {
+        let source = format!("tool=read_file path=\"{path}\"");
+        let rendered = crate::file_snippet::render_numbered_file_snippet(
+            path,
+            content,
+            1,
+            None,
+            false,
+            MANUAL_TOOL_CONTEXT_MAX_BYTES,
+        );
+        let truncated = rendered.ends_with("... [truncated]");
+        Self {
+            source,
+            content: rendered,
+            truncated,
+        }
+    }
+
+    /// Builds a context from a `read_file` range result with line numbers.
+    ///
+    /// Like [`from_read_file_numbered`] but `start_line` is set to `offset` so
+    /// the displayed line numbers reflect the position inside the original file.
+    /// The source label matches [`from_read_file_range`] exactly.
+    pub fn from_read_file_range_numbered(
+        path: &str,
+        content: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Self {
+        let source = format!("tool=read_file path=\"{path}\" offset={offset} limit={limit}");
+        let rendered = crate::file_snippet::render_numbered_file_snippet(
+            path,
+            content,
+            offset,
+            None,
+            false,
+            MANUAL_TOOL_CONTEXT_MAX_BYTES,
+        );
+        let truncated = rendered.ends_with("... [truncated]");
+        Self {
+            source,
+            content: rendered,
+            truncated,
+        }
+    }
+
     /// Builds a context from a `list_files` tool result.
     ///
     /// When the full rendered list fits within [`MANUAL_TOOL_CONTEXT_MAX_BYTES`]
@@ -544,6 +597,77 @@ mod tests {
         assert!(
             !ctx.content.contains("[context truncated by byte budget]"),
             "no byte-budget marker when within budget"
+        );
+    }
+
+    // --- from_read_file_numbered tests ---
+
+    // (n1) Small content produces an untruncated snippet matching
+    // render_numbered_file_snippet directly.
+    #[test]
+    fn read_file_numbered_small_content_is_untruncated() {
+        let ctx = ManualToolContext::from_read_file_numbered("foo.txt", "hello");
+        let expected = crate::file_snippet::render_numbered_file_snippet(
+            "foo.txt",
+            "hello",
+            1,
+            None,
+            false,
+            MANUAL_TOOL_CONTEXT_MAX_BYTES,
+        );
+        assert_eq!(ctx.content, expected);
+        assert!(!ctx.truncated);
+        assert!(
+            ctx.content.starts_with("File: foo.txt"),
+            "content must start with 'File: foo.txt', got: {:?}",
+            &ctx.content[..ctx.content.len().min(30)]
+        );
+    }
+
+    // (n2) Oversized input is truncated within the byte cap and ends with the
+    // truncation marker.
+    #[test]
+    fn read_file_numbered_oversized_is_truncated_with_marker() {
+        let big = "x".repeat(MANUAL_TOOL_CONTEXT_MAX_BYTES + 1000);
+        let ctx = ManualToolContext::from_read_file_numbered("big.txt", &big);
+        assert!(ctx.truncated);
+        assert!(
+            ctx.content.len() <= MANUAL_TOOL_CONTEXT_MAX_BYTES,
+            "content len {} must be within cap",
+            ctx.content.len()
+        );
+        assert!(
+            ctx.content.ends_with("... [truncated]"),
+            "must end with truncation marker, got: {:?}",
+            &ctx.content[ctx.content.len().saturating_sub(20)..]
+        );
+        std::str::from_utf8(ctx.content.as_bytes()).expect("content must be valid UTF-8");
+    }
+
+    // (n3) Range-numbered constructor uses offset for line numbering and
+    // includes the correct source label parameters.
+    #[test]
+    fn read_file_range_numbered_uses_offset_and_formats_lines() {
+        let ctx = ManualToolContext::from_read_file_range_numbered("bar.rs", "a\nb\nc", 5, 3);
+        assert!(
+            ctx.content.contains("Lines: 5-7"),
+            "must contain 'Lines: 5-7', got:\n{}",
+            ctx.content
+        );
+        assert!(
+            ctx.content.contains("   5 | a"),
+            "must contain '   5 | a', got:\n{}",
+            ctx.content
+        );
+        assert!(
+            ctx.source.contains("offset=5"),
+            "source must contain 'offset=5', got: {}",
+            ctx.source
+        );
+        assert!(
+            ctx.source.contains("limit=3"),
+            "source must contain 'limit=3', got: {}",
+            ctx.source
         );
     }
 
