@@ -1269,8 +1269,8 @@ fn glob_files_model_output_starts_with_glob_pattern_prefix() {
     };
     let formatted = format_tool_output_for_model(&output);
     assert!(
-        formatted.starts_with("Glob pattern: **/*.rs"),
-        "model output must start with 'Glob pattern:': {formatted}"
+        formatted.starts_with("Workspace Evidence: glob_files\n"),
+        "model output must start with 'Workspace Evidence: glob_files\\n': {formatted}"
     );
     assert!(
         formatted.contains("src/main.rs"),

@@ -207,7 +207,11 @@ fn limit_model_tool_text(rendered: String) -> String {
 pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
     let rendered = match output {
         ToolOutput::FileList { path, entries } => {
-            format!("Directory: {}\n{}", path, entries.join("\n"))
+            format!(
+                "Workspace Evidence: list_files\nDirectory: {}\n{}",
+                path,
+                entries.join("\n")
+            )
         }
         ToolOutput::FileContent {
             path,
@@ -215,13 +219,16 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
             start_line,
             line_count,
             truncated,
-        } => crate::file_snippet::render_numbered_file_snippet(
-            path,
-            content,
-            start_line.unwrap_or(1),
-            *line_count,
-            *truncated,
-            MODEL_TOOL_RESULT_MAX_BYTES,
+        } => format!(
+            "Workspace Evidence: read_file\n{}",
+            crate::file_snippet::render_numbered_file_snippet(
+                path,
+                content,
+                start_line.unwrap_or(1),
+                *line_count,
+                *truncated,
+                MODEL_TOOL_RESULT_MAX_BYTES,
+            )
         ),
         ToolOutput::WritePreview { .. } => {
             "[write preview not available on the read-only path]".to_string()
@@ -231,9 +238,13 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
             matches,
             truncated,
         } => {
-            let mut lines = vec![format!("Search results for \"{}\":", query)];
+            let mut lines = vec![
+                "Workspace Evidence: search_text".to_string(),
+                format!("Query: {query}"),
+                format!("Matches: {}", matches.len()),
+            ];
             for m in matches {
-                lines.push(format!("{}:{}: {}", m.path, m.line, m.text));
+                lines.push(format!("{}:{} | {}", m.path, m.line, m.text));
             }
             if *truncated {
                 lines.push("... [truncated]".to_string());
@@ -245,7 +256,10 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
             paths,
             truncated,
         } => {
-            let mut lines = vec![format!("Glob pattern: {pattern}")];
+            let mut lines = vec![
+                "Workspace Evidence: glob_files".to_string(),
+                format!("Pattern: {pattern}"),
+            ];
             for p in paths {
                 lines.push(p.clone());
             }
@@ -626,7 +640,7 @@ mod tests {
             entries: vec!["main.rs".to_string(), "lib.rs".to_string()],
         };
         let formatted = format_tool_output_for_model(&output);
-        assert!(formatted.starts_with("Directory: src/\n"));
+        assert!(formatted.starts_with("Workspace Evidence: list_files\nDirectory: src/\n"));
         assert!(formatted.contains("main.rs\nlib.rs"));
     }
 
@@ -641,8 +655,8 @@ mod tests {
         };
         let formatted = format_tool_output_for_model(&output);
         assert!(
-            formatted.starts_with("File: README.md"),
-            "must start with File: header: {formatted}"
+            formatted.starts_with("Workspace Evidence: read_file\n"),
+            "must start with Workspace Evidence: read_file header: {formatted}"
         );
         assert!(
             formatted.contains("Lines: 1-1"),
@@ -677,7 +691,7 @@ mod tests {
     #[test]
     fn oversized_content_is_truncated_within_max_bytes() {
         // Create content that will exceed MODEL_TOOL_RESULT_MAX_BYTES when combined with the header.
-        let header = "File: big.txt\n";
+        let header = "Workspace Evidence: read_file\n";
         let body_size = MODEL_TOOL_RESULT_MAX_BYTES; // definitely over the limit
         let content = "x".repeat(body_size);
         let output = crate::tool::registry::ToolOutput::FileContent {
@@ -713,8 +727,8 @@ mod tests {
         };
         let formatted = format_tool_output_for_model(&output);
         assert!(
-            formatted.starts_with("File: src/lib.rs\n"),
-            "must start with File: header: {formatted}"
+            formatted.starts_with("Workspace Evidence: read_file\n"),
+            "must start with Workspace Evidence: read_file header: {formatted}"
         );
         assert!(
             formatted.contains("Lines: 5-7"),
@@ -1082,7 +1096,7 @@ mod tests {
     /// runner executes it (exec 1 of MAX_NATIVE_TOOL_CALLS_PER_TURN=2) and
     /// feeds the bounded FileMatches result back. Asserts:
     /// - The executed request was ToolRequest::GlobFiles.
-    /// - The model-facing result begins with "Glob pattern:" (FileMatches format).
+    /// - The model-facing result begins with "Workspace Evidence: glob_files" (FileMatches format).
     /// - The model-facing result contains no file content (only matched paths).
     #[test]
     fn glob_files_single_round_trip_result_begins_with_glob_pattern() {
@@ -1113,10 +1127,10 @@ mod tests {
         // Format the FileMatches result for the model.
         let result_text = format_tool_output_for_model(&output);
 
-        // The model-facing result must begin with "Glob pattern:" (no file content).
+        // The model-facing result must begin with "Workspace Evidence: glob_files" (no file content).
         assert!(
-            result_text.starts_with("Glob pattern:"),
-            "model-facing glob result must begin with 'Glob pattern:', got: {:?}",
+            result_text.starts_with("Workspace Evidence: glob_files\n"),
+            "model-facing glob result must begin with 'Workspace Evidence: glob_files\\n', got: {:?}",
             result_text
         );
         // Must not contain the file's actual content — only matched paths are returned.
@@ -1159,8 +1173,8 @@ mod tests {
             .unwrap();
         let result1_text = format_tool_output_for_model(&output1);
         assert!(
-            result1_text.starts_with("Glob pattern:"),
-            "glob step result must begin with 'Glob pattern:'"
+            result1_text.starts_with("Workspace Evidence: glob_files\n"),
+            "glob step result must begin with 'Workspace Evidence: glob_files\\n'"
         );
 
         // Extract the first matched path from the FileMatches output to pass to read_file.
@@ -1184,8 +1198,8 @@ mod tests {
             .unwrap();
         let result2_text = format_tool_output_for_model(&output2);
         assert!(
-            result2_text.starts_with("File: "),
-            "read_file step result must begin with 'File: '"
+            result2_text.starts_with("Workspace Evidence: read_file\n"),
+            "read_file step result must begin with 'Workspace Evidence: read_file\\n'"
         );
         assert!(
             result2_text.contains("# Project Notes"),
@@ -1371,8 +1385,8 @@ mod tests {
             .unwrap();
         let result1_text = format_tool_output_for_model(&output1);
         assert!(
-            result1_text.starts_with("Search results for"),
-            "search step result must begin with 'Search results for': {result1_text}"
+            result1_text.starts_with("Workspace Evidence: search_text\n"),
+            "search step result must begin with 'Workspace Evidence: search_text\\n': {result1_text}"
         );
 
         // --- Step 2 (exec 2 of 2): model emits read_file with offset/limit ---
@@ -1398,8 +1412,8 @@ mod tests {
             .unwrap();
         let result2_text = format_tool_output_for_model(&output2);
         assert!(
-            result2_text.starts_with("File: "),
-            "read_file result must begin with 'File: ': {result2_text}"
+            result2_text.starts_with("Workspace Evidence: read_file\n"),
+            "read_file result must begin with 'Workspace Evidence: read_file\\n': {result2_text}"
         );
         assert!(
             result2_text.contains("Lines:"),
