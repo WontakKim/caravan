@@ -209,6 +209,9 @@ impl App {
         let mut lines = Vec::new();
         lines.push("Available commands:".to_string());
         lines.push("  Type a message (no leading /) to send it as a user message".to_string());
+        lines.push(
+            "  Type @path or @path:line-line in a message to attach workspace context".to_string(),
+        );
         for section in default_command_help_sections() {
             lines.push(format!("  {}:", section.header));
             for entry in section.entries {
