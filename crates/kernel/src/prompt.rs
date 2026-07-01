@@ -81,7 +81,14 @@ Operating Rules:\n\
 - You may request up to two read-only workspace tools per turn, one per response.\n\
 - Do not invent tool results.\n\
 - After receiving the second tool result, or earlier if sufficient, answer without requesting another tool.\n\
-- Only read-only workspace tools are available in this baseline.\n\n\
+- Only read-only workspace tools are available in this baseline.\n\
+- When using Workspace Evidence from tools or attached Workspace Context, cite file paths and line numbers when available.\n\
+- For file snippets, cite references like `path:line` or `path:line-line`.\n\
+- For search results, cite the reported `path:line` matches.\n\
+- For directory or glob results, cite the relevant path.\n\
+- Do not cite files, lines, or contents that were not present in Workspace Evidence or Project Memory.\n\
+- If the available evidence is insufficient, say what needs to be inspected next.\n\
+- Treat the attached Workspace Context as Workspace Evidence.\n\n\
 Output:\n\
 Respond to the current user message.",
         memory_content, conversation, current_user_message, workspace_context
@@ -134,7 +141,14 @@ Operating Rules:\n\
 - You may request up to two read-only workspace tools per turn, one per response.\n\
 - Do not invent tool results.\n\
 - After receiving the second tool result, or earlier if sufficient, answer without requesting another tool.\n\
-- Only read-only workspace tools are available in this baseline.\n\n\
+- Only read-only workspace tools are available in this baseline.\n\
+- When using Workspace Evidence from tools or attached Workspace Context, cite file paths and line numbers when available.\n\
+- For file snippets, cite references like `path:line` or `path:line-line`.\n\
+- For search results, cite the reported `path:line` matches.\n\
+- For directory or glob results, cite the relevant path.\n\
+- Do not cite files, lines, or contents that were not present in Workspace Evidence or Project Memory.\n\
+- If the available evidence is insufficient, say what needs to be inspected next.\n\
+- Treat the attached Workspace Context as Workspace Evidence.\n\n\
 Output:\n\
 Respond to the current user message.",
             missing_memory
