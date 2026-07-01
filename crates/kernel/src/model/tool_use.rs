@@ -1397,6 +1397,14 @@ mod tests {
             result1_text.starts_with("Workspace Evidence: search_text\n"),
             "search step result must begin with 'Workspace Evidence: search_text\\n': {result1_text}"
         );
+        assert!(
+            result1_text.lines().any(|l| l == "Matches: 1"),
+            "search result must include an exact 'Matches: 1' count line: {result1_text}"
+        );
+        assert!(
+            result1_text.contains("notes.txt:2 | line2"),
+            "search result must include a 'path:line | text' match line: {result1_text}"
+        );
 
         // --- Step 2 (exec 2 of 2): model emits read_file with offset/limit ---
         let call2 = make_call(
