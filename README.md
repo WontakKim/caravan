@@ -106,7 +106,9 @@ form (`@crates/kernel/src/prompt.rs#L10-L40`, or `#L10` for a single line).
 `@README.md` (whole file) and `@crates/kernel/src/` (directory listing)
 resolve exactly as before, without a range. Ranges are **inclusive** (both
 the start and end line are included) and **file-only** — a range suffix on a
-directory reference (e.g. `@crates/kernel/src/:10-40`) is rejected.
+directory reference (e.g. `@crates/kernel/src/:10-40`) is rejected. A range may
+span at most 500 lines; a larger or malformed range is reported as a safe error
+rather than resolved.
 
 - **Read-only** — resolving a reference performs no filesystem mutation.
 - **Workspace-confined** — paths are resolved through the same path-safety

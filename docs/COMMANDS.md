@@ -85,7 +85,9 @@ default command surface above.
   one of four forms: `:N` (single line, colon form), `:N-M` (multi-line,
   colon form), `#LN` (single line, GitHub form), or `#LN-LM` (multi-line,
   GitHub form) — e.g. `@crates/kernel/src/prompt.rs:10-40` or
-  `@crates/kernel/src/prompt.rs#L10-L40`.
+  `@crates/kernel/src/prompt.rs#L10-L40`. A range may span at most 500 lines;
+  a larger or malformed range (e.g. `@file:0`, `@file:30-10`, `@file:abc`) is
+  reported as a safe error rather than resolved.
 - A range suffix on a **directory** reference (e.g. `@crates/kernel/src/:10-40`) is an error.
 
 ### Non-goals (this stage)
