@@ -873,6 +873,142 @@ fn at_reference_missing_path_pushes_warning_and_run_completes() {
 }
 
 #[test]
+fn at_range_reference_screen_log_shows_range_in_attached_summary() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    let content: String = (1..=20).map(|n| format!("line{n}\n")).collect();
+    std::fs::write(workspace_dir.path().join("doc.txt"), content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "@doc.txt:10-15 explain".to_string();
+    app.submit();
+
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l == "Workspace references attached: @doc.txt:10-15"),
+        "expected a 'Workspace references attached: @doc.txt:10-15' screen-log line, got: {:?}",
+        app.log
+    );
+}
+
+#[test]
+fn at_malformed_range_reference_screen_log_warns_invalid_range() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("file.txt"), "hello").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "@file.txt:abc explain".to_string();
+    app.submit();
+
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l.starts_with("Workspace reference warning:") && l.contains("invalid range")),
+        "expected a 'Workspace reference warning: ... invalid range' screen-log line, got: {:?}",
+        app.log
+    );
+}
+
+#[test]
+fn at_range_reference_does_not_mutate_pending_or_candidate_state() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(
+        workspace_dir.path().join("ranged.txt"),
+        "line1\nline2\nline3\n",
+    )
+    .unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    assert!(app.last_tool_output_candidate.is_none());
+    assert!(app.pending_manual_tool_context.is_none());
+
+    app.input = "@ranged.txt:1-2 explain".to_string();
+    app.submit();
+
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "an @range reference must not set last_tool_output_candidate"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "an @range reference must not set pending_manual_tool_context for the next turn"
+    );
+}
+
+#[test]
+fn attached_tool_context_and_at_range_reference_coexist_with_referenced_before_attached() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("attached.txt"), "attached body").unwrap();
+    let ranged_content: String = (1..=20).map(|n| format!("line{n}\n")).collect();
+    std::fs::write(workspace_dir.path().join("ranged.txt"), ranged_content).unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read attached.txt".to_string();
+    app.submit();
+
+    app.input = "/context attach-last-tool".to_string();
+    app.submit();
+
+    app.input = "compare this with @ranged.txt:10-15 please".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    let pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .last()
+        .expect("PromptCompile event should exist");
+
+    let referenced_idx = pc
+        .detail
+        .find("Referenced Workspace Context:")
+        .expect("Referenced Workspace Context: section must exist");
+    let attached_idx = pc
+        .detail
+        .find("Attached Workspace Context:")
+        .expect("Attached Workspace Context: section must exist");
+
+    assert!(
+        referenced_idx < attached_idx,
+        "Referenced Workspace Context: must render before Attached Workspace Context:: {}",
+        pc.detail
+    );
+    assert!(
+        pc.detail.contains("range: 10-15"),
+        "compiled prompt should contain the range line: {}",
+        pc.detail
+    );
+}
+
+#[test]
 fn request_run_success_then_attach_last_tool_includes_output() {
     use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
 

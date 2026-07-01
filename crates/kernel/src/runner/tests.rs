@@ -3219,3 +3219,235 @@ fn reference_to_missing_path_still_completes_run_with_not_ok_summary() {
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
+
+// ============================================================================
+// @reference line-range integration tests (T-2): run_mock_turn wiring for
+// @file:N-M / @file#LN-LM range suffixes.
+// ============================================================================
+
+/// Builds `count` numbered lines (`line1\n`, `line2\n`, ...) for a temp
+/// workspace file large enough to exercise a `10-15` range read.
+fn numbered_lines(count: usize) -> String {
+    (1..=count).map(|n| format!("line{n}\n")).collect()
+}
+
+// --- @file:N-M range resolves into Referenced Workspace Context only -------
+
+#[test]
+fn colon_range_reference_renders_range_and_numbered_snippet_isolated_to_workspace_context() {
+    let workspace = make_temp_workspace("doc.txt", &numbered_lines(20));
+
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    let raw_message = "@doc.txt:10-15 explain";
+    // The app appends the UserMessage before the runner runs; mirror that so
+    // the event's detail can be checked against the raw message.
+    event_log.append(EventKind::UserMessage, raw_message);
+    let output = run_mock_turn(
+        &mut event_log,
+        raw_message,
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+
+    let user_message_event = events
+        .iter()
+        .find(|e| e.kind == EventKind::UserMessage)
+        .expect("UserMessage event should exist");
+    assert_eq!(user_message_event.detail, raw_message);
+    assert_eq!(output.user_message, raw_message);
+
+    let pc = events
+        .iter()
+        .find(|e| e.kind == EventKind::PromptCompile)
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("Referenced Workspace Context:"),
+        "PromptCompile detail should contain 'Referenced Workspace Context:': {}",
+        pc.detail
+    );
+    assert!(
+        pc.detail.contains("range: 10-15"),
+        "PromptCompile detail should contain a 'range: 10-15' line: {}",
+        pc.detail
+    );
+    assert!(
+        pc.detail.contains("  10 | "),
+        "PromptCompile detail should contain a numbered snippet line starting at 10: {}",
+        pc.detail
+    );
+
+    // Slice the compiled prompt into its Conversation:/Current User:/Workspace
+    // Context: sections so the range/snippet content's placement can be
+    // checked precisely.
+    let conversation_idx = pc
+        .detail
+        .find("Conversation:\n")
+        .expect("missing Conversation: section");
+    let current_user_idx = pc
+        .detail
+        .find("Current User:\n")
+        .expect("missing Current User: section");
+    let workspace_context_idx = pc
+        .detail
+        .find("Workspace Context:\n")
+        .expect("missing Workspace Context: section");
+    let conversation_slice = &pc.detail[conversation_idx..current_user_idx];
+    let current_user_slice = &pc.detail[current_user_idx..workspace_context_idx];
+    let workspace_context_slice = &pc.detail[workspace_context_idx..];
+
+    // The exact raw `@doc.txt:10-15` token must appear verbatim in Current User:.
+    assert!(
+        current_user_slice.contains(raw_message),
+        "Current User: section must contain the raw message verbatim: {}",
+        current_user_slice
+    );
+
+    for marker in ["range: 10-15", "  10 | "] {
+        assert!(
+            !conversation_slice.contains(marker),
+            "range/snippet marker {marker:?} must not leak into Conversation:"
+        );
+        assert!(
+            !current_user_slice.contains(marker),
+            "range/snippet marker {marker:?} must not leak into Current User:"
+        );
+        assert!(
+            workspace_context_slice.contains(marker),
+            "range/snippet marker {marker:?} must appear in Workspace Context:"
+        );
+    }
+
+    // No Tool* event of any kind is appended for a range reference, and the
+    // native tool budget (observable via `output.tool_activities`) is left
+    // completely untouched.
+    let tool_events: Vec<EventKind> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                EventKind::ToolPolicy
+                    | EventKind::ToolCall
+                    | EventKind::ToolResult
+                    | EventKind::ToolError
+                    | EventKind::ToolContextAttach
+            )
+        })
+        .map(|e| e.kind)
+        .collect();
+    assert!(
+        tool_events.is_empty(),
+        "range reference resolution must not emit any Tool* event, found: {:?}",
+        tool_events
+    );
+    assert!(
+        output.tool_activities.is_empty(),
+        "range reference resolution must leave the native tool budget untouched"
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- @file#LN-LM (GitHub-style) range starts the numbered snippet at N -----
+
+#[test]
+fn github_style_range_reference_numbered_snippet_starts_at_range_start() {
+    let workspace = make_temp_workspace("doc.txt", &numbered_lines(20));
+
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    let output = run_mock_turn(
+        &mut event_log,
+        "@doc.txt#L10-L15 explain",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let pc = events
+        .iter()
+        .find(|e| e.kind == EventKind::PromptCompile)
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("range: 10-15"),
+        "PromptCompile detail should contain a 'range: 10-15' line: {}",
+        pc.detail
+    );
+    assert!(
+        pc.detail.contains("  10 | "),
+        "numbered snippet must start at line 10: {}",
+        pc.detail
+    );
+    assert!(
+        !pc.detail.contains("   1 | "),
+        "numbered snippet must not start at line 1 for a ranged reference: {}",
+        pc.detail
+    );
+
+    let _ = output;
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- a second turn without an @range reference does not reuse the prior ---
+// --- range content in its PromptCompile ------------------------------------
+
+#[test]
+fn second_turn_without_range_reference_does_not_reuse_prior_range_content() {
+    let workspace = make_temp_workspace("doc.txt", &numbered_lines(20));
+
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+
+    event_log.append(EventKind::UserMessage, "@doc.txt:10-15 explain");
+    run_mock_turn(
+        &mut event_log,
+        "@doc.txt:10-15 explain",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    event_log.append(EventKind::UserMessage, "no reference this time");
+    run_mock_turn(
+        &mut event_log,
+        "no reference this time",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let second_pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .nth(1)
+        .expect("second PromptCompile event should exist");
+
+    assert!(
+        !second_pc.detail.contains("Referenced Workspace Context:"),
+        "second PromptCompile must not reintroduce Referenced Workspace Context: {}",
+        second_pc.detail
+    );
+    assert!(
+        !second_pc.detail.contains("range: 10-15"),
+        "second PromptCompile must not reuse the prior turn's range: {}",
+        second_pc.detail
+    );
+    assert!(
+        !second_pc.detail.contains("  10 | "),
+        "second PromptCompile must not reuse the prior turn's numbered snippet: {}",
+        second_pc.detail
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
