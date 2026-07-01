@@ -93,6 +93,29 @@ The commands below are the **default surface** — they match what `/help` shows
 > the file paths and line numbers it inspected, e.g. `path:line` or
 > `path:line-line`, and does not cite files or lines it has not inspected.
 
+## Workspace References (`@path`)
+
+Typing `@path` inside a normal plain-text message — e.g. `@README.md`,
+`@crates/kernel/src/prompt.rs`, or `@crates/kernel/src/` — attaches that file
+(as a line-numbered snippet) or directory (as a listing) to the current
+turn's Workspace Context. This is baseline input UX, **not a slash command**.
+
+- **Read-only** — resolving a reference performs no filesystem mutation.
+- **Workspace-confined** — paths are resolved through the same path-safety
+  layer as `/tool read`/`/tool list`; absolute paths and `..` escapes are
+  rejected.
+- **Bounded** — file previews, directory listings, and the number of
+  references per message are all capped.
+- **Current-turn-only** — references are parsed from the message and
+  resolved fresh for that turn only; nothing is staged as pending context for
+  a later message.
+
+Resolved references render as a `Referenced Workspace Context` block inside
+the compiled prompt's `Workspace Context:` section, distinct from the
+`/tool`-driven `Attached Workspace Context` block. See
+[docs/COMMANDS.md](docs/COMMANDS.md) for the full `@file`/`@directory` syntax
+and non-goals.
+
 ## Experimental Harness Appendix
 
 The commands in this section are implemented but are **not the primary baseline UX**. They form an

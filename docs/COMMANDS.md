@@ -62,7 +62,55 @@ default UX surface: they observe the filesystem without mutating it.
 
 ---
 
-## 2. Hidden / Internal Experimental Harness Commands
+## 2. File references
+
+Typing `@path` inside a normal plain-text message — e.g. `@README.md`,
+`@crates/kernel/src/prompt.rs`, or `@crates/kernel/src/` — attaches that
+file (as a line-numbered snippet) or directory (as a listing) to the
+current turn's Workspace Context. **This is not a slash command** — it is
+baseline input UX recognized inside any plain-text message, alongside the
+default command surface above.
+
+### Syntax
+
+- References use **workspace-relative paths** (e.g. `@crates/kernel/src/`,
+  not an absolute path).
+- A single message may contain **multiple `@` references**; each is
+  resolved independently, up to a bounded per-message limit.
+- `@` is recognized as the start of a reference only at the **start of the
+  message**, or immediately after **whitespace** or an opening bracket
+  (`(`, `[`, `{`) — an `@` in the middle of a word (e.g. `user@host`) is not
+  treated as a reference.
+
+### Non-goals (this stage)
+
+The following are explicitly **not** supported by `@file`/`@directory`
+references yet:
+
+- Fuzzy matching or path suggestions.
+- Autocomplete while typing.
+- Quoted paths or paths containing spaces.
+- Glob patterns (e.g. `@src/**/*.rs`).
+- MCP-style `@server:resource` references.
+
+### Behaviour
+
+- **Read-only** — no write, no filesystem mutation.
+- **Workspace-confined** — resolved through the same path-safety layer as
+  `/tool read`/`/tool list`; absolute paths and `..` escapes are rejected.
+- **Bounded** — capped file preview size, capped directory entry count, and
+  a capped number of references per message.
+- **Current-turn-only** — resolved references apply only to the message
+  that contains them; they are not staged as pending context for a later
+  message, unlike `/tool read`/`/tool list`'s automatic one-shot staging.
+
+Resolved references render as a `Referenced Workspace Context` block inside
+the compiled prompt's `Workspace Context:` section — distinct from the
+`/tool`-driven `Attached Workspace Context` block described above.
+
+---
+
+## 3. Hidden / Internal Experimental Harness Commands
 
 These commands are **implemented and still parse**, but they are **not the center
 of the default UX**. They exist as internal infrastructure — a structural seam for
@@ -120,7 +168,7 @@ future agentic tooling. They may change substantially and are not surfaced in
 
 ---
 
-## 3. Unsupported / Reserved Claude Code Commands
+## 4. Unsupported / Reserved Claude Code Commands
 
 The following slash commands are intentionally reserved to match the Claude Code
 command namespace or are explicitly unsupported. None of them are implemented
@@ -145,7 +193,7 @@ event.
 
 ---
 
-## 4. Rationale
+## 5. Rationale
 
 The ordering of sections reflects the intended UX progression:
 
