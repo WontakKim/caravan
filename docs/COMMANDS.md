@@ -81,6 +81,12 @@ default command surface above.
   message**, or immediately after **whitespace** or an opening bracket
   (`(`, `[`, `{`) — an `@` in the middle of a word (e.g. `user@host`) is not
   treated as a reference.
+- A **file** reference may carry an optional inclusive line-range suffix, in
+  one of four forms: `:N` (single line, colon form), `:N-M` (multi-line,
+  colon form), `#LN` (single line, GitHub form), or `#LN-LM` (multi-line,
+  GitHub form) — e.g. `@crates/kernel/src/prompt.rs:10-40` or
+  `@crates/kernel/src/prompt.rs#L10-L40`.
+- A range suffix on a **directory** reference (e.g. `@crates/kernel/src/:10-40`) is an error.
 
 ### Non-goals (this stage)
 
@@ -92,6 +98,8 @@ references yet:
 - Quoted paths or paths containing spaces.
 - Glob patterns (e.g. `@src/**/*.rs`).
 - MCP-style `@server:resource` references.
+- Column syntax (e.g. `@file:10:5`).
+- Multiple disjoint ranges on a single reference (e.g. `@file:10-20,30-40`).
 
 ### Behaviour
 

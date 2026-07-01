@@ -100,6 +100,14 @@ Typing `@path` inside a normal plain-text message — e.g. `@README.md`,
 (as a line-numbered snippet) or directory (as a listing) to the current
 turn's Workspace Context. This is baseline input UX, **not a slash command**.
 
+A file reference may also carry an optional line-range suffix: colon form
+(`@crates/kernel/src/prompt.rs:10-40`, or `:10` for a single line) or GitHub
+form (`@crates/kernel/src/prompt.rs#L10-L40`, or `#L10` for a single line).
+`@README.md` (whole file) and `@crates/kernel/src/` (directory listing)
+resolve exactly as before, without a range. Ranges are **inclusive** (both
+the start and end line are included) and **file-only** — a range suffix on a
+directory reference (e.g. `@crates/kernel/src/:10-40`) is rejected.
+
 - **Read-only** — resolving a reference performs no filesystem mutation.
 - **Workspace-confined** — paths are resolved through the same path-safety
   layer as `/tool read`/`/tool list`; absolute paths and `..` escapes are
