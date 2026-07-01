@@ -19,6 +19,7 @@ pub mod runner;
 pub mod storage;
 pub mod tool;
 pub mod transcript;
+pub mod workspace_reference;
 pub mod write_intent;
 pub mod write_preview;
 
@@ -65,6 +66,13 @@ pub use tool::registry::{
 };
 pub use tool::schema::{ToolCatalog, ToolInputSpec, ToolSpec};
 pub use transcript::{ConversationTranscript, TranscriptMessage, TranscriptRole};
+pub use workspace_reference::{
+    ResolvedWorkspaceReference, WORKSPACE_REFERENCE_DIRECTORY_MAX_ENTRIES,
+    WORKSPACE_REFERENCE_FILE_PREVIEW_BYTES, WORKSPACE_REFERENCE_MAX_BYTES,
+    WORKSPACE_REFERENCE_MAX_ITEMS, WORKSPACE_REFERENCE_MAX_PATH_CHARS, WorkspaceReference,
+    WorkspaceReferenceKind, WorkspaceReferenceSummary, WorkspaceReferences,
+    parse_workspace_references, resolve_workspace_references,
+};
 pub use write_intent::{
     WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentError, WriteIntentMode, WriteIntentSource,
     WriteIntentSummary,
