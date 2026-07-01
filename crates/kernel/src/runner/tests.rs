@@ -3052,3 +3052,170 @@ fn native_tool_default_mock_gateway_unchanged_assistant_only_flow() {
         "exactly one ModelRoute for Mock gateway"
     );
 }
+
+// ============================================================================
+// @-reference resolution tests — parse_workspace_references /
+// resolve_workspace_references wired into run_mock_turn (T-3).
+// ============================================================================
+
+// --- @reference resolves into PromptCompile; raw message stays byte-identical ---
+
+#[test]
+fn reference_to_existing_file_renders_workspace_context_and_preserves_raw_message() {
+    let sentinel = "SENTINEL_WORKSPACE_REFERENCE_CONTENT_T3_9F2C";
+    let workspace = make_temp_workspace("doc.txt", sentinel);
+
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    let raw_message = "@doc.txt explain";
+    let output = run_mock_turn(
+        &mut event_log,
+        raw_message,
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let pc = events
+        .iter()
+        .find(|e| e.kind == EventKind::PromptCompile)
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("Referenced Workspace Context:"),
+        "PromptCompile detail should contain 'Referenced Workspace Context:': {}",
+        pc.detail
+    );
+    assert!(
+        pc.detail.contains("   1 | "),
+        "PromptCompile detail should contain a line-numbered content line: {}",
+        pc.detail
+    );
+
+    // Slice the compiled prompt into its Conversation:/Current User:/Workspace
+    // Context: sections so raw-message and sentinel placement can be checked
+    // precisely.
+    let conversation_idx = pc
+        .detail
+        .find("Conversation:\n")
+        .expect("missing Conversation: section");
+    let current_user_idx = pc
+        .detail
+        .find("Current User:\n")
+        .expect("missing Current User: section");
+    let workspace_context_idx = pc
+        .detail
+        .find("Workspace Context:\n")
+        .expect("missing Workspace Context: section");
+    let conversation_slice = &pc.detail[conversation_idx..current_user_idx];
+    let current_user_slice = &pc.detail[current_user_idx..workspace_context_idx];
+    let workspace_context_slice = &pc.detail[workspace_context_idx..];
+
+    // The exact raw `@doc.txt` token must appear verbatim in Current User:.
+    assert!(
+        current_user_slice.contains(raw_message),
+        "Current User: section must contain the raw message verbatim: {}",
+        current_user_slice
+    );
+
+    // The sentinel must appear ONLY in the Workspace Context: slice.
+    assert!(
+        !conversation_slice.contains(sentinel),
+        "sentinel must not leak into Conversation:"
+    );
+    assert!(
+        !current_user_slice.contains(sentinel),
+        "sentinel must not leak into Current User:"
+    );
+    assert!(
+        workspace_context_slice.contains(sentinel),
+        "sentinel must appear in Workspace Context:"
+    );
+
+    // The runner must never rewrite the raw message.
+    assert_eq!(output.user_message, raw_message);
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- @reference resolution never touches ToolEventRunner / emits Tool* events ---
+
+#[test]
+fn reference_emits_no_tool_events() {
+    let workspace = make_temp_workspace("doc2.txt", "reference content");
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    run_mock_turn(
+        &mut event_log,
+        "@doc2.txt summarize",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    let tool_events: Vec<EventKind> = events
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.kind,
+                EventKind::ToolPolicy
+                    | EventKind::ToolCall
+                    | EventKind::ToolResult
+                    | EventKind::ToolError
+                    | EventKind::ToolContextAttach
+            )
+        })
+        .map(|e| e.kind)
+        .collect();
+    assert!(
+        tool_events.is_empty(),
+        "reference resolution must not emit any Tool* event, found: {:?}",
+        tool_events
+    );
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+// --- @reference to a missing path still completes the run --------------------
+
+#[test]
+fn reference_to_missing_path_still_completes_run_with_not_ok_summary() {
+    let workspace = make_temp_workspace("", "");
+    let mut event_log = EventLog::new();
+    let gateway = ModelGateway::default();
+    let output = run_mock_turn(
+        &mut event_log,
+        "@does_not_exist.txt summarize",
+        &gateway,
+        &workspace,
+        None,
+        None,
+    );
+
+    let events = event_log.events();
+    assert!(
+        events.iter().any(|e| e.kind == EventKind::RunComplete),
+        "a missing @reference must not prevent the run from completing"
+    );
+    assert!(
+        !events.iter().any(|e| e.kind == EventKind::RunFail),
+        "a missing @reference alone must not cause RunFail"
+    );
+
+    assert_eq!(
+        output.workspace_references.len(),
+        1,
+        "expected exactly one workspace_references summary entry"
+    );
+    assert!(
+        !output.workspace_references[0].ok,
+        "a missing path must summarize as ok == false"
+    );
+    assert_eq!(output.workspace_references[0].raw, "does_not_exist.txt");
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}

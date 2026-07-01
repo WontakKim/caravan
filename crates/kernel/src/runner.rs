@@ -12,6 +12,9 @@ use crate::project_memory::ProjectMemory;
 use crate::tool::events::ToolEventRunner;
 use crate::tool::registry::{ToolError, ToolExecutionContext, ToolRequest};
 use crate::tool::schema::ToolCatalog;
+use crate::workspace_reference::{
+    WorkspaceReferenceSummary, parse_workspace_references, resolve_workspace_references,
+};
 
 /// Hard upper bound on native tool executions per turn.
 const MAX_NATIVE_TOOL_CALLS_PER_TURN: usize = 2;
@@ -33,6 +36,7 @@ pub struct MockRunOutput {
     pub turn_id: String,
     pub detected_model_tool_request: Option<crate::model_tool_request::ModelToolRequest>,
     pub tool_activities: Vec<ModelToolActivity>,
+    pub workspace_references: Vec<WorkspaceReferenceSummary>,
 }
 
 fn emit_usage(event_log: &mut EventLog, usage: &ModelUsage) {
@@ -100,12 +104,25 @@ pub fn run_mock_turn(
     // survives the subsequent PromptCompile append.
     let transcript = crate::transcript::ConversationTranscript::from_event_log(event_log);
     let history = transcript.without_trailing_user_message();
-    // `@` reference parsing/resolution is not wired into the runner yet, so
-    // `referenced_context` is `None`; this preserves current behavior.
+    // Parse and resolve `@path` references in the current message. This is
+    // read-only: it never reaches `ToolEventRunner`/`gateway.complete_step` and
+    // never emits a ToolPolicy/ToolCall/ToolResult/ToolError/ToolContextAttach
+    // event. A message with no `@` token leaves `resolved` as `None`, so the
+    // compiled prompt stays byte-identical to `compile_prompt(message)`.
+    let exec_ctx = ToolExecutionContext {
+        workspace_root: workspace_root.to_path_buf(),
+    };
+    let parsed_refs = parse_workspace_references(message);
+    let resolved = if parsed_refs.is_empty() {
+        None
+    } else {
+        Some(resolve_workspace_references(&exec_ctx, &parsed_refs))
+    };
+    let ref_summaries = resolved.as_ref().map(|r| r.summaries()).unwrap_or_default();
     let prompt = crate::prompt::compile_prompt_with_context(
         message,
         history,
-        None,
+        resolved.as_ref(),
         manual_tool_context,
         project_memory,
     );
@@ -141,6 +158,7 @@ pub fn run_mock_turn(
                 turn_id: turn_id.to_string(),
                 detected_model_tool_request: None,
                 tool_activities: vec![],
+                workspace_references: ref_summaries.clone(),
             }
         }
         Ok(ModelStepResponse {
@@ -170,6 +188,7 @@ pub fn run_mock_turn(
                 turn_id: turn_id.to_string(),
                 detected_model_tool_request: None,
                 tool_activities: vec![],
+                workspace_references: ref_summaries.clone(),
             }
         }
         Ok(ModelStepResponse {
@@ -199,6 +218,7 @@ pub fn run_mock_turn(
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
                         tool_activities: vec![],
+                        workspace_references: ref_summaries.clone(),
                     };
                 }
                 Ok(req) => req,
@@ -243,6 +263,7 @@ pub fn run_mock_turn(
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
                         tool_activities: vec![],
+                        workspace_references: ref_summaries.clone(),
                     };
                 }
                 Err(ToolError::ApprovalRequired { reason }) => {
@@ -265,6 +286,7 @@ pub fn run_mock_turn(
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
                         tool_activities: vec![],
+                        workspace_references: ref_summaries.clone(),
                     };
                 }
                 Err(other) => {
@@ -321,6 +343,7 @@ pub fn run_mock_turn(
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
                         tool_activities: vec![activity1],
+                        workspace_references: ref_summaries.clone(),
                     }
                 }
                 Ok(ModelStepResponse {
@@ -351,6 +374,7 @@ pub fn run_mock_turn(
                         turn_id: turn_id.to_string(),
                         detected_model_tool_request: None,
                         tool_activities: vec![activity1],
+                        workspace_references: ref_summaries.clone(),
                     }
                 }
                 Ok(ModelStepResponse {
@@ -380,6 +404,7 @@ pub fn run_mock_turn(
                                 turn_id: turn_id.to_string(),
                                 detected_model_tool_request: None,
                                 tool_activities: vec![activity1],
+                                workspace_references: ref_summaries.clone(),
                             };
                         }
                         Ok(req) => req,
@@ -421,6 +446,7 @@ pub fn run_mock_turn(
                                 turn_id: turn_id.to_string(),
                                 detected_model_tool_request: None,
                                 tool_activities: vec![activity1],
+                                workspace_references: ref_summaries.clone(),
                             };
                         }
                         Err(ToolError::ApprovalRequired { reason }) => {
@@ -443,6 +469,7 @@ pub fn run_mock_turn(
                                 turn_id: turn_id.to_string(),
                                 detected_model_tool_request: None,
                                 tool_activities: vec![activity1],
+                                workspace_references: ref_summaries.clone(),
                             };
                         }
                         Err(other) => {
@@ -492,6 +519,7 @@ pub fn run_mock_turn(
                                 turn_id: turn_id.to_string(),
                                 detected_model_tool_request: None,
                                 tool_activities: vec![activity1, activity2],
+                                workspace_references: ref_summaries.clone(),
                             }
                         }
                         Ok(ModelStepResponse {
@@ -527,6 +555,7 @@ pub fn run_mock_turn(
                                 turn_id: turn_id.to_string(),
                                 detected_model_tool_request: None,
                                 tool_activities: vec![activity1, activity2],
+                                workspace_references: ref_summaries.clone(),
                             }
                         }
                         Ok(ModelStepResponse {
@@ -556,6 +585,7 @@ pub fn run_mock_turn(
                                 turn_id: turn_id.to_string(),
                                 detected_model_tool_request: None,
                                 tool_activities: vec![activity1, activity2],
+                                workspace_references: ref_summaries.clone(),
                             }
                         }
                     }

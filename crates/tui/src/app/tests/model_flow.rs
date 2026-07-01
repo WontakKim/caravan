@@ -329,6 +329,7 @@ fn make_succeeded_output(path: &str) -> MockRunOutput {
             path: path.to_string(),
             succeeded: true,
         }],
+        workspace_references: vec![],
     }
 }
 
@@ -345,6 +346,7 @@ fn make_failed_output(path: &str) -> MockRunOutput {
             path: path.to_string(),
             succeeded: false,
         }],
+        workspace_references: vec![],
     }
 }
 
@@ -575,6 +577,7 @@ fn two_activities_in_tool_activities_both_logged_in_vec_order_before_assistant()
         turn_id: "turn-two".to_string(),
         detected_model_tool_request: None,
         tool_activities: vec![a1, a2],
+        workspace_references: vec![],
     };
 
     app.push_run_output_to_log(&output);
@@ -670,6 +673,7 @@ fn two_activities_rendering_does_not_set_last_tool_output_candidate_or_pending_c
                 succeeded: true,
             },
         ],
+        workspace_references: vec![],
     };
 
     app.push_run_output_to_log(&output);
