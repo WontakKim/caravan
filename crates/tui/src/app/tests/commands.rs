@@ -116,6 +116,7 @@ fn help_lines_exact_content() {
     let expected = vec![
         "Available commands:".to_string(),
         "  Type a message (no leading /) to send it as a user message".to_string(),
+        "  Type @path or @path:line-line in a message to attach workspace context".to_string(),
         "  Claude-like core commands:".to_string(),
         "    /help - show this help".to_string(),
         "    /clear - clear the log".to_string(),
@@ -193,6 +194,26 @@ fn help_lines_excludes_unsupported_commands() {
     assert!(
         !lines.iter().any(|l| l.contains("/diff")),
         "help_lines should not reference /diff"
+    );
+}
+
+#[test]
+fn help_lines_mentions_workspace_reference_syntax() {
+    let lines = App::help_lines();
+
+    let hint = lines
+        .iter()
+        .find(|l| l.contains("@path"))
+        .expect("help_lines should contain a line mentioning @path");
+    assert!(
+        hint.contains(":line"),
+        "the @path hint should mention the :line-line syntax, got: {}",
+        hint
+    );
+    assert!(
+        !hint.contains('/'),
+        "the @path hint should not introduce a /-command, got: {}",
+        hint
     );
 }
 
