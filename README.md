@@ -88,6 +88,11 @@ The commands below are the **default surface** — they match what `/help` shows
 > 1-based line numbers prefixed to each line. Full reads number from line 1;
 > range reads (using `--offset`) number from the requested start line.
 
+> **Source-grounded answers.** When the assistant answers using workspace
+> evidence — read-only tool output or attached Workspace Context — it cites
+> the file paths and line numbers it inspected, e.g. `path:line` or
+> `path:line-line`, and does not cite files or lines it has not inspected.
+
 ## Experimental Harness Appendix
 
 The commands in this section are implemented but are **not the primary baseline UX**. They form an
