@@ -11,6 +11,9 @@
 
 use crate::ToolExecutionContext;
 use crate::file_snippet::render_numbered_file_snippet;
+// Reused (not duplicated) as the max-line-span cap for `@file:N-M` /
+// `@file#LN-LM` range suffixes.
+use crate::MAX_READ_RANGE_LIMIT_LINES;
 use crate::tool::registry::{ToolError, ToolOutput, ToolRegistry, ToolRequest};
 
 /// Maximum number of `@` references resolved per message; excess references
@@ -39,10 +42,26 @@ const TRUNCATION_MARKER: &str = "\n... [truncated]";
 /// A single `@path` token parsed out of user input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceReference {
-    /// The exact text consumed after `@` (used for display as `@{raw}`).
+    /// The exact text consumed after `@`, including any range suffix (used
+    /// for display as `@{raw}`).
     pub raw: String,
-    /// The path passed to the tool harness for resolution.
+    /// The path passed to the tool harness for resolution (range suffix
+    /// stripped).
     pub path: String,
+    /// An optional line-range suffix (`:90`, `:90-130`, `#L90`, `#L90-L130`);
+    /// `None` when no suffix was present at all, `Some(Malformed)` when a
+    /// suffix was attempted but did not parse.
+    pub range: Option<WorkspaceReferenceRange>,
+}
+
+/// A parsed line-range suffix on a FILE `@` reference.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceReferenceRange {
+    /// A valid, 1-based, inclusive line range.
+    Lines { start_line: usize, end_line: usize },
+    /// A range suffix was attempted but failed validation; carries a safe,
+    /// user-facing detail describing why.
+    Malformed { detail: String },
 }
 
 /// Classifies how a [`WorkspaceReference`] resolved.
@@ -108,7 +127,129 @@ fn is_allowed_path_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '/' | '-')
 }
 
-/// Extracts `@path` reference tokens from plain-text `input`.
+/// Returns `true` when `c` may appear inside a range-suffix "run" following
+/// `:` or `#L`: digits, ASCII letters (so a non-numeric attempt like `:abc`
+/// is captured and classified as `Malformed` rather than silently ignored),
+/// and `-` (the inclusive-range separator).
+fn is_range_run_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '-'
+}
+
+/// Parses digits-only unsigned integers (`^\d+$`); rejects empty strings and
+/// any non-ASCII-digit character (including signs), so `"0"`, `"090"` parse
+/// but `"-1"`, `"+1"`, `""`, `"1.0"` do not.
+fn parse_digits(s: &str) -> Option<usize> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse::<usize>().ok()
+}
+
+/// Classifies two already-split numeric range endpoints per the `@reference`
+/// range rules. Non-numeric input, `start < 1`, and `end < start` are all
+/// `"invalid range"`; a span exceeding [`MAX_READ_RANGE_LIMIT_LINES`] is
+/// `"range too large (max 500 lines)"`.
+fn classify_range(start_str: &str, end_str: &str) -> WorkspaceReferenceRange {
+    let (Some(start_line), Some(end_line)) = (parse_digits(start_str), parse_digits(end_str))
+    else {
+        return WorkspaceReferenceRange::Malformed {
+            detail: "invalid range".to_string(),
+        };
+    };
+
+    if start_line < 1 || end_line < start_line {
+        return WorkspaceReferenceRange::Malformed {
+            detail: "invalid range".to_string(),
+        };
+    }
+
+    if end_line - start_line + 1 > MAX_READ_RANGE_LIMIT_LINES {
+        return WorkspaceReferenceRange::Malformed {
+            detail: "range too large (max 500 lines)".to_string(),
+        };
+    }
+
+    WorkspaceReferenceRange::Lines {
+        start_line,
+        end_line,
+    }
+}
+
+/// Validates a colon-form range run (the text after `:`, e.g. `"90"` or
+/// `"90-130"`) against `^\d+(-\d+)?$` plus the range invariants.
+fn parse_colon_range_run(run: &str) -> WorkspaceReferenceRange {
+    match run.split_once('-') {
+        Some((start, end)) => classify_range(start, end),
+        None => classify_range(run, run),
+    }
+}
+
+/// Validates a GitHub-form range run (the text after `#L`, e.g. `"90"` or
+/// `"90-L130"`) against `^\d+(-L\d+)?$`; the end component must keep its own
+/// `L` prefix, so `"90-130"` is `Malformed`.
+fn parse_github_range_run(run: &str) -> WorkspaceReferenceRange {
+    match run.split_once('-') {
+        Some((start, end)) => match end.strip_prefix('L') {
+            Some(end_digits) => classify_range(start, end_digits),
+            None => WorkspaceReferenceRange::Malformed {
+                detail: "invalid range".to_string(),
+            },
+        },
+        None => classify_range(run, run),
+    }
+}
+
+/// Attempts to parse an optional line-range suffix starting at char-index `j`
+/// (the position right after a reference's path token, in the `chars` index
+/// space used by [`parse_workspace_references`]). Returns the char-index just
+/// past the consumed suffix (`j` itself when nothing was consumed) and the
+/// parsed range, if any.
+///
+/// An empty run after `:` or `#L` means the delimiter is ordinary prose, not
+/// a range attempt, and is left completely unconsumed. Never panics.
+fn parse_range_suffix(
+    chars: &[(usize, char)],
+    len: usize,
+    input: &str,
+    j: usize,
+) -> (usize, Option<WorkspaceReferenceRange>) {
+    let byte_at = |idx: usize| if idx < len { chars[idx].0 } else { input.len() };
+
+    if j >= len {
+        return (j, None);
+    }
+
+    match chars[j].1 {
+        ':' => {
+            let run_start = j + 1;
+            let mut k = run_start;
+            while k < len && is_range_run_char(chars[k].1) {
+                k += 1;
+            }
+            if k == run_start {
+                return (j, None);
+            }
+            let run = &input[byte_at(run_start)..byte_at(k)];
+            (k, Some(parse_colon_range_run(run)))
+        }
+        '#' if j + 1 < len && chars[j + 1].1 == 'L' => {
+            let run_start = j + 2;
+            let mut k = run_start;
+            while k < len && is_range_run_char(chars[k].1) {
+                k += 1;
+            }
+            if k == run_start {
+                return (j, None);
+            }
+            let run = &input[byte_at(run_start)..byte_at(k)];
+            (k, Some(parse_github_range_run(run)))
+        }
+        _ => (j, None),
+    }
+}
+
+/// Extracts `@path[:range]`/`@path[#Lrange]` reference tokens from plain-text
+/// `input`.
 ///
 /// Performs no filesystem I/O and never panics on any input, including
 /// malformed UTF-8 boundaries (handled transparently since `input` is
@@ -116,6 +257,7 @@ fn is_allowed_path_char(c: char) -> bool {
 pub fn parse_workspace_references(input: &str) -> Vec<WorkspaceReference> {
     let chars: Vec<(usize, char)> = input.char_indices().collect();
     let len = chars.len();
+    let byte_at = |idx: usize| if idx < len { chars[idx].0 } else { input.len() };
 
     let mut result: Vec<WorkspaceReference> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -131,30 +273,39 @@ pub fn parse_workspace_references(input: &str) -> Vec<WorkspaceReference> {
                 j += 1;
             }
 
-            let start_byte = if i + 1 < len {
-                chars[i + 1].0
-            } else {
-                input.len()
-            };
-            let end_byte = if j < len { chars[j].0 } else { input.len() };
-            let token = &input[start_byte..end_byte];
+            let start_byte = byte_at(i + 1);
+            let path_end_byte = byte_at(j);
+            let path_token = &input[start_byte..path_end_byte];
 
-            if !token.is_empty()
-                && token.len() <= WORKSPACE_REFERENCE_MAX_PATH_CHARS
-                && !token.chars().all(|c| c == '.' || c == '/')
-                && seen.insert(token.to_string())
+            // Attempt an optional line-range suffix immediately following the
+            // path token: colon form (`:90`, `:90-130`) or GitHub form
+            // (`#L90`, `#L90-L130`).
+            let (suffix_end, range) = parse_range_suffix(&chars, len, input, j);
+            let raw_end_byte = byte_at(suffix_end);
+            let raw_token = &input[start_byte..raw_end_byte];
+
+            if !path_token.is_empty()
+                && path_token.len() <= WORKSPACE_REFERENCE_MAX_PATH_CHARS
+                && !path_token.chars().all(|c| c == '.' || c == '/')
+                && seen.insert(raw_token.to_string())
             {
                 result.push(WorkspaceReference {
-                    raw: token.to_string(),
-                    path: token.to_string(),
+                    raw: raw_token.to_string(),
+                    path: path_token.to_string(),
+                    range,
                 });
             }
 
-            // Advance past the whole attempted token (or just past `@` when
-            // nothing qualifying followed it), tracking `prev` accordingly so
-            // a subsequent `@` sees the correct boundary character.
-            prev = Some(if j > i + 1 { chars[j - 1].1 } else { ch });
-            i = j.max(i + 1);
+            // Advance past the whole attempted token, including any consumed
+            // range suffix (or just past `@` when nothing qualifying followed
+            // it), tracking `prev` accordingly so a subsequent `@` sees the
+            // correct boundary character.
+            prev = Some(if suffix_end > i + 1 {
+                chars[suffix_end - 1].1
+            } else {
+                ch
+            });
+            i = suffix_end.max(i + 1);
             continue;
         }
 
@@ -215,8 +366,29 @@ fn render_directory_listing(entries: &[String]) -> (String, bool) {
     (lines.join("\n"), truncated)
 }
 
-/// Resolves one [`WorkspaceReference`] against the tool harness.
+/// Resolves one [`WorkspaceReference`] against the tool harness, branching on
+/// its optional line-range suffix.
 fn resolve_reference(
+    registry: &ToolRegistry,
+    ctx: &ToolExecutionContext,
+    reference: &WorkspaceReference,
+) -> ResolvedWorkspaceReference {
+    match &reference.range {
+        Some(WorkspaceReferenceRange::Malformed { detail }) => {
+            // Malformed never touches the filesystem.
+            error_item(reference, detail, WorkspaceReferenceKind::Error)
+        }
+        Some(WorkspaceReferenceRange::Lines {
+            start_line,
+            end_line,
+        }) => resolve_ranged_reference(registry, ctx, reference, *start_line, *end_line),
+        None => resolve_full_reference(registry, ctx, reference),
+    }
+}
+
+/// Resolves a reference with no range suffix: a full file read, falling back
+/// to a directory listing when the path is not a file.
+fn resolve_full_reference(
     registry: &ToolRegistry,
     ctx: &ToolExecutionContext,
     reference: &WorkspaceReference,
@@ -283,14 +455,101 @@ fn resolve_reference(
     }
 }
 
+/// Resolves a reference carrying a [`WorkspaceReferenceRange::Lines`] suffix
+/// via a bounded range read; never falls back to a directory listing.
+///
+/// Re-validates the range invariants before computing `end_line - start_line
+/// + 1` or touching the filesystem: both [`WorkspaceReferenceRange`] and
+/// `resolve_workspace_references` are `pub`, so a hand-constructed
+/// `Lines { start_line: 0, end_line: usize::MAX }` must be rejected here too,
+/// not only at parse time — this guard is what keeps that arithmetic from
+/// underflowing/panicking.
+fn resolve_ranged_reference(
+    registry: &ToolRegistry,
+    ctx: &ToolExecutionContext,
+    reference: &WorkspaceReference,
+    start_line: usize,
+    end_line: usize,
+) -> ResolvedWorkspaceReference {
+    if start_line < 1
+        || end_line < start_line
+        || end_line - start_line + 1 > MAX_READ_RANGE_LIMIT_LINES
+    {
+        return error_item(reference, "invalid range", WorkspaceReferenceKind::Error);
+    }
+    let count = end_line - start_line + 1;
+
+    let read_result = registry.execute(
+        ctx,
+        ToolRequest::ReadFile {
+            path: reference.path.clone(),
+            offset: Some(start_line),
+            limit: Some(count),
+        },
+    );
+
+    match read_result {
+        Ok(ToolOutput::FileContent {
+            content,
+            start_line: sl,
+            line_count,
+            ..
+        }) => {
+            let snippet = render_numbered_file_snippet(
+                &reference.path,
+                &content,
+                sl.unwrap_or(start_line),
+                line_count,
+                false,
+                WORKSPACE_REFERENCE_FILE_PREVIEW_BYTES,
+            );
+            // Authoritative truncation detection: the renderer appends this
+            // exact marker only when its byte cap fired.
+            let truncated = snippet.ends_with(TRUNCATION_MARKER);
+            ResolvedWorkspaceReference {
+                reference: reference.clone(),
+                kind: WorkspaceReferenceKind::File,
+                content: snippet,
+                truncated,
+            }
+        }
+        // `ReadFile` only ever yields `FileContent` on success; handled
+        // defensively so a future output variant can never panic here.
+        Ok(_) => error_item(reference, "read error", WorkspaceReferenceKind::Error),
+        // A line range only makes sense for a file; never fall back to a
+        // directory listing here.
+        Err(ToolError::NotAFile { .. }) => error_item(
+            reference,
+            "line range is only supported for files",
+            WorkspaceReferenceKind::Error,
+        ),
+        Err(err) => {
+            let (label, kind) = classify_tool_error(&err);
+            error_item(reference, label, kind)
+        }
+    }
+}
+
 /// Renders the exact per-item block [`WorkspaceReferences::render_prompt_section`]
 /// emits for one resolved reference; used both for the final rendering and to
 /// measure the aggregate byte budget.
 fn render_item_block(item: &ResolvedWorkspaceReference) -> String {
+    let range_line = match (item.kind, &item.reference.range) {
+        (
+            WorkspaceReferenceKind::File,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line,
+                end_line,
+            }),
+        ) => format!("  range: {start_line}-{end_line}\n"),
+        _ => String::new(),
+    };
+
     format!(
-        "Source:\n  reference: @{}\n  kind: {}\n  risk: read_only\n\nContent:\n{}",
+        "Source:\n  reference: @{}\n  kind: {}\n{}  risk: read_only\n\nContent:\n{}",
         item.reference.raw,
         item.kind.as_str(),
+        range_line,
         item.content
     )
 }
@@ -448,6 +707,7 @@ mod tests {
         WorkspaceReference {
             raw: raw.to_string(),
             path: raw.to_string(),
+            range: None,
         }
     }
 
@@ -461,6 +721,7 @@ mod tests {
             vec![WorkspaceReference {
                 raw: "README.md".to_string(),
                 path: "README.md".to_string(),
+                range: None,
             }]
         );
     }
@@ -500,7 +761,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_deduplicates_by_path_keeping_first_occurrence() {
+    fn parse_deduplicates_same_raw_token_keeping_first_occurrence() {
         let refs = parse_workspace_references("@a.rs then again @a.rs and @b.rs");
         let paths: Vec<&str> = refs.iter().map(|r| r.path.as_str()).collect();
         assert_eq!(paths, vec!["a.rs", "b.rs"]);
@@ -535,6 +796,205 @@ mod tests {
         let refs = parse_workspace_references(&input);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].path.len(), WORKSPACE_REFERENCE_MAX_PATH_CHARS);
+    }
+
+    // ─── @reference line-range parsing ──────────────────────────────────────
+
+    #[test]
+    fn parse_no_range_suffix_is_none() {
+        let refs = parse_workspace_references("@README.md today");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].range, None);
+    }
+
+    #[test]
+    fn parse_colon_single_line_range() {
+        let refs = parse_workspace_references("@file.rs:10 rest");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "file.rs");
+        assert_eq!(refs[0].raw, "file.rs:10");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 10
+            })
+        );
+    }
+
+    #[test]
+    fn parse_colon_multi_line_range() {
+        let refs = parse_workspace_references("@file.rs:10-20 rest");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "file.rs");
+        assert_eq!(refs[0].raw, "file.rs:10-20");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 20
+            })
+        );
+    }
+
+    #[test]
+    fn parse_github_single_line_range() {
+        let refs = parse_workspace_references("@file.rs#L10 rest");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "file.rs");
+        assert_eq!(refs[0].raw, "file.rs#L10");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 10
+            })
+        );
+    }
+
+    #[test]
+    fn parse_github_multi_line_range() {
+        let refs = parse_workspace_references("@file.rs#L10-L20 rest");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "file.rs");
+        assert_eq!(refs[0].raw, "file.rs#L10-L20");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 20
+            })
+        );
+    }
+
+    #[test]
+    fn parse_colon_range_stops_at_trailing_punctuation() {
+        let refs = parse_workspace_references("read @README.md:10, then summarize");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "README.md");
+        assert_eq!(refs[0].raw, "README.md:10");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 10
+            })
+        );
+    }
+
+    #[test]
+    fn parse_github_range_stops_at_closing_paren() {
+        let refs = parse_workspace_references("(@README.md#L10-L20) for context");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "README.md");
+        assert_eq!(refs[0].raw, "README.md#L10-L20");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 20
+            })
+        );
+    }
+
+    #[test]
+    fn parse_prose_colon_is_not_a_range() {
+        let refs = parse_workspace_references("@README.md: please read");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "README.md");
+        assert_eq!(refs[0].raw, "README.md");
+        assert_eq!(refs[0].range, None);
+    }
+
+    #[test]
+    fn parse_column_syntax_degrades_to_line_only() {
+        // `@file:10:5` (unsupported column syntax): the maximal-run rule
+        // consumes `10` and leaves `:5` as unconsumed prose.
+        let refs = parse_workspace_references("@file.rs:10:5 rest");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "file.rs");
+        assert_eq!(refs[0].raw, "file.rs:10");
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Lines {
+                start_line: 10,
+                end_line: 10
+            })
+        );
+    }
+
+    #[test]
+    fn parse_malformed_ranges_are_flagged() {
+        let cases = [
+            ("@f:abc", "invalid range"),
+            ("@f:0", "invalid range"),
+            ("@f:10-0", "invalid range"),
+            ("@f:30-10", "invalid range"),
+            ("@f:10-abc", "invalid range"),
+            ("@f#Labc", "invalid range"),
+            ("@f#L90-130", "invalid range"),
+        ];
+        for (input, expected_detail) in cases {
+            let refs = parse_workspace_references(input);
+            assert_eq!(refs.len(), 1, "input {input:?} produced {refs:?}");
+            assert_eq!(refs[0].path, "f", "input {input:?}");
+            match &refs[0].range {
+                Some(WorkspaceReferenceRange::Malformed { detail }) => {
+                    assert_eq!(detail, expected_detail, "input {input:?}");
+                }
+                other => panic!("expected Malformed for input {input:?}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_over_cap_range_is_malformed_with_detail() {
+        let refs = parse_workspace_references("@big.rs:1-501");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(
+            refs[0].range,
+            Some(WorkspaceReferenceRange::Malformed {
+                detail: "range too large (max 500 lines)".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn parse_range_suffix_raw_includes_it_path_excludes_it() {
+        let refs = parse_workspace_references("@src/lib.rs:5-9 rest");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].path, "src/lib.rs");
+        assert_eq!(refs[0].raw, "src/lib.rs:5-9");
+    }
+
+    #[test]
+    fn parse_dedup_distinct_raw_tokens_by_range() {
+        let refs = parse_workspace_references("@a.rs:1 then @a.rs:2 and @a.rs:1 again");
+        let raws: Vec<&str> = refs.iter().map(|r| r.raw.as_str()).collect();
+        assert_eq!(raws, vec!["a.rs:1", "a.rs:2"]);
+    }
+
+    #[test]
+    fn parse_never_panics_on_range_like_input() {
+        let inputs = [
+            "@f:abc",
+            "@f:0",
+            "@f:10-0",
+            "@f:30-10",
+            "@f:10-abc",
+            "@f#Labc",
+            "@f#L90-130",
+            "@f:",
+            "@f#",
+            "@f#L",
+            "@f:-",
+            "@f#L-",
+            "@f:999999999999999999999999999999",
+            "@f#L999999999999999999999999999999",
+        ];
+        for input in inputs {
+            let _ = parse_workspace_references(input);
+        }
     }
 
     // ─── resolve_workspace_references ───────────────────────────────────────
@@ -733,5 +1193,168 @@ mod tests {
             omitted: 0,
         };
         assert_eq!(empty.render_prompt_section(), "");
+    }
+
+    // ─── @reference line-range resolution ───────────────────────────────────
+
+    fn write_numbered_lines(path: &Path, count: usize) {
+        let content: String = (1..=count).map(|n| format!("line{n}\n")).collect();
+        std::fs::write(path, content).expect("write file");
+    }
+
+    #[test]
+    fn resolve_colon_range_reads_offset_and_limit() {
+        let dir = TempDir::new();
+        write_numbered_lines(&dir.path().join("f.txt"), 30);
+
+        let ctx = make_context(dir.path());
+        let refs = parse_workspace_references("@f.txt:10-20");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::File);
+        assert!(
+            item.content.contains("Lines: 10-20"),
+            "missing Lines header: {}",
+            item.content
+        );
+        assert!(
+            item.content.contains("  10 | line10"),
+            "missing numbered line 10: {}",
+            item.content
+        );
+    }
+
+    #[test]
+    fn resolve_github_range_reads_offset_and_limit() {
+        let dir = TempDir::new();
+        write_numbered_lines(&dir.path().join("f.txt"), 30);
+
+        let ctx = make_context(dir.path());
+        let refs = parse_workspace_references("@f.txt#L10-L20");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::File);
+        assert!(
+            item.content.contains("Lines: 10-20"),
+            "missing Lines header: {}",
+            item.content
+        );
+        assert!(
+            item.content.contains("  10 | line10"),
+            "missing numbered line 10: {}",
+            item.content
+        );
+    }
+
+    #[test]
+    fn resolve_directory_with_range_is_error_not_listing() {
+        let dir = TempDir::new();
+        std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
+
+        let ctx = make_context(dir.path());
+        let refs = parse_workspace_references("@subdir:5-9");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::Error);
+        assert!(
+            item.content
+                .contains("line range is only supported for files")
+        );
+    }
+
+    #[test]
+    fn resolve_missing_path_with_range_is_safe_summary() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let refs = parse_workspace_references("@does_not_exist.txt:5-9");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::Missing);
+        assert!(item.content.contains("Error: not found"));
+    }
+
+    #[test]
+    fn resolve_malformed_range_never_touches_filesystem() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        // "does_not_exist.txt" is never created; if the resolver read the
+        // filesystem it would surface "not found", not "invalid range".
+        let refs = parse_workspace_references("@does_not_exist.txt:abc");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::Error);
+        assert!(item.content.contains("Error: invalid range"));
+    }
+
+    #[test]
+    fn resolve_over_cap_range_is_error() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let refs = parse_workspace_references("@does_not_exist.txt:1-600");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::Error);
+        assert!(item.content.contains("range too large"));
+    }
+
+    #[test]
+    fn render_item_block_includes_range_line_for_ranged_file_only() {
+        let dir = TempDir::new();
+        write_numbered_lines(&dir.path().join("f.txt"), 30);
+        std::fs::write(dir.path().join("full.txt"), "hello").expect("write file");
+        std::fs::create_dir_all(dir.path().join("subdir")).expect("create subdir");
+
+        let ctx = make_context(dir.path());
+
+        let ranged_refs = parse_workspace_references("@f.txt:10-20");
+        let ranged = resolve_workspace_references(&ctx, &ranged_refs);
+        assert!(render_item_block(&ranged.items[0]).contains("  range: 10-20\n"));
+
+        let full_refs = parse_workspace_references("@full.txt");
+        let full = resolve_workspace_references(&ctx, &full_refs);
+        assert!(!render_item_block(&full.items[0]).contains("  range:"));
+
+        let dir_refs = parse_workspace_references("@subdir");
+        let dir_resolved = resolve_workspace_references(&ctx, &dir_refs);
+        assert!(!render_item_block(&dir_resolved.items[0]).contains("  range:"));
+    }
+
+    #[test]
+    fn resolve_range_beyond_eof_reports_no_content() {
+        let dir = TempDir::new();
+        std::fs::write(dir.path().join("short.txt"), "one\ntwo\nthree").expect("write file");
+
+        let ctx = make_context(dir.path());
+        let refs = parse_workspace_references("@short.txt:10-20");
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::File);
+        assert!(item.content.contains("No content in requested range."));
+    }
+
+    #[test]
+    fn resolve_hand_constructed_out_of_range_lines_never_panics() {
+        let dir = TempDir::new();
+        let ctx = make_context(dir.path());
+        let refs = vec![WorkspaceReference {
+            raw: "weird:range".to_string(),
+            path: "does_not_exist.txt".to_string(),
+            range: Some(WorkspaceReferenceRange::Lines {
+                start_line: 0,
+                end_line: usize::MAX,
+            }),
+        }];
+        let resolved = resolve_workspace_references(&ctx, &refs);
+
+        let item = &resolved.items[0];
+        assert_eq!(item.kind, WorkspaceReferenceKind::Error);
+        assert!(item.content.contains("invalid range"));
     }
 }

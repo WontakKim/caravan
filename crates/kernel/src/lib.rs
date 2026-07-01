@@ -70,8 +70,8 @@ pub use workspace_reference::{
     ResolvedWorkspaceReference, WORKSPACE_REFERENCE_DIRECTORY_MAX_ENTRIES,
     WORKSPACE_REFERENCE_FILE_PREVIEW_BYTES, WORKSPACE_REFERENCE_MAX_BYTES,
     WORKSPACE_REFERENCE_MAX_ITEMS, WORKSPACE_REFERENCE_MAX_PATH_CHARS, WorkspaceReference,
-    WorkspaceReferenceKind, WorkspaceReferenceSummary, WorkspaceReferences,
-    parse_workspace_references, resolve_workspace_references,
+    WorkspaceReferenceKind, WorkspaceReferenceRange, WorkspaceReferenceSummary,
+    WorkspaceReferences, parse_workspace_references, resolve_workspace_references,
 };
 pub use write_intent::{
     WRITE_INTENT_PREVIEW_BYTES, WriteIntent, WriteIntentError, WriteIntentMode, WriteIntentSource,

@@ -145,6 +145,7 @@ mod tests {
                 reference: WorkspaceReference {
                     raw: raw.to_string(),
                     path: raw.to_string(),
+                    range: None,
                 },
                 kind: WorkspaceReferenceKind::File,
                 content: content.to_string(),
