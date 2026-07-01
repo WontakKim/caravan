@@ -270,7 +270,7 @@ pub fn run_mock_turn(
                     let r = ModelToolResult {
                         tool_call_id: call.id.clone(),
                         name: call.name.clone(),
-                        content: format_tool_error_for_model(&other),
+                        content: format_tool_error_for_model(&call.name, &other),
                         is_error: true,
                     };
                     (r, false)
@@ -448,7 +448,7 @@ pub fn run_mock_turn(
                             let r = ModelToolResult {
                                 tool_call_id: call2.id.clone(),
                                 name: call2.name.clone(),
-                                content: format_tool_error_for_model(&other),
+                                content: format_tool_error_for_model(&call2.name, &other),
                                 is_error: true,
                             };
                             (r, false)

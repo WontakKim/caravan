@@ -274,13 +274,16 @@ pub fn format_tool_output_for_model(output: &ToolOutput) -> String {
 
 /// Formats a [`ToolError`] into a human-readable error string for the model.
 ///
-/// The string always begins with `"Error: "` because the OpenAI tool message
-/// carries no machine-readable `is_error` flag — the model only sees this text.
-/// Raw OS error details and secrets are never embedded. The result is bounded
-/// to [`MODEL_TOOL_RESULT_MAX_BYTES`] via [`limit_model_tool_text`] to guard
-/// against arbitrarily long paths embedded in error variants.
-pub fn format_tool_error_for_model(error: &ToolError) -> String {
-    let rendered = match error {
+/// The result is wrapped in the `Workspace Evidence: tool_error` header
+/// (mirroring the success-path headers in [`format_tool_output_for_model`]),
+/// followed by the tool name and an `"Error: "`-prefixed message, because the
+/// OpenAI tool message carries no machine-readable `is_error` flag — the
+/// model only sees this text. Raw OS error details and secrets are never
+/// embedded. The result is bounded to [`MODEL_TOOL_RESULT_MAX_BYTES`] via
+/// [`limit_model_tool_text`] to guard against arbitrarily long paths embedded
+/// in error variants.
+pub fn format_tool_error_for_model(tool_name: &str, error: &ToolError) -> String {
+    let message = match error {
         ToolError::NotFound { path } => {
             format!("Error: file or directory not found: {path}")
         }
@@ -307,6 +310,7 @@ pub fn format_tool_error_for_model(error: &ToolError) -> String {
             format!("Error: invalid glob pattern: {:?}", pattern)
         }
     };
+    let rendered = format!("Workspace Evidence: tool_error\nTool: {tool_name}\n{message}");
     limit_model_tool_text(rendered)
 }
 
@@ -812,11 +816,15 @@ mod tests {
             },
         ];
         for err in &errors {
-            let summary = format_tool_error_for_model(err);
+            let summary = format_tool_error_for_model("read_file", err);
             assert!(!summary.is_empty(), "summary must not be empty for {err:?}");
             assert!(
-                summary.starts_with("Error: "),
-                "summary must begin with 'Error: ' for {err:?}, got: {summary:?}"
+                summary.starts_with("Workspace Evidence: tool_error"),
+                "summary must begin with 'Workspace Evidence: tool_error' for {err:?}, got: {summary:?}"
+            );
+            assert!(
+                summary.contains("Error: "),
+                "summary must contain 'Error: ' for {err:?}, got: {summary:?}"
             );
         }
     }
@@ -827,13 +835,13 @@ mod tests {
         let err = ToolError::Io {
             message: "permission denied (os error 13)".to_string(),
         };
-        let summary = format_tool_error_for_model(&err);
+        let summary = format_tool_error_for_model("read_file", &err);
         // The raw OS message must not appear in the output.
         assert!(
             !summary.contains("permission denied (os error 13)"),
             "IO summary must not embed raw OS detail: {summary:?}"
         );
-        assert!(summary.starts_with("Error: "));
+        assert!(summary.starts_with("Workspace Evidence: tool_error"));
     }
 
     #[test]
@@ -842,9 +850,10 @@ mod tests {
         let err = ToolError::NotFound {
             path: "missing.txt".to_string(),
         };
-        let summary = format_tool_error_for_model(&err);
+        let summary = format_tool_error_for_model("read_file", &err);
         assert!(summary.contains("missing.txt"));
-        assert!(summary.starts_with("Error: "));
+        assert!(summary.starts_with("Workspace Evidence: tool_error"));
+        assert!(summary.contains("Tool: read_file"));
     }
 
     #[test]
@@ -854,10 +863,10 @@ mod tests {
             path: "huge.bin".to_string(),
             max_bytes: 65536,
         };
-        let summary = format_tool_error_for_model(&err);
+        let summary = format_tool_error_for_model("read_file", &err);
         assert!(summary.contains("65536"));
         assert!(summary.contains("huge.bin"));
-        assert!(summary.starts_with("Error: "));
+        assert!(summary.starts_with("Workspace Evidence: tool_error"));
     }
 
     // --- G-2: unknown-field rejection tests ---
@@ -1431,7 +1440,7 @@ mod tests {
         // Path long enough to push the error message well over MODEL_TOOL_RESULT_MAX_BYTES.
         let long_path = "x".repeat(MODEL_TOOL_RESULT_MAX_BYTES + 1024);
         let err = ToolError::NotFound { path: long_path };
-        let summary = format_tool_error_for_model(&err);
+        let summary = format_tool_error_for_model("read_file", &err);
         assert!(
             summary.len() <= MODEL_TOOL_RESULT_MAX_BYTES,
             "error output length {} exceeds MODEL_TOOL_RESULT_MAX_BYTES {}",
