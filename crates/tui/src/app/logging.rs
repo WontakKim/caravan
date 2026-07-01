@@ -1,4 +1,7 @@
-use kernel::{SearchMatch, WRITE_DIFF_PREVIEW_LINES, WritePreview, WritePreviewKind};
+use kernel::{
+    SearchMatch, WRITE_DIFF_PREVIEW_LINES, WorkspaceReferenceSummary, WritePreview,
+    WritePreviewKind,
+};
 
 impl super::App {
     /// Pushes a sorted directory listing to the screen log, capped at
@@ -174,6 +177,44 @@ impl super::App {
         }
         if truncated {
             self.log.push("... [truncated]".to_string());
+        }
+    }
+
+    /// Pushes at most two concise screen-log lines summarizing the `@`
+    /// workspace references resolved during the turn.
+    ///
+    /// One line lists the `raw` tokens of entries with `ok == true` as
+    /// `Workspace references attached: @a, @b`; a second, single combined
+    /// line covers every entry with `ok == false` as `Workspace reference
+    /// warning: @x {detail}[; @y {detail}]`. Only the content-free `raw` and
+    /// `detail` fields are used — never full reference content. A no-op when
+    /// `summaries` is empty.
+    pub(super) fn push_workspace_reference_summary(
+        &mut self,
+        summaries: &[WorkspaceReferenceSummary],
+    ) {
+        let attached: Vec<String> = summaries
+            .iter()
+            .filter(|s| s.ok)
+            .map(|s| format!("@{}", s.raw))
+            .collect();
+        if !attached.is_empty() {
+            self.log.push(format!(
+                "Workspace references attached: {}",
+                attached.join(", ")
+            ));
+        }
+
+        let warnings: Vec<String> = summaries
+            .iter()
+            .filter(|s| !s.ok)
+            .map(|s| format!("@{} {}", s.raw, s.detail))
+            .collect();
+        if !warnings.is_empty() {
+            self.log.push(format!(
+                "Workspace reference warning: {}",
+                warnings.join("; ")
+            ));
         }
     }
 

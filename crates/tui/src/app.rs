@@ -175,11 +175,13 @@ impl App {
     }
 
     /// Pushes `User:`, optional native tool activity (`Tool:` / `Tool completed:` or
-    /// `Tool failed:`), and `Assistant:` lines from a completed run turn to the
-    /// screen log.  This method MUST NOT touch `last_tool_output_candidate`,
-    /// `pending_manual_tool_context`, or `pending_model_tool_request`; those
-    /// fields are owned exclusively by the manual `/tool` + `/context` command
-    /// flow.
+    /// `Tool failed:`), `Assistant:`, and an optional `@`-reference summary from a
+    /// completed run turn to the screen log. This method MUST NOT touch
+    /// `last_tool_output_candidate`, `pending_manual_tool_context`, or
+    /// `pending_model_tool_request`; those fields are owned exclusively by the
+    /// manual `/tool` + `/context` command flow. The `@`-reference summary is read
+    /// solely from `output.workspace_references` (the single source of truth
+    /// produced by `run_mock_turn`) — the raw message is never re-parsed here.
     fn push_run_output_to_log(&mut self, output: &kernel::runner::MockRunOutput) {
         self.log.push(format!("User: {}", output.user_message));
         for activity in &output.tool_activities {
@@ -199,6 +201,7 @@ impl App {
             self.log
                 .push(format!("Assistant: {}", output.assistant_response));
         }
+        self.push_workspace_reference_summary(&output.workspace_references);
     }
 
     pub fn help_lines() -> Vec<String> {

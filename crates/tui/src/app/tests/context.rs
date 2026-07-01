@@ -733,6 +733,145 @@ fn prompt_context_survives_clear() {
     assert!(!second_pc.detail.contains("No prior conversation context."));
 }
 
+// --- `@` workspace reference screen-log summary tests (T-4) ---
+
+#[test]
+fn at_reference_user_message_does_not_mutate_pending_or_candidate_state() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(
+        workspace_dir.path().join("ref_a.txt"),
+        "reference content a",
+    )
+    .unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    assert!(app.last_tool_output_candidate.is_none());
+    assert!(app.pending_manual_tool_context.is_none());
+
+    app.input = "please check @ref_a.txt today".to_string();
+    app.submit();
+
+    assert!(
+        app.last_tool_output_candidate.is_none(),
+        "the @-reference path must not set last_tool_output_candidate"
+    );
+    assert!(
+        app.pending_manual_tool_context.is_none(),
+        "the @-reference path must not set pending_manual_tool_context for the next turn"
+    );
+}
+
+#[test]
+fn attached_tool_context_and_at_reference_coexist_in_same_turn_prompt() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("attached.txt"), "attached body").unwrap();
+    std::fs::write(
+        workspace_dir.path().join("referenced.txt"),
+        "referenced body",
+    )
+    .unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "/tool read attached.txt".to_string();
+    app.submit();
+
+    app.input = "/context attach-last-tool".to_string();
+    app.submit();
+
+    app.input = "compare this with @referenced.txt please".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    let pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .last()
+        .expect("PromptCompile event should exist");
+
+    assert!(
+        pc.detail.contains("Referenced Workspace Context:")
+            && pc.detail.contains("Attached Workspace Context:"),
+        "PromptCompile must contain BOTH Referenced and Attached Workspace Context sections: {}",
+        pc.detail
+    );
+}
+
+#[test]
+fn second_user_message_without_at_token_does_not_reuse_prior_referenced_context() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+    std::fs::write(workspace_dir.path().join("once.txt"), "once content").unwrap();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "look at @once.txt".to_string();
+    app.submit();
+
+    app.input = "no reference this time".to_string();
+    app.submit();
+
+    let events = app.event_log.events();
+    let second_pc = events
+        .iter()
+        .filter(|e| e.kind == EventKind::PromptCompile)
+        .nth(1)
+        .expect("second PromptCompile event should exist");
+
+    assert!(
+        !second_pc.detail.contains("Referenced Workspace Context:"),
+        "second PromptCompile must NOT contain Referenced Workspace Context (current-turn-only)"
+    );
+}
+
+#[test]
+fn at_reference_missing_path_pushes_warning_and_run_completes() {
+    let store_dir = TempDir::new();
+    let workspace_dir = TempDir::new();
+
+    let store = EventStore::new(store_dir.path());
+    let mut app = App::with_store_gateway_and_workspace_root(
+        store,
+        kernel::model_gateway::ModelGateway::default(),
+        workspace_dir.path().to_path_buf(),
+    );
+
+    app.input = "please check @does_not_exist.txt".to_string();
+    app.submit(); // must not abort/panic
+
+    assert!(
+        app.log
+            .iter()
+            .any(|l| l.starts_with("Workspace reference warning:")),
+        "expected a Workspace reference warning: screen-log line, got: {:?}",
+        app.log
+    );
+
+    let events = app.event_log.events();
+    assert!(
+        events.iter().any(|e| e.kind == EventKind::RunComplete),
+        "the run must still complete when a referenced path is missing"
+    );
+}
+
 #[test]
 fn request_run_success_then_attach_last_tool_includes_output() {
     use kernel::model_tool_request::{ModelToolRequest, ModelToolRequestKind};
