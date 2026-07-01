@@ -100,9 +100,12 @@ pub fn run_mock_turn(
     // survives the subsequent PromptCompile append.
     let transcript = crate::transcript::ConversationTranscript::from_event_log(event_log);
     let history = transcript.without_trailing_user_message();
+    // `@` reference parsing/resolution is not wired into the runner yet, so
+    // `referenced_context` is `None`; this preserves current behavior.
     let prompt = crate::prompt::compile_prompt_with_context(
         message,
         history,
+        None,
         manual_tool_context,
         project_memory,
     );

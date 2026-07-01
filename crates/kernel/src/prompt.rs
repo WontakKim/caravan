@@ -1,6 +1,7 @@
 use crate::manual_context::ManualToolContext;
 use crate::project_memory::ProjectMemory;
 use crate::transcript::{TranscriptMessage, TranscriptRole};
+use crate::workspace_reference::WorkspaceReferences;
 
 /// Number of most-recent transcript messages rendered in the prompt's
 /// conversation window. This is a small fixed window — NOT long-term memory.
@@ -18,9 +19,16 @@ pub const DEFAULT_PROMPT_HISTORY_MESSAGES: usize = 6;
 ///
 /// `project_memory` is rendered in the `Project Memory:` section. When `None`,
 /// the fallback from `ProjectMemory::missing()` is used.
+///
+/// `referenced_context` renders a `Referenced Workspace Context:` sub-block
+/// inside `Workspace Context:`, before `manual_tool_context`'s `Attached
+/// Workspace Context:` sub-block. A `Some` value whose
+/// `render_prompt_section()` is empty (no items and nothing omitted) is
+/// treated the same as `None`.
 pub fn compile_prompt_with_context(
     current_user_message: &str,
     history: &[TranscriptMessage],
+    referenced_context: Option<&WorkspaceReferences>,
     manual_tool_context: Option<&ManualToolContext>,
     project_memory: Option<&ProjectMemory>,
 ) -> String {
@@ -50,13 +58,22 @@ pub fn compile_prompt_with_context(
         None => ProjectMemory::missing().content,
     };
 
-    let workspace_context = match manual_tool_context {
-        Some(ctx) => format!(
+    let referenced = referenced_context
+        .map(|r| r.render_prompt_section())
+        .filter(|s| !s.is_empty());
+    let attached = manual_tool_context.map(|ctx| {
+        format!(
             "Attached Workspace Context:\nSource:\n  {}\nContent:\n{}",
             ctx.source_label(),
             ctx.content
-        ),
-        None => "No external tool context is attached.".to_string(),
+        )
+    });
+
+    let workspace_context = match (referenced, attached) {
+        (None, None) => "No external tool context is attached.".to_string(),
+        (Some(referenced), None) => referenced,
+        (None, Some(attached)) => attached,
+        (Some(referenced), Some(attached)) => format!("{}\n\n{}", referenced, attached),
     };
 
     format!(
@@ -100,7 +117,7 @@ Respond to the current user message.",
 /// This is the empty-history case of `compile_prompt_with_context`, delegating
 /// to it so there is one prompt-template source of truth.
 pub fn compile_prompt(message: &str) -> String {
-    compile_prompt_with_context(message, &[], None, None)
+    compile_prompt_with_context(message, &[], None, None, None)
 }
 
 #[cfg(test)]
@@ -113,6 +130,27 @@ mod tests {
             role,
             content: content.to_string(),
             seq: EventSeq(seq),
+        }
+    }
+
+    /// Builds a `WorkspaceReferences` with a single resolved file item, using
+    /// the T-1 public API directly (no filesystem I/O needed for these tests).
+    fn referenced_context_with_file(raw: &str, content: &str) -> WorkspaceReferences {
+        use crate::workspace_reference::{
+            ResolvedWorkspaceReference, WorkspaceReference, WorkspaceReferenceKind,
+        };
+
+        WorkspaceReferences {
+            items: vec![ResolvedWorkspaceReference {
+                reference: WorkspaceReference {
+                    raw: raw.to_string(),
+                    path: raw.to_string(),
+                },
+                kind: WorkspaceReferenceKind::File,
+                content: content.to_string(),
+                truncated: false,
+            }],
+            omitted: 0,
         }
     }
 
@@ -204,13 +242,13 @@ Respond to the current user message.",
     fn compile_prompt_delegates_to_empty_history() {
         assert_eq!(
             compile_prompt("hello"),
-            compile_prompt_with_context("hello", &[], None, None)
+            compile_prompt_with_context("hello", &[], None, None, None)
         );
     }
 
     #[test]
     fn compile_prompt_with_context_empty_history_has_no_prior_marker() {
-        let result = compile_prompt_with_context("hi", &[], None, None);
+        let result = compile_prompt_with_context("hi", &[], None, None, None);
         assert!(result.contains("Conversation:"));
         assert!(result.contains("No prior conversation context."));
     }
@@ -221,7 +259,7 @@ Respond to the current user message.",
             msg(TranscriptRole::User, "hi", 1),
             msg(TranscriptRole::Assistant, "hello back", 2),
         ];
-        let result = compile_prompt_with_context("next", &history, None, None);
+        let result = compile_prompt_with_context("next", &history, None, None, None);
         assert!(result.contains("User: hi"));
         assert!(result.contains("Assistant: hello back"));
     }
@@ -237,7 +275,7 @@ Respond to the current user message.",
             msg(TranscriptRole::Assistant, "earlier reply", 2),
         ];
         let unique_msg = "xUNIQUE_ACTIVE_MSG_x";
-        let result = compile_prompt_with_context(unique_msg, &history, None, None);
+        let result = compile_prompt_with_context(unique_msg, &history, None, None, None);
         assert!(result.contains(&format!("Current User:\n{}", unique_msg)));
 
         // Everything before the Current User: section is conversation context.
@@ -262,7 +300,7 @@ Respond to the current user message.",
                 msg(role, &format!("m{i}"), i + 1)
             })
             .collect();
-        let result = compile_prompt_with_context("now", &history, None, None);
+        let result = compile_prompt_with_context("now", &history, None, None, None);
         // Only the last 6 (m2..m7) are rendered; the oldest two are dropped.
         assert!(!result.contains("m0"));
         assert!(!result.contains("m1"));
@@ -275,7 +313,7 @@ Respond to the current user message.",
         use crate::manual_context::ManualToolContext;
 
         let ctx = ManualToolContext::from_read_file("notes.txt", "file body content");
-        let compiled = compile_prompt_with_context("tell me about it", &[], Some(&ctx), None);
+        let compiled = compile_prompt_with_context("tell me about it", &[], None, Some(&ctx), None);
 
         // Positive assertions: required labels and content are present.
         assert!(compiled.contains("Attached Workspace Context:"));
@@ -334,14 +372,14 @@ Respond to the current user message.",
 
     #[test]
     fn compile_prompt_with_context_none_manual_tool_context_uses_fallback_literal() {
-        let result = compile_prompt_with_context("hello", &[], None, None);
+        let result = compile_prompt_with_context("hello", &[], None, None, None);
         assert!(result.contains("No external tool context is attached."));
         assert!(!result.contains("Attached Workspace Context:"));
     }
 
     #[test]
     fn compile_prompt_with_context_none_has_project_memory_fallback() {
-        let result = compile_prompt_with_context("hello", &[], None, None);
+        let result = compile_prompt_with_context("hello", &[], None, None, None);
         assert!(result.contains("Project Memory:"));
         assert!(result.contains("No CLAUDE.md project memory found."));
         assert!(!result.contains("Attached Workspace Context:"));
@@ -356,7 +394,7 @@ Respond to the current user message.",
             content: "# My Project\nBuild with cargo.".to_string(),
             truncated: false,
         };
-        let result = compile_prompt_with_context("hello", &[], None, Some(&pm));
+        let result = compile_prompt_with_context("hello", &[], None, None, Some(&pm));
         assert!(result.contains("Project Memory:"));
         assert!(result.contains("# My Project"));
         assert!(result.contains("Build with cargo."));
@@ -369,7 +407,7 @@ Respond to the current user message.",
         use crate::manual_context::ManualToolContext;
 
         let ctx = ManualToolContext::from_read_file("notes.txt", "attached file body");
-        let compiled = compile_prompt_with_context("tell me", &[], Some(&ctx), None);
+        let compiled = compile_prompt_with_context("tell me", &[], None, Some(&ctx), None);
 
         assert!(compiled.contains("Attached Workspace Context:"));
         assert!(compiled.contains("Workspace Context:"));
@@ -386,5 +424,90 @@ Respond to the current user message.",
             ws_slice.contains("attached file body"),
             "Workspace Context section must contain attached file content"
         );
+    }
+
+    #[test]
+    fn compile_prompt_with_context_some_referenced_context_renders_without_manual_context() {
+        let refs = referenced_context_with_file("notes.txt", "referenced file content");
+        let compiled = compile_prompt_with_context("tell me", &[], Some(&refs), None, None);
+
+        assert!(compiled.contains("Referenced Workspace Context:"));
+        assert!(!compiled.contains("Attached Workspace Context:"));
+        assert!(!compiled.contains("No external tool context is attached."));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_some_referenced_and_manual_orders_referenced_first() {
+        use crate::manual_context::ManualToolContext;
+
+        let refs = referenced_context_with_file("notes.txt", "referenced file content");
+        let ctx = ManualToolContext::from_read_file("attached.txt", "attached file content");
+        let compiled = compile_prompt_with_context("tell me", &[], Some(&refs), Some(&ctx), None);
+
+        let ws_pos = compiled
+            .find("Workspace Context:")
+            .expect("Workspace Context: must exist");
+        let referenced_pos = compiled
+            .find("Referenced Workspace Context:")
+            .expect("Referenced Workspace Context: must exist");
+        let attached_pos = compiled
+            .find("Attached Workspace Context:")
+            .expect("Attached Workspace Context: must exist");
+
+        assert!(ws_pos < referenced_pos);
+        assert!(referenced_pos < attached_pos);
+    }
+
+    #[test]
+    fn compile_prompt_with_context_referenced_content_confined_to_workspace_context_section() {
+        let sentinel = "xUNIQUE_REFERENCED_SENTINEL_x";
+        let refs = referenced_context_with_file("notes.txt", sentinel);
+        let compiled = compile_prompt_with_context("tell me", &[], Some(&refs), None, None);
+
+        let ws_pos = compiled
+            .find("Workspace Context:")
+            .expect("Workspace Context: must exist");
+        let (before_ws, from_ws) = compiled.split_at(ws_pos);
+
+        assert!(from_ws.contains(sentinel));
+        assert!(!before_ws.contains(sentinel));
+
+        // Also confirm it does not leak into Current User: or Conversation:
+        // specifically, in case a future template reorder moves those
+        // sections after Workspace Context:.
+        let current_user_slice = compiled
+            .split("\n\nCurrent User:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n\nWorkspace Context:").next())
+            .expect("Current User: section must exist");
+        assert!(!current_user_slice.contains(sentinel));
+
+        let conversation_slice = compiled
+            .split("\n\nConversation:\n")
+            .nth(1)
+            .and_then(|rest| rest.split("\n\nCurrent User:").next())
+            .expect("Conversation: section must exist");
+        assert!(!conversation_slice.contains(sentinel));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_none_referenced_and_manual_uses_fallback_literal() {
+        let result = compile_prompt_with_context("hello", &[], None, None, None);
+        assert!(result.contains("No external tool context is attached."));
+        assert!(!result.contains("Referenced Workspace Context:"));
+        assert!(!result.contains("Attached Workspace Context:"));
+    }
+
+    #[test]
+    fn compile_prompt_with_context_some_empty_referenced_context_equals_none() {
+        let empty_refs = WorkspaceReferences {
+            items: Vec::new(),
+            omitted: 0,
+        };
+
+        let with_empty = compile_prompt_with_context("hello", &[], Some(&empty_refs), None, None);
+        let with_none = compile_prompt_with_context("hello", &[], None, None, None);
+
+        assert_eq!(with_empty, with_none);
     }
 }
